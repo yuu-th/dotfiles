@@ -1,4 +1,8 @@
 { pkgs, inputs, ... }: {
+  system.primaryUser = "yuta";
+  imports = [
+    ../../modules/desktop/darwin.nix
+  ];
   # ── Nix 設定 ──────────────────────────────────────────────────────────────────
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
@@ -27,6 +31,12 @@
         mv "$file" "$file.before-nix-darwin"
       fi
     done
+
+    # ── Homebrew の自動インストール（新規環境対応）──────────────────────
+    if ! /opt/homebrew/bin/brew --version > /dev/null 2>&1; then
+      echo "Homebrew not found. Installing..." >&2
+      sudo -u yuta /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/null
+    fi
   '';
 
   # ── Spotlight 検索への対応 ──────────────────────────────────────────────────
@@ -34,18 +44,36 @@
   # /Applications/Nix Apps に「エイリアス（Alias）」を作成する。
   # シンボリックリンクではなくエイリアスを使うのが、Spotlight に認識させるためのベストプラクティス。
   system.activationScripts.postActivation.text = ''
+    # ── Home Manager アプリを Spotlight で検索可能にする（エイリアス作成）──
     echo "Setting up Spotlight visibility for Home Manager apps..." >&2
     rm -rf "/Applications/Nix Apps"
     mkdir -p "/Applications/Nix Apps"
     for app in "/Users/yuta/Applications/Home Manager Apps/"*.app; do
       if [ -e "$app" ]; then
         app_name=$(basename "$app")
-        # If it was a symlink, $app_name is correct, but we want the actual store path for mkalias
         actual_path=$(readlink -f "$app")
         echo "Creating alias for $app_name..." >&2
         ${pkgs.mkalias}/bin/mkalias "$actual_path" "/Applications/Nix Apps/$app_name"
       fi
     done
+
+    # ── Homebrew Cask の自己修復 ──────────────────────────────────────
+    # Caskroom にあるのに /Applications に配置されていないアプリを検知し、
+    # brew reinstall --cask で自動修復する。
+    BREW="/opt/homebrew/bin/brew"
+    if [ -x "$BREW" ] && [ -d /opt/homebrew/Caskroom ]; then
+      for cask_dir in /opt/homebrew/Caskroom/*/; do
+        cask_name=$(basename "$cask_dir")
+        app_path=$(find "$cask_dir" -maxdepth 2 -name "*.app" -type d -print -quit 2>/dev/null)
+        if [ -n "$app_path" ]; then
+          app_name=$(basename "$app_path")
+          if [ ! -e "/Applications/$app_name" ]; then
+            echo "Broken Cask detected: $cask_name ($app_name not in /Applications). Reinstalling..." >&2
+            sudo -u yuta "$BREW" reinstall --cask "$cask_name"
+          fi
+        fi
+      done
+    fi
   '';
 
   # Used for backwards compatibility

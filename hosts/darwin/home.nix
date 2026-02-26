@@ -1,8 +1,10 @@
 { pkgs, lib, inputs, ... }: {
   imports = [
-    ../../modules/home/shell.nix
-    ../../modules/home/packages.nix
-    ../../modules/home/vscode.nix
+    ../../modules/core/home.nix
+    ../../modules/dev/home.nix
+    ../../modules/ops/home.nix
+    ../../modules/editors/vscode.nix
+    ../../modules/editors/antigravity.nix
   ];
 
   home = {
