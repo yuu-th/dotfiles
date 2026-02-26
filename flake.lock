@@ -1,0 +1,142 @@
+{
+  "nodes": {
+    "disko": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1771881364,
+        "narHash": "sha256-A5uE/hMium5of/QGC6JwF5TGoDAfpNtW00T0s9u/PN8=",
+        "owner": "nix-community",
+        "repo": "disko",
+        "rev": "a4cb7bf73f264d40560ba527f9280469f1f081c6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "disko",
+        "type": "github"
+      }
+    },
+    "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1772060133,
+        "narHash": "sha256-VuyRptb8v1lVGMlLp4/1vRX3Efwec0CN0S6mKmDPzLg=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "ce9b6e52500a0ea0ec48f0bbf6d7a3e431d9dfa4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "nix-darwin": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1771992996,
+        "narHash": "sha256-Y/ijH/unOPxzUicbla6yT/14RJgubUWnY2I2A6Ast2Q=",
+        "owner": "LnL7",
+        "repo": "nix-darwin",
+        "rev": "3bfa436c1975674ca465ce34586467be301ff509",
+        "type": "github"
+      },
+      "original": {
+        "owner": "LnL7",
+        "repo": "nix-darwin",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1771848320,
+        "narHash": "sha256-0MAd+0mun3K/Ns8JATeHT1sX28faLII5hVLq0L3BdZU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "disko": "disko",
+        "home-manager": "home-manager",
+        "nix-darwin": "nix-darwin",
+        "nixpkgs": "nixpkgs",
+        "vsci-feed-darwin-arm64": "vsci-feed-darwin-arm64",
+        "vsci-feed-darwin-x64": "vsci-feed-darwin-x64",
+        "vsci-feed-linux-arm64": "vsci-feed-linux-arm64",
+        "vsci-feed-linux-x64": "vsci-feed-linux-x64"
+      }
+    },
+    "vsci-feed-darwin-arm64": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-DkGYSPk/Lsb0UHzRWfbcFDWhymTLTC05F6oI3NL2byY=",
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"
+      }
+    },
+    "vsci-feed-darwin-x64": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-BhB/xOOzlQd6v3d1LpCJSuVy+kj5RKK4dUlqJNR6mLQ=",
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/darwin/insider/latest"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/darwin/insider/latest"
+      }
+    },
+    "vsci-feed-linux-arm64": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-9b9GBB84BxWJNB50rOf36HWSqX4wgBeMvxrvHJykEHY=",
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/linux-arm64/insider/latest"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/linux-arm64/insider/latest"
+      }
+    },
+    "vsci-feed-linux-x64": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-TWH51LqI6rjNxaYQBsHSdOpHSEYmNA1zUxBeBse7U54=",
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/linux-x64/insider/latest"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://update.code.visualstudio.com/api/update/linux-x64/insider/latest"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
