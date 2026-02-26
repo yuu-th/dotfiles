@@ -2,7 +2,7 @@
   imports = [
     ./hardware-configuration.nix
     ./disk-config.nix
-    ../../modules/server/automation.nix
+    ../../modules/server/nixos.nix
   ];
 
   # ── Networking & Tailscale ────────────────────────────────────────────────

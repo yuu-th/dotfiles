@@ -1,6 +1,17 @@
-{ ... }:
+{ pkgs, ... }:
 
 {
+  home.packages = with pkgs; [
+    # Core CLI Tools
+    gh
+    jq
+    ripgrep
+    fd
+    fzf
+    htop
+    # curl and git are typically in here too, but git is configured specifically below
+  ];
+
   programs.zsh = {
     enable = true;
     enableCompletion    = true;
