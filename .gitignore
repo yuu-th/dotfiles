@@ -1,0 +1,15 @@
+# Nix result symlinks
+result
+result-*
+
+# macOS
+.DS_Store
+
+# Secrets and sensitive files
+*.tfvars
+*.tfvars.json
+.env
+*.key
+id_rsa
+id_ed25519
+deploy/temp/
