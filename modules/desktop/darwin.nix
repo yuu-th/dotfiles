@@ -14,6 +14,8 @@
       "jordanbaird-ice"
       "alt-tab"
       "nikitabobko/tap/aerospace"
+      "discord"
+      "spotify"
     ];
   };
 }
