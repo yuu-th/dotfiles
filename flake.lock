@@ -91,7 +91,7 @@
     "vsci-feed-darwin-arm64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-DkGYSPk/Lsb0UHzRWfbcFDWhymTLTC05F6oI3NL2byY=",
+        "narHash": "sha256-B1gvo/1ThIj77wx65AIfXAeqNrGTTXTgtdBBgq2aOfY=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"
       },
@@ -103,7 +103,7 @@
     "vsci-feed-darwin-x64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-BhB/xOOzlQd6v3d1LpCJSuVy+kj5RKK4dUlqJNR6mLQ=",
+        "narHash": "sha256-vzMsAuLQITkAUjwLojdvnlf/1Uws1UgIpNOXGZhYdqY=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/darwin/insider/latest"
       },
@@ -115,7 +115,7 @@
     "vsci-feed-linux-arm64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-9b9GBB84BxWJNB50rOf36HWSqX4wgBeMvxrvHJykEHY=",
+        "narHash": "sha256-gNpNMq1UzpLyTKhspAZSIE4Mr60xzy6Ca+GZiegXc+I=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/linux-arm64/insider/latest"
       },
@@ -127,7 +127,7 @@
     "vsci-feed-linux-x64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-TWH51LqI6rjNxaYQBsHSdOpHSEYmNA1zUxBeBse7U54=",
+        "narHash": "sha256-hn3tNHdZHSp23MeNuVPVAGCs+oMrd7VmFTZ8n3yCRmY=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/linux-x64/insider/latest"
       },
