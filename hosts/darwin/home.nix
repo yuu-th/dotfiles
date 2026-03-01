@@ -5,6 +5,7 @@
     ../../modules/ops/home.nix
     ../../modules/editors/vscode.nix
     ../../modules/editors/antigravity.nix
+    ../../modules/desktop/darwin/home.nix
   ];
 
   home = {

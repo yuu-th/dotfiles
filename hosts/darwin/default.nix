@@ -1,7 +1,7 @@
 { pkgs, inputs, ... }: {
   system.primaryUser = "yuta";
   imports = [
-    ../../modules/desktop/darwin.nix
+    ../../modules/desktop/darwin/system.nix
   ];
   # ── Nix 設定 ──────────────────────────────────────────────────────────────────
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
