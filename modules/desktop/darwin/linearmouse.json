@@ -1,0 +1,63 @@
+{
+    "$schema": "https:\/\/schema.linearmouse.app\/0.10.2",
+    "schemes": [
+        {
+            "if": {
+                "device": {
+                    "category": "trackpad",
+                    "productID": "0x281",
+                    "productName": "Apple Internal Keyboard \/ Trackpad",
+                    "serialNumber": "F0T1417ZFLKN4FTBF+FNG",
+                    "vendorID": "0x5ac"
+                }
+            },
+            "pointer": {
+                "redirectsToScroll": false
+            },
+            "scrolling": {
+                "acceleration": {
+                    "vertical": 1
+                },
+                "distance": {
+                    "vertical": "auto"
+                },
+                "reverse": {
+                    "vertical": false
+                },
+                "speed": {
+                    "vertical": 0
+                }
+            }
+        },
+        {
+            "if": {
+                "device": {
+                    "category": "mouse",
+                    "productID": "0xe9",
+                    "productName": "ELECOM MMO Mouse",
+                    "vendorID": "0x56e"
+                }
+            },
+            "pointer": {
+                "acceleration": "unset",
+                "disableAcceleration": false,
+                "redirectsToScroll": false,
+                "speed": 0.17
+            },
+            "scrolling": {
+                "acceleration": {
+                    "vertical": 1
+                },
+                "distance": {
+                    "vertical": "auto"
+                },
+                "reverse": {
+                    "vertical": true
+                },
+                "speed": {
+                    "vertical": 0
+                }
+            }
+        }
+    ]
+}
