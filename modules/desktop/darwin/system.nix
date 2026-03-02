@@ -17,6 +17,7 @@
       "discord"
       "spotify"
       "linearmouse"
+      "obsidian"
     ];
   };
 
