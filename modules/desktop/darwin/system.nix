@@ -18,6 +18,7 @@
       "spotify"
       "linearmouse"
       "obsidian"
+      "karabiner-elements"
     ];
   };
 
