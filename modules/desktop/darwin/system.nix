@@ -7,13 +7,15 @@
       cleanup = "zap";
     };
     taps = [
-      "nikitabobko/tap" # Aerospaceのtapを追加
+      "FelixKratz/formulae" # JankyBorders (フォーカスボーダー)
+    ];
+    brews = [
+      "borders" # JankyBorders: フォーカス中ウィンドウに色付きボーダーを表示
     ];
     casks = [
       "raycast"
       "jordanbaird-ice"
       "alt-tab"
-      "nikitabobko/tap/aerospace"
       "discord"
       "spotify"
       "linearmouse"

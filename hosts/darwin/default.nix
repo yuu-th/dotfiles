@@ -2,6 +2,8 @@
   system.primaryUser = "yuta";
   imports = [
     ../../modules/desktop/darwin/system.nix
+    ../../modules/desktop/darwin/aerospace
+    ../../modules/desktop/darwin/system-defaults.nix
   ];
   # ── Nix 設定 ──────────────────────────────────────────────────────────────────
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
