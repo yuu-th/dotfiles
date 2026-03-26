@@ -52,6 +52,7 @@
     { "if".app-id = "com.google.Chrome";           run = [ "move-node-to-workspace B" ]; }
     { "if".app-id = "org.mozilla.firefox";         run = [ "move-node-to-workspace B" ]; }
     { "if".app-id = "com.apple.Safari";            run = [ "move-node-to-workspace B" ]; }
+    { "if".app-id = "company.thebrowser.dia"; run = [ "move-node-to-workspace B" ]; }
 
     # ── Editor → WS E (左上) ──
     { "if".app-id = "com.microsoft.VSCodeInsiders"; run = [ "move-node-to-workspace E" ]; }

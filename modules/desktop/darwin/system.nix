@@ -21,6 +21,7 @@
       "linearmouse"
       "obsidian"
       "karabiner-elements"
+      "thebrowsercompany-dia"
     ];
   };
 
