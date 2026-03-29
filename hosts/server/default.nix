@@ -1,9 +1,15 @@
 { config, pkgs, lib, inputs, ... }: {
+  # ── ホスト固有の基本定義 ──────────────────────────────────────────────────────
+  nixpkgs.hostPlatform = "x86_64-linux";
+
   imports = [
+    inputs.disko.nixosModules.disko
     ./hardware-configuration.nix
     ./disk-config.nix
-    ../../modules/server/nixos.nix
+    ../../modules/nixos/flake-autoupdate.nix
   ];
+
+  myModules.nixos.flakeAutoupdate.enable = true;
 
   # ── Networking & Tailscale ────────────────────────────────────────────────
   networking = { hostName = "dotfiles-bot"; firewall.allowedTCPPorts = [ ]; };
@@ -25,7 +31,7 @@
   # ── SSH ─────────────────────────────────────────────────────────────────────
   services.openssh = {
     enable = true;
-    openFirewall = false; # ポート22を全世界に開くのをやめる
+    openFirewall = false;
     settings.PermitRootLogin = "prohibit-password";
     settings.PasswordAuthentication = false;
     authorizedKeysFiles = lib.mkForce [ "/var/lib/authorized_keys" ];

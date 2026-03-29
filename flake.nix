@@ -30,29 +30,14 @@
 
     # ── macOS (nix-darwin + Home Manager) ──────────────────────────────────────
     darwinConfigurations.yuta = nix-darwin.lib.darwinSystem {
-      system = "aarch64-darwin";
-      modules = [
-        ./hosts/darwin/default.nix
-        home-manager.darwinModules.home-manager
-        {
-          home-manager.useGlobalPkgs = true;
-          home-manager.useUserPackages = true;
-          home-manager.backupFileExtension = "before-nix-darwin";
-          home-manager.users.yuta = import ./hosts/darwin/home.nix;
-          home-manager.extraSpecialArgs = { inherit inputs; };
-        }
-      ];
       specialArgs = { inherit inputs; };
+      modules = [ ./hosts/darwin/default.nix ];
     };
 
     # ── NixOS Server (GCP e2-micro) ───────────────────────────────────────────
     nixosConfigurations.server = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      modules = [
-        inputs.disko.nixosModules.disko
-        ./hosts/server/default.nix
-      ];
       specialArgs = { inherit inputs; };
+      modules = [ ./hosts/server/default.nix ];
     };
   };
 }
