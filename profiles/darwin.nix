@@ -2,6 +2,8 @@
 { config, lib, pkgs, ... }: {
   imports = [
     # darwin modules（homebrew.nix は各アプリが自動 import）
+    ../modules/darwin/box.nix
+    ../modules/darwin/orbstack.nix
     ../modules/darwin/borders.nix
     ../modules/darwin/raycast.nix
     ../modules/darwin/ice.nix
@@ -16,6 +18,7 @@
     ../modules/darwin/pake-webapps
     ../modules/darwin/google-calendar.nix
     # common modules
+    ../modules/common/primary-user.nix
     ../modules/common/cli-tools.nix
     ../modules/common/antigravity.nix
     ../modules/common/zsh.nix
@@ -64,7 +67,7 @@
     echo "Setting up Spotlight visibility for Home Manager apps..." >&2
     rm -rf "/Applications/Nix Apps"
     mkdir -p "/Applications/Nix Apps"
-    for app in "/Users/${config.system.primaryUser}/Applications/Home Manager Apps/"*.app; do
+    for app in "/Users/${config.myConfig.primaryUser}/Applications/Home Manager Apps/"*.app; do
       if [ -e "$app" ]; then
         app_name=$(basename "$app")
         actual_path=$(readlink -f "$app")
@@ -75,7 +78,11 @@
   '';
 
   # ── Darwin modules ────────────────────────────────────────────────────────────
+  myConfig.primaryUser = config.system.primaryUser;
+
   myConfig.darwin.homebrew.enable       = true;
+  myConfig.darwin.box.enable            = true;
+  myConfig.darwin.orbstack.enable       = true;
   myConfig.darwin.borders.enable        = true;
   myConfig.darwin.raycast.enable        = true;
   myConfig.darwin.ice.enable            = true;
@@ -105,9 +112,9 @@
   myConfig.terraform.enable   = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
-  home-manager.users.${config.system.primaryUser} = {
-    home.username      = config.system.primaryUser;
-    home.homeDirectory = lib.mkForce "/Users/${config.system.primaryUser}";
+  home-manager.users.${config.myConfig.primaryUser} = {
+    home.username      = config.myConfig.primaryUser;
+    home.homeDirectory = lib.mkForce "/Users/${config.myConfig.primaryUser}";
     home.stateVersion  = "24.11";
   };
 }

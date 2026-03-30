@@ -4,7 +4,7 @@ let cfg = config.myConfig.zsh; in {
   options.myConfig.zsh.enable = lib.mkEnableOption "zsh with oh-my-zsh";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       programs.zsh = {
         enable = true;
         enableCompletion = true;

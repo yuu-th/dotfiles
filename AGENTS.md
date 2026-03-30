@@ -35,7 +35,7 @@ let cfg = config.myConfig.example; in {
   options.myConfig.example.enable = lib.mkEnableOption "Example tool";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       home.packages = with pkgs; [ example-pkg ];
       programs.zsh.shellAliases = {
         ex = "example";
@@ -48,7 +48,7 @@ let cfg = config.myConfig.example; in {
 **必須ルール:**
 - `options.myConfig.<name>.enable` を必ず定義する
 - `config = lib.mkIf cfg.enable { ... }` でガードする
-- `home-manager.users.${config.system.primaryUser}` を介して HM 設定を書く
+- `home-manager.users.${config.myConfig.primaryUser}` を介して HM 設定を書く
 - `lib.mkForce` が必要な場合（`home.homeDirectory` 等）は忘れずに付ける
 
 ---
@@ -122,6 +122,159 @@ let cfg = config.myConfig.darwin.myWebapp; in {
 
 ---
 
+## boxes/ のパターン
+
+macOS 上の OrbStack VM として起動する、用途別の**隔離された作業環境**。
+`hosts/` が物理機・クラウド VM を指すのに対し、`boxes/` はオンデマンドで起動するサンドボックス VM を指す。
+
+### アーキテクチャ（2 層構造）
+
+```
+macOS
+  └── OrbStack VM (NixOS)          ← boxes/box-NAME/default.nix
+        ├── /data/boxes/NAME/      ← 永続ストレージ（VM 再起動でも消えない）
+        └── nixos-container NAME   ← 隔離された作業空間（systemd-nspawn）
+              └── /root/           ← /data/boxes/NAME/ をマウント
+```
+
+- **VM ホスト層**: 土台。`box-base.nix` で定型化。各 box は固有部分だけ書く
+- **コンテナ層**: 実際の作業空間。同じ Linux カーネルを名前空間で隔離。`/root/` 以外は見えない
+- **永続ストレージ**: `/data/boxes/NAME/` が `/root/` にマウントされ、コンテナ停止後も残る
+
+### ファイル構造
+
+```
+boxes/
+  box-NAME/
+    default.nix    # 固有部分のみ（VMホスト定型は box-base.nix に委譲）
+modules/nixos/
+  orbstack-vm.nix  # OrbStack ハードウェア設定（bootloader なし、btrfs）
+  box-base.nix     # 全 box 共通の VM ホスト定型
+```
+
+`hardware-configuration.nix` は不要。OrbStack VM のハードウェアは全インスタンス共通のため `orbstack-vm.nix` で静的に定義済み。
+
+### box-base.nix が提供するもの
+
+各 box が `box-base.nix` を import することで以下が自動的に適用される:
+
+| 設定 | 内容 |
+|---|---|
+| `nixpkgs.hostPlatform` | `aarch64-linux` (Apple Silicon) |
+| `orbstack-vm.nix` | ブートローダなし、btrfs filesystem 宣言 |
+| `users.users.${myConfig.primaryUser}` | OrbStack ログイン用ホストユーザー |
+| `security.sudo.wheelNeedsPassword` | `false`（開発用 VM）|
+| `nix.settings` | flakes 有効、trusted-users |
+| `system.stateVersion` | `"24.11"` |
+
+### default.nix のパターン
+
+各 box が書くのは**固有部分のみ**:
+
+```nix
+# boxes/box-NAME/default.nix
+{ inputs, ... }: {
+  imports = [ ../../modules/nixos/box-base.nix ];
+
+  myConfig.primaryUser = "yuta";
+
+  # この box が所有する永続ディレクトリ
+  systemd.tmpfiles.rules = [ "d /data/boxes/NAME 0755 root root -" ];
+
+  containers."NAME" = {
+    autoStart      = true;   # VM 起動時に自動起動
+    privateNetwork = false;  # ネット接続が必要な場合。隔離したい場合は true
+
+    # /root/ にマウント → root-login で着地した瞬間に永続領域にいる
+    bindMounts."/root" = {
+      hostPath   = "/data/boxes/NAME";
+      isReadOnly = false;
+    };
+
+    config = { pkgs, ... }: {
+      system.stateVersion        = "24.11";
+      nixpkgs.config.allowUnfree = true;
+
+      # root から使えるようにシステムレベルで定義
+      environment.systemPackages = with pkgs; [
+        # ツールをここに列挙
+      ];
+
+      programs.zsh = {
+        enable = true;
+        interactiveShellInit = ''
+          PROMPT='%F{COLOR}[box-NAME]%f %~ %# '
+        '';
+      };
+
+      programs.git = {
+        enable = true;
+        config = { user.name = "NAME"; user.email = "EMAIL"; };
+      };
+
+      users.users.root.shell = pkgs.zsh;
+    };
+  };
+}
+```
+
+**必須ルール:**
+- `box-base.nix` を必ず import する
+- `myConfig.primaryUser` を必ず設定する（OrbStack のホストログインユーザー）
+- ツールはコンテナ内で `environment.systemPackages` に定義する（root から使えるため）
+- home-manager はコンテナ内では使わない（root 運用のため不要）
+- `bindMounts."/root"` に永続ストレージをマウントする（root-login で着地する場所）
+- プロンプトに `[box-NAME]` と色を入れ、どの box にいるか一目でわかるようにする
+
+### flake.nix への追加
+
+```nix
+nixosConfigurations.box-NAME = nixpkgs.lib.nixosSystem {
+  specialArgs = { inherit inputs; };
+  modules = [ ./boxes/box-NAME/default.nix ];
+};
+```
+
+### 新しい box を追加する手順
+
+1. `boxes/box-NAME/default.nix` を作成（上記パターン適用）
+2. `flake.nix` に `nixosConfigurations.box-NAME` を追加
+3. git add してから VM を作成・適用:
+
+```bash
+git add boxes/box-NAME/
+# 初回 bootstrap（ssh root でも可）
+orb create nixos:24.11 box-NAME
+ssh root@box-NAME.orb.local "nixos-rebuild switch --flake /Users/yuta/dev/dotfiles#box-NAME"
+```
+
+4. 以降は macOS から `box` コマンドで操作:
+
+```bash
+box NAME          # コンテナのシェルに入る → [box-NAME] ~ #
+box switch NAME   # 環境を再定義して適用
+box stop NAME     # 停止（/data/boxes/NAME/ は保持）
+```
+
+### ファイル空間の対応
+
+| 視点 | パス |
+|---|---|
+| macOS | `/Users/yuta/OrbStack/box-NAME/data/boxes/NAME/` |
+| OrbStack VM | `/data/boxes/NAME/` |
+| コンテナ内 | `/root/` |
+
+コンテナ内からは macOS のファイルは見えない（隔離されている）。
+
+### `privateNetwork` の使い分け
+
+| 値 | 用途 |
+|---|---|
+| `false` | API 通信が必要な場合（AI agent CLI 等） |
+| `true` + `localAddress` | 外部通信を遮断したい場合（セキュリティ重視） |
+
+---
+
 ## modules/nixos/ のパターン
 
 NixOS サーバ専用サービス。`myModules.nixos.*` 名前空間を使います。
@@ -165,9 +318,9 @@ darwin 環境の全設定を集約する単一ファイル。ここで行うこ�
   # ...
 
   # HM user facts
-  home-manager.users.${config.system.primaryUser} = {
-    home.username      = config.system.primaryUser;
-    home.homeDirectory = lib.mkForce "/Users/${config.system.primaryUser}";
+  home-manager.users.${config.myConfig.primaryUser} = {
+    home.username      = config.myConfig.primaryUser;
+    home.homeDirectory = lib.mkForce "/Users/${config.myConfig.primaryUser}";
     home.stateVersion  = "24.11";
   };
 }
@@ -238,10 +391,10 @@ modules/common/go.nix
 
 ```nix
 # NG: home-manager のデフォルト null と競合してエラーになる
-home.homeDirectory = "/Users/${config.system.primaryUser}";
+home.homeDirectory = "/Users/${config.myConfig.primaryUser}";
 
 # OK
-home.homeDirectory = lib.mkForce "/Users/${config.system.primaryUser}";
+home.homeDirectory = lib.mkForce "/Users/${config.myConfig.primaryUser}";
 ```
 
 ### 新規ファイルを git add せずにビルドする

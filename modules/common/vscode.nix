@@ -37,7 +37,7 @@ in {
   options.myConfig.vscode.enable = lib.mkEnableOption "VS Code Insiders with automated hash tracking";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       programs.vscode = {
         enable  = true;
         package = vscode-insiders;

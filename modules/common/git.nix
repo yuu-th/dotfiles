@@ -4,7 +4,7 @@ let cfg = config.myConfig.git; in {
   options.myConfig.git.enable = lib.mkEnableOption "git with user config";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       programs.git = {
         enable = true;
         settings.user = {

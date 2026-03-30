@@ -39,5 +39,11 @@
       specialArgs = { inherit inputs; };
       modules = [ ./hosts/server/default.nix ];
     };
+
+    # ── NixOS Box: AI coding agents (OrbStack VM) ─────────────────────────────
+    nixosConfigurations.box-ai = nixpkgs.lib.nixosSystem {
+      specialArgs = { inherit inputs; };
+      modules = [ ./boxes/box-ai/default.nix ];
+    };
   };
 }

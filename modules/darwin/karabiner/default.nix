@@ -6,7 +6,7 @@ let cfg = config.myConfig.darwin.karabiner; in {
   config = lib.mkIf cfg.enable {
     homebrew.casks = [ "karabiner-elements" ];
 
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       xdg.configFile."karabiner/karabiner.json" = {
         source = ./karabiner.json;
         force = true;

@@ -49,7 +49,7 @@ let
     };
   };
 
-  stateDir = "/Users/${config.system.primaryUser}/.local/state/pake-webapps";
+  stateDir = "/Users/${config.myConfig.primaryUser}/.local/state/pake-webapps";
 
   installScript = app:
     let

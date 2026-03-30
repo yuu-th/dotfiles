@@ -29,7 +29,7 @@ let cfg = config.myConfig.darwin.homebrew; in {
 
       if ! /opt/homebrew/bin/brew --version > /dev/null 2>&1; then
         echo "Homebrew not found. Installing..." >&2
-        sudo -u ${config.system.primaryUser} /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/null
+        sudo -u ${config.myConfig.primaryUser} /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/null
       fi
     '';
 
@@ -43,7 +43,7 @@ let cfg = config.myConfig.darwin.homebrew; in {
             app_name=$(basename "$app_path")
             if [ ! -e "/Applications/$app_name" ]; then
               echo "Broken Cask detected: $cask_name ($app_name not in /Applications). Reinstalling..." >&2
-              sudo -u ${config.system.primaryUser} "$BREW" reinstall --cask "$cask_name"
+              sudo -u ${config.myConfig.primaryUser} "$BREW" reinstall --cask "$cask_name"
             fi
           fi
         done

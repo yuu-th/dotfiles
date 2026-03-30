@@ -4,7 +4,7 @@ let cfg = config.myConfig.terraform; in {
   options.myConfig.terraform.enable = lib.mkEnableOption "Terraform infrastructure tooling";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       home.packages = with pkgs; [ terraform tflint ];
       programs.zsh.shellAliases = {
         tf     = "terraform";

@@ -4,7 +4,7 @@ let cfg = config.myConfig.node; in {
   options.myConfig.node.enable = lib.mkEnableOption "Node.js development environment";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       home.packages = [ pkgs.nodejs_22 ];
       home.file.".npmrc".text = ''
         prefix=''${HOME}/.npm-global

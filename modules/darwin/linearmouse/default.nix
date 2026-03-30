@@ -14,7 +14,7 @@ let cfg = config.myConfig.darwin.linearmouse; in {
       };
     };
 
-    home-manager.users.${config.system.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = {
       xdg.configFile."linearmouse/linearmouse.json".source = ./linearmouse.json;
     };
   };
