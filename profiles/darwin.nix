@@ -17,6 +17,9 @@
     ../modules/darwin/linearmouse
     ../modules/darwin/pake-webapps
     ../modules/darwin/google-calendar.nix
+    ../modules/darwin/ghostty.nix
+    # sub-profiles（常時ON設定を関心ごとに分割）
+    ./fav_fonts.nix
     # common modules
     ../modules/common/primary-user.nix
     ../modules/common/cli-tools.nix
@@ -31,6 +34,10 @@
     ../modules/common/node.nix
     ../modules/common/rust.nix
     ../modules/common/terraform.nix
+    ../modules/common/github-copilot-cli.nix
+    ../modules/common/fish.nix
+    ../modules/common/zellij.nix
+    ../modules/common/neovim.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -96,6 +103,7 @@
   myConfig.darwin.linearmouse.enable    = true;
   myConfig.darwin.pake.enable           = true;
   myConfig.darwin.googleCalendar.enable = true;
+  myConfig.darwin.ghostty.enable        = true;
 
   # ── Common modules ────────────────────────────────────────────────────────────
   myConfig.cliTools.enable    = true;
@@ -110,6 +118,10 @@
   myConfig.node.enable        = true;
   myConfig.rust.enable        = true;
   myConfig.terraform.enable   = true;
+  myConfig.githubCopilotCli.enable = true;
+  myConfig.fish.enable             = true;
+  myConfig.zellij.enable           = true;
+  myConfig.neovim.enable           = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {

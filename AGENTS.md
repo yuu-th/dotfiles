@@ -122,6 +122,65 @@ let cfg = config.myConfig.darwin.myWebapp; in {
 
 ---
 
+## profiles/ のサブファイルパターン
+
+`profiles/darwin.nix` が肥大化しないよう、**関心ごとに分割したサブファイル**を `profiles/` 以下に置き、`darwin.nix` から import できる。
+
+### いつサブファイルにするか
+
+| ケース | 判断 |
+|---|---|
+| enable フラグ不要の「常時ON設定」が1つのテーマにまとまる | サブファイルに分割 |
+| 複数のモジュールに共通して値を注入する | サブファイルに分割 |
+| 数行程度 | `darwin.nix` に直書き |
+
+### フォント管理パターン（`profiles/fav_fonts.nix`）
+
+フォントとそれを参照するモジュールオプションを**一箇所で管理**する規約。
+
+```nix
+# profiles/fav_fonts.nix
+{ pkgs, ... }: {
+  # フォントのインストール（nix-darwin / NixOS 共通オプション）
+  fonts.packages = with pkgs; [
+    udev-gothic-nf
+  ];
+
+  # フォントを参照するモジュールのオプションをここで上書き
+  # → フォントを変更するときはここだけ編集すれば良い
+  myConfig.darwin.ghostty.fontFamily = "UDEV Gothic NF";
+}
+```
+
+`darwin.nix` への追加:
+
+```nix
+imports = [
+  # ...
+  ./fav_fonts.nix  # sub-profiles（常時ON設定を関心ごとに分割）
+];
+```
+
+モジュール側（例: `modules/darwin/ghostty.nix`）は文字列オプションとして受け取る:
+
+```nix
+options.myConfig.darwin.ghostty = {
+  enable     = lib.mkEnableOption "Ghostty";
+  fontFamily = lib.mkOption {
+    type    = lib.types.str;
+    default = "UDEV Gothic NF";
+  };
+};
+# 設定ファイル内で参照
+# font-family = ${cfg.fontFamily}
+```
+
+**必須ルール:**
+- フォントを追加・変更する際は `profiles/fav_fonts.nix` **だけ**を編集する
+- モジュール側でフォント名をハードコードしない
+
+---
+
 ## boxes/ のパターン
 
 macOS 上の OrbStack VM として起動する、用途別の**隔離された作業環境**。

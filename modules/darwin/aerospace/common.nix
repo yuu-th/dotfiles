@@ -1,10 +1,10 @@
 # ── AeroSpace 共通設定 ──────────────────────────────────────────────────────
-# キーバインド、モード、gaps、マウス追従、JankyBorders など
+# キーバインド、モード、gaps、マウス追従、JankyBorders、アプリ割り当て など
 # モニタ構成に依存しない設定をここに集約する
 #
 # このファイルは Nix関数として attrset を返す
 # default.nix から import してプロファイルとマージされる
-{ pkgs, setupMediaWorkspace, ... }:
+{ pkgs, setupMediaWorkspace, focusTool, ... }:
 {
   config-version = 2;
 
@@ -137,6 +137,20 @@
       # ── Goodies #10: cmd-h (Hide) を無効化 ──
       cmd-h = [];
       cmd-alt-h = [];
+
+      # ── Zellij テレポートマクロ ─────────────────────────────────────────────
+      # Alt+Ctrl+E/G/S: メインウィンドウにテレポートして対応タブへ（E=Editor, G=Git, S=Shell）
+      # Alt+Ctrl+1/2/3: 現在 WS の左から N 番目の AI ウィンドウをフォーカス
+      # Alt+Shift+A: 現在プロジェクトの新規 AI ウィンドウを起動
+      # Alt+Shift+P: プロジェクトピッカー（既存セッション + ~/dev/ 一覧）
+      alt-ctrl-e = "exec-and-forget ${focusTool}/bin/focus-tool editor";
+      alt-ctrl-g = "exec-and-forget ${focusTool}/bin/focus-tool git";
+      alt-ctrl-s = "exec-and-forget ${focusTool}/bin/focus-tool shell";
+      alt-ctrl-1 = "exec-and-forget ${focusTool}/bin/focus-tool ai 1";
+      alt-ctrl-2 = "exec-and-forget ${focusTool}/bin/focus-tool ai 2";
+      alt-ctrl-3 = "exec-and-forget ${focusTool}/bin/focus-tool ai 3";
+      alt-shift-a = "exec-and-forget ${focusTool}/bin/focus-tool ai-new";
+      alt-shift-p = "exec-and-forget ${focusTool}/bin/focus-tool project-picker";
     };
 
     # ── リサイズモード ──
@@ -160,4 +174,33 @@
       alt-shift-d = [ "enable toggle" "mode main" ];
     };
   };
+
+  # ── アプリをワークスペースに自動割り当て ──────────────────────────────────
+  # モニタ構成に依存しないルール。ルール順序が重要: 最初にマッチしたルールのみ実行される。
+  on-window-detected = [
+    # ── Browser → WS B ──
+    { "if".app-id = "com.google.Chrome";            run = [ "move-node-to-workspace B" ]; }
+    { "if".app-id = "org.mozilla.firefox";          run = [ "move-node-to-workspace B" ]; }
+    { "if".app-id = "com.apple.Safari";             run = [ "move-node-to-workspace B" ]; }
+    { "if".app-id = "company.thebrowser.dia";       run = [ "move-node-to-workspace B" ]; }
+
+    # ── Editor → WS E ──
+    { "if".app-id = "com.microsoft.VSCodeInsiders"; run = [ "move-node-to-workspace E" ]; }
+    { "if".app-id = "com.microsoft.VSCode";         run = [ "move-node-to-workspace E" ]; }
+
+    # ── Media / 常駐アプリ → WS M ──
+    { "if".app-id = "com.spotify.client";           run = [ "move-node-to-workspace M" ]; }
+    { "if".app-id = "com.hnc.Discord";              run = [ "move-node-to-workspace M" ]; }
+    { "if".app-id = "com.apple.iCal";               run = [ "move-node-to-workspace M" ]; }
+
+    # ── Floating (ダイアログ系) ── 現在のWSに留まる ──
+    { "if".app-name-regex-substring = "^(Finder|System Preferences|System Settings|Calculator|Dictionary)$";
+      run = [ "layout floating" ]; }
+
+    # ── Ghostty は focus-tool.sh が WS を制御する: catch-all から除外 ──
+    { "if".app-id = "com.mitchellh.ghostty"; run = []; }
+
+    # ── Catch-all: 上記に該当しないアプリ → WS 3 ──
+    { run = [ "move-node-to-workspace 3" ]; }
+  ];
 }

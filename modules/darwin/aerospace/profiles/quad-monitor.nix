@@ -18,6 +18,8 @@
 #   │ Monitor 2 (左下) │  │ Monitor 4 (右下/MacBook) │
 #   │ ブラウザ専用     │  │ Spotify/Chat             │
 #   └──────────────────┘  └──────────────────────────┘
+#
+# NOTE: アプリ割り当てルール (on-window-detected) は common.nix に集約済み
 {
   # ── 永続ワークスペース ──────────────────────────────────────────────────
   persistent-workspaces = [ "1" "2" "3" "4" "5" "6" "7" "8" "9" "M" "B" "E" ];
@@ -44,30 +46,4 @@
     "8" = "L2235";
     "9" = "L2235";
   };
-
-  # ── アプリをワークスペースに自動割り当て ──────────────────────────────────
-  # ルール順序が重要: 最初にマッチしたルールのみ実行される
-  on-window-detected = [
-    # ── Browser → WS B (左下) ──
-    { "if".app-id = "com.google.Chrome";           run = [ "move-node-to-workspace B" ]; }
-    { "if".app-id = "org.mozilla.firefox";         run = [ "move-node-to-workspace B" ]; }
-    { "if".app-id = "com.apple.Safari";            run = [ "move-node-to-workspace B" ]; }
-    { "if".app-id = "company.thebrowser.dia"; run = [ "move-node-to-workspace B" ]; }
-
-    # ── Editor → WS E (左上) ──
-    { "if".app-id = "com.microsoft.VSCodeInsiders"; run = [ "move-node-to-workspace E" ]; }
-    { "if".app-id = "com.microsoft.VSCode";         run = [ "move-node-to-workspace E" ]; }
-
-    # ── Media / 常駐アプリ → WS M (右下) ──
-    { "if".app-id = "com.spotify.client";          run = [ "move-node-to-workspace M" ]; }
-    { "if".app-id = "com.hnc.Discord";             run = [ "move-node-to-workspace M" ]; }
-    { "if".app-id = "com.apple.iCal";              run = [ "move-node-to-workspace M" ]; }
-
-    # ── Floating (ダイアログ系) ── 現在のWSに留まる
-    { "if".app-name-regex-substring = "^(Finder|System Preferences|System Settings|Calculator|Dictionary)$";
-      run = [ "layout floating" ]; }
-
-    # ── Catch-all: 上記に該当しないアプリ → WS 3 (L2235HW/右上) ──
-    { run = [ "move-node-to-workspace 3" ]; }
-  ];
 }
