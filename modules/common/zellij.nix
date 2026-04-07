@@ -21,11 +21,7 @@ let cfg = config.myConfig.zellij; in {
       # ── パッケージ ─────────────────────────────────────────────────────────
       home.packages = with pkgs; [
         zellij
-        lazygit
-        yazi
       ];
-
-      programs.zellij.enable = true;
 
       # ── Zellij 設定 (config.kdl) ─────────────────────────────────────────
       home.file.".config/zellij/config.kdl".text = ''
@@ -77,44 +73,6 @@ let cfg = config.myConfig.zellij; in {
             orange "#ff9e64"
           }
         }
-      '';
-
-      # ── zj.fish (Zellij セッションマネージャー) ───────────────────────────
-      home.file.".config/fish/functions/zj.fish".text = ''
-function zj --description "Zellij session manager (zj [name])"
-    if set -q ZELLIJ_SESSION_NAME
-        echo "Already in Zellij session '$ZELLIJ_SESSION_NAME'."
-        echo "Detach first (Ctrl+D) or open a new Ghostty window (Cmd+N)."
-        return 1
-    end
-
-    if test (count $argv) -eq 0
-        set -l sessions (zellij list-sessions --short --no-formatting 2>/dev/null | awk '{print $1}' | grep -v '^$')
-        if test -z "$sessions"
-            echo "No Zellij sessions. Usage: zj <name>"
-            return 1
-        end
-        set -l picked (printf '%s\n' $sessions | fzf --prompt="Attach to: " --height=40%)
-        test -z "$picked"; and return 0
-        zellij attach "$picked"
-        return
-    end
-
-    set -l name $argv[1]
-
-    if test -d "$name"
-        cd (realpath "$name")
-        set name (basename "$name")
-    else if test -d "$HOME/dev/$name"
-        cd "$HOME/dev/$name"
-    end
-
-    if zellij list-sessions --short --no-formatting 2>/dev/null | awk '{print $1}' | grep -qx "$name"
-        zellij attach "$name"
-    else
-        zellij -s "$name"
-    end
-end
       '';
 
     };

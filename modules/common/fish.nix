@@ -80,7 +80,7 @@ let cfg = config.myConfig.fish; in {
 
           # ── Ghostty 起動時の Zellij セッション選択 ────────────────────────
           # Ghostty で起動 & Zellij 未使用 のインタラクティブシェルで自動表示する。
-          # 新規ウィンドウ・新規タブ・Quick Terminal初回起動すべてで発火する。
+          # 新規ウィンドウ・Quick Terminal 初回起動すべてで発火する。
           # Ctrl+C または "Zellijなし" を選べばそのまま fish を使える。
           if set -q TERM_PROGRAM; and test "$TERM_PROGRAM" = "ghostty"
             and not set -q ZELLIJ
@@ -96,10 +96,10 @@ let cfg = config.myConfig.fish; in {
               case "新規セッション..."
                 read -P "Session name: " _new_name
                 if test -n "$_new_name"
-                  zj "$_new_name"
+                  zellij -s "$_new_name"
                 end
               case '*'
-                zj "$_picked"
+                zellij attach "$_picked"
             end
           end
         '';

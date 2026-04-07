@@ -39,6 +39,7 @@
     ../modules/common/fish.nix
     ../modules/common/zellij.nix
     ../modules/common/neovim.nix
+    ../modules/common/teams.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -124,6 +125,7 @@
   myConfig.fish.enable             = true;
   myConfig.zellij.enable           = true;
   myConfig.neovim.enable           = true;
+  myConfig.teams.enable            = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
