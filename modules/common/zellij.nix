@@ -23,6 +23,15 @@ let cfg = config.myConfig.zellij; in {
         zellij
       ];
 
+      # ── カスタムレイアウト: minimal (タブバー・ステータスバーなし) ────────
+      # "minimal" は Zellij 組み込みではないため自前で定義する。
+      # 単一ペインのみ。タブバー・ステータスバーは表示しない。
+      home.file.".config/zellij/layouts/minimal.kdl".text = ''
+        layout {
+          pane
+        }
+      '';
+
       # ── Zellij 設定 (config.kdl) ─────────────────────────────────────────
       home.file.".config/zellij/config.kdl".text = ''
         mouse_mode true
