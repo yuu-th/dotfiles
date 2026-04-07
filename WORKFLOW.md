@@ -100,22 +100,22 @@ Ghostty: AI ウィンドウ (2つ目)
 
 ### AeroSpace: ワークフロー インフラ層 (新規追加)
 
-> `Alt+Shift` = 「ワークフロー基盤操作」。プロジェクトとAIを抽象化して管理する層。  
+> `Alt+Ctrl` = focus-tool 専用空間。プロジェクト・AI・ツールへの瞬間移動をすべてここに集約。  
 > 具体的なウィンドウ位置・Zellijセッション名を意識させない。
 
 | キー | 動作 | 体験 |
 |------|------|------|
-| `Alt+Shift+P` | プロジェクトピッカー | fzf で既存セッション＋~/dev/ 一覧 → 選択 → 自動で開く/切替 |
-| `Alt+Shift+A` | 現在プロジェクトの新AI起動 | プロジェクト自動検出 → AIウィンドウを現在WSにタイリング |
+| `Alt+Ctrl+P` | プロジェクトピッカー | fzf で既存セッション＋~/dev/ 一覧 → 選択 → 自動で開く/切替 |
+| `Alt+Ctrl+A` | 現在プロジェクトの新AI起動 | プロジェクト自動検出 → AIウィンドウを現在WSにタイリング |
 
 > **インフラ層の思想**: 「今どのZellijセッションか」「どのWSか」を意識しなくて良い。  
-> `Alt+Shift+P` でプロジェクトを、`Alt+Shift+A` でAIを、それだけで全てが動く。
+> `Alt+Ctrl+P` でプロジェクトを、`Alt+Ctrl+A` でAIを、それだけで全てが動く。
 
 ### AeroSpace: ツール直接テレポート (新規追加)
 
-> `Alt+Ctrl` = 「指定ツールにどこからでも瞬間移動」  
+> `Alt+Ctrl` = 「指定ツールにどこからでも瞬間移動」（A・P を含め Alt+Ctrl 空間に統一）  
 > 既存 `Alt+Ctrl+hjkl` (モニター移動) と `Alt+Ctrl+M` (メディアWS) に統一した意味論。  
-> **文字キーはツール名と一致** (E=Editor, G=Git, S=Shell)、**数字はAI位置** (1=左から1番目, 2=左から2番目)。  
+> **文字キーはツール名と一致** (E=Editor, G=Git, S=Shell, A=AI new, P=Picker)、**数字はAI位置** (1=左から1番目, 2=左から2番目)。  
 > **AI は必ず Alt+Ctrl+1/2/3 で到達**: Zellij メインセッションに AI タブは存在しない。
 
 | キー | 動作 | 仕組み |
@@ -123,11 +123,14 @@ Ghostty: AI ウィンドウ (2つ目)
 | `Alt+Ctrl+E` | Editor に瞬間移動 | "main" ウィンドウをフォーカス + Cmd+E 送信 |
 | `Alt+Ctrl+G` | Git に瞬間移動 | "main" ウィンドウをフォーカス + Cmd+G 送信 |
 | `Alt+Ctrl+S` | Shell に瞬間移動 | "main" ウィンドウをフォーカス + Cmd+S 送信 |
+| `Alt+Ctrl+A` | 現在プロジェクトの新AI起動 | タイトル ": main" からプロジェクト検出 → AI ウィンドウ生成 |
+| `Alt+Ctrl+P` | プロジェクトピッカー | fzf で既存セッション + ~/dev/ → 選択 → 自動で開く/切替 |
 | `Alt+Ctrl+1` | 左から1番目のAIに移動 | 現在WSのAIウィンドウをX座標昇順で並べて1番目をフォーカス |
 | `Alt+Ctrl+2` | 左から2番目のAIに移動 | 現在WSのAIウィンドウをX座標昇順で並べて2番目をフォーカス |
 | `Alt+Ctrl+3` | 左から3番目のAIに移動 | 現在WSのAIウィンドウをX座標昇順で並べて3番目をフォーカス |
 
-> **一貫性**: E=Editor・G=Git・S=Shell の意味は AeroSpace 側 (Alt+Ctrl) でも Zellij 側 (Cmd) でも同じ。
+> **一貫性**: E=Editor・G=Git・S=Shell の意味は AeroSpace 側 (Alt+Ctrl) でも Zellij 側 (Cmd) でも同じ。  
+> **Alt+Ctrl で全 focus-tool 操作が完結**: Alt+Shift は AeroSpace のウィンドウ/WS 操作専用。
 
 ### Ghostty: ターミナル基盤
 
@@ -241,7 +244,7 @@ yazi でファイルを選択 → Enter → neovim/ki でそのファイルが�
    → Editor タブ にフォーカス
    → yazi (左) + neovim (右) が既に分割配置されている
 
-   (または Alt+Shift+P から "dotfiles" を選択しても同じ結果)
+   (または Alt+Ctrl+P から "dotfiles" を選択しても同じ結果)
 
 2. ファイル構造を把握する
    yazi でカーソル移動 → Enter でプレビュー/開く
@@ -256,7 +259,7 @@ yazi でファイルを選択 → Enter → neovim/ki でそのファイルが�
 ### シナリオ 2: AI コーディングセッション開始
 
 ```
-1. どこからでも Alt+Shift+A を押す (Shell タブへの移動不要)
+1. どこからでも Alt+Ctrl+A を押す (Shell タブへの移動不要)
    → 以下が自動実行される:
      a. 現在WSのメインウィンドウタイトルからプロジェクト名を自動検出
         ("[dotfiles]: main" → project = "dotfiles")
@@ -282,7 +285,7 @@ yazi でファイルを選択 → Enter → neovim/ki でそのファイルが�
 
 ```
 1. AI が1つ稼働中、さらに2つ目を起動
-   Alt+Shift+A (どこからでも、2回目)
+   Alt+Ctrl+A (どこからでも、2回目)
    → "dotfiles-ai-2" セッション + "[dotfiles]: AI" ウィンドウが生成
    → 現在WSに AI ウィンドウが2つ並ぶ (左=Alt+Ctrl+1, 右=Alt+Ctrl+2)
 
@@ -321,9 +324,9 @@ WS B (ブラウザ) で調べ物中...
 ### シナリオ 5: プロジェクト切替 & 新規開始
 
 ```
-【どこからでも Alt+Shift+P 一発】
+【どこからでも Alt+Ctrl+P 一発】
 
-Alt+Shift+P → プロジェクトピッカーが開く
+Alt+Ctrl+P → プロジェクトピッカーが開く
 
   ┌──────────────────────────────────────────────┐
   │ > _                                          │
@@ -353,7 +356,7 @@ Alt+Shift+P → プロジェクトピッカーが開く
   プロジェクトとWSの対応はZellijセッションのウィンドウタイトルから逆引き可能
 
 戻り方:
-  Alt+Shift+P → "dotfiles" を選択 → WS E に即座に戻る (状態保持)
+  Alt+Ctrl+P → "dotfiles" を選択 → WS E に即座に戻る (状態保持)
 ```
 
 ### シナリオ 6: Git 作業 (コミット → PR)
@@ -455,8 +458,8 @@ aerospace.nix での設定:
   "alt-ctrl-1"   = "exec-and-forget /path/to/focus-tool.sh ai 1";
   "alt-ctrl-2"   = "exec-and-forget /path/to/focus-tool.sh ai 2";
   "alt-ctrl-3"   = "exec-and-forget /path/to/focus-tool.sh ai 3";
-  "alt-shift-a"  = "exec-and-forget /path/to/focus-tool.sh ai-new";
-  "alt-shift-p"  = "exec-and-forget /path/to/focus-tool.sh project-picker";
+  "alt-ctrl-a"  = "exec-and-forget /path/to/focus-tool.sh ai-new";
+  "alt-ctrl-p"  = "exec-and-forget /path/to/focus-tool.sh project-picker";
 
 【project-picker の動作詳細】
   1. Zellij セッション一覧から AI セッション (*-ai-N) を除外してプロジェクト一覧を取得
@@ -501,8 +504,8 @@ aerospace.nix での設定:
 
 ### `modules/darwin/aerospace/common.nix` (既存ファイル変更)
 - [ ] `alt-ctrl-e/g/s` + `alt-ctrl-1/2/3` テレポートマクロ追加
-- [ ] `alt-shift-a` (新AI起動) バインド追加
-- [ ] `alt-shift-p` (プロジェクトピッカー) バインド追加
+- [ ] `alt-ctrl-a` (新AI起動) バインド追加
+- [ ] `alt-ctrl-p` (プロジェクトピッカー) バインド追加
 - [ ] Ghostty を WS E に自動配置するルール追加 (`on-window-detected`)
 
 ### `modules/darwin/aerospace/focus-tool.sh` (新規作成)

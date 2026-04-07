@@ -18,6 +18,7 @@
     ../modules/darwin/pake-webapps
     ../modules/darwin/google-calendar.nix
     ../modules/darwin/ghostty.nix
+    ../modules/darwin/parsec.nix
     # sub-profiles（常時ON設定を関心ごとに分割）
     ./fav_fonts.nix
     # common modules
@@ -104,6 +105,7 @@
   myConfig.darwin.pake.enable           = true;
   myConfig.darwin.googleCalendar.enable = true;
   myConfig.darwin.ghostty.enable        = true;
+  myConfig.darwin.parsec.enable         = true;
 
   # ── Common modules ────────────────────────────────────────────────────────────
   myConfig.cliTools.enable    = true;

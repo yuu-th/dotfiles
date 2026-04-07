@@ -138,19 +138,12 @@
       cmd-h = [];
       cmd-alt-h = [];
 
-      # ── Zellij テレポートマクロ ─────────────────────────────────────────────
-      # Alt+Ctrl+E/G/S: メインウィンドウにテレポートして対応タブへ（E=Editor, G=Git, S=Shell）
-      # Alt+Ctrl+1/2/3: 現在 WS の左から N 番目の AI ウィンドウをフォーカス
-      # Alt+Shift+A: 現在プロジェクトの新規 AI ウィンドウを起動
-      # Alt+Shift+P: プロジェクトピッカー（既存セッション + ~/dev/ 一覧）
-      alt-ctrl-e = "exec-and-forget ${focusTool}/bin/focus-tool editor";
-      alt-ctrl-g = "exec-and-forget ${focusTool}/bin/focus-tool git";
-      alt-ctrl-s = "exec-and-forget ${focusTool}/bin/focus-tool shell";
-      alt-ctrl-1 = "exec-and-forget ${focusTool}/bin/focus-tool ai 1";
-      alt-ctrl-2 = "exec-and-forget ${focusTool}/bin/focus-tool ai 2";
-      alt-ctrl-3 = "exec-and-forget ${focusTool}/bin/focus-tool ai 3";
-      alt-shift-a = "exec-and-forget ${focusTool}/bin/focus-tool ai-new";
-      alt-shift-p = "exec-and-forget ${focusTool}/bin/focus-tool project-picker";
+      # ── Ghostty ウィンドウフォーカス ─────────────────────────────────────────
+      # Alt+Ctrl+1/2/3: 現在 WS の Ghostty ウィンドウを X 座標昇順で N 番目にフォーカス
+      alt-ctrl-1 = "exec-and-forget ${focusTool}/bin/focus-tool win 1";
+      alt-ctrl-2 = "exec-and-forget ${focusTool}/bin/focus-tool win 2";
+      alt-ctrl-3 = "exec-and-forget ${focusTool}/bin/focus-tool win 3";
+      # 新規ウィンドウは Ghostty ネイティブの Cmd+N を使う（AeroSpace バインド不要）
     };
 
     # ── リサイズモード ──
@@ -188,19 +181,25 @@
     { "if".app-id = "com.microsoft.VSCodeInsiders"; run = [ "move-node-to-workspace E" ]; }
     { "if".app-id = "com.microsoft.VSCode";         run = [ "move-node-to-workspace E" ]; }
 
+    # ── AI / Agent → WS 1 ──
+    { "if".app-id = "com.google.antigravity";       run = [ "move-node-to-workspace 1" ]; }
+
     # ── Media / 常駐アプリ → WS M ──
     { "if".app-id = "com.spotify.client";           run = [ "move-node-to-workspace M" ]; }
     { "if".app-id = "com.hnc.Discord";              run = [ "move-node-to-workspace M" ]; }
     { "if".app-id = "com.apple.iCal";               run = [ "move-node-to-workspace M" ]; }
 
+    # ── Terminals (その他) → WS 3 ──
+    { "if".app-id = "com.googlecode.iterm2";        run = [ "move-node-to-workspace 3" ]; }
+    { "if".app-id = "com.apple.Terminal";           run = [ "move-node-to-workspace 3" ]; }
+
     # ── Floating (ダイアログ系) ── 現在のWSに留まる ──
     { "if".app-name-regex-substring = "^(Finder|System Preferences|System Settings|Calculator|Dictionary)$";
       run = [ "layout floating" ]; }
+    { "if".app-id = "com.mojang.minecraftlauncher";
+      run = [ "layout floating" ]; }
 
-    # ── Ghostty は focus-tool.sh が WS を制御する: catch-all から除外 ──
-    { "if".app-id = "com.mitchellh.ghostty"; run = []; }
-
-    # ── Catch-all: 上記に該当しないアプリ → WS 3 ──
-    { run = [ "move-node-to-workspace 3" ]; }
+    # Ghostty は on-window-detected で自動移動しない。
+    # Alt+N で開いた新ウィンドウは現在の WS にそのまま配置される。
   ];
 }

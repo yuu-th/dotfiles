@@ -77,6 +77,31 @@ let cfg = config.myConfig.fish; in {
           # man を bat でシンタックスハイライト表示
           set -gx MANPAGER "sh -c 'col -bx | bat -l man -p'"
           set -gx MANROFFOPT "-c"
+
+          # ── Ghostty 起動時の Zellij セッション選択 ────────────────────────
+          # Ghostty で起動 & Zellij 未使用 のインタラクティブシェルで自動表示する。
+          # 新規ウィンドウ・新規タブ・Quick Terminal初回起動すべてで発火する。
+          # Ctrl+C または "Zellijなし" を選べばそのまま fish を使える。
+          if set -q TERM_PROGRAM; and test "$TERM_PROGRAM" = "ghostty"
+            and not set -q ZELLIJ
+            set -l _sessions (zellij list-sessions --short --no-formatting 2>/dev/null | awk '{print ''$1}' | grep -v '^$')
+            set -l _choices "Zellijなし (plain fish)" "新規セッション..."
+            if test -n "$_sessions"
+              set _choices $_choices $_sessions
+            end
+            set -l _picked (printf '%s\n' $_choices | fzf --prompt="  Terminal: " --height=40% --no-sort --border)
+            switch "$_picked"
+              case "Zellijなし (plain fish)" ""
+                # plain fish のまま続ける
+              case "新規セッション..."
+                read -P "Session name: " _new_name
+                if test -n "$_new_name"
+                  zj "$_new_name"
+                end
+              case '*'
+                zj "$_picked"
+            end
+          end
         '';
       };
 

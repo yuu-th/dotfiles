@@ -58,7 +58,7 @@ let cfg = config.myConfig.darwin.ghostty; in {
         # ログインシェルは zsh のまま。Ghostty が fish を直接起動する。
         # pkgs.fish を参照することで fish パッケージへの明示的な依存を保証。
         # nix-darwin の programs.fish.enable が /etc/fish/ に Nix PATH を生成済み。
-        command = ${pkgs.fish}/bin/fish
+        command = ${pkgs.fish}/bin/fish -l
 
         # ── シェル統合 ───────────────────────────────────────────────────
         shell-integration = detect
@@ -68,31 +68,43 @@ let cfg = config.myConfig.darwin.ghostty; in {
         # ── キーバインド ─────────────────────────────────────────────────
         # アクション一覧: https://ghostty.org/docs/config/keybind/reference
         #
-        # Zellij に委譲: unbind = "アンバインド＆ターミナルアプリに透過" の意味
-        # (Ghostty が intercept せず、Zellij が受け取れる)
+        # 純粋ウィンドウ派: タブ・ペイン分割は使わない。
+        # ウィンドウ管理は AeroSpace に任せる。
+        # Cmd+N=新規ウィンドウ(デフォルト), Cmd+W=ウィンドウを閉じる
+
+        # タブ・ペイン操作を無効化
         keybind = super+t=unbind
-        keybind = super+w=unbind
-        keybind = super+shift+t=unbind
         keybind = super+d=unbind
         keybind = super+shift+d=unbind
-        keybind = super+[=unbind
-        keybind = super+]=unbind
-        keybind = super+1=unbind
-        keybind = super+2=unbind
-        keybind = super+3=unbind
-        keybind = super+4=unbind
-        keybind = super+5=unbind
-        keybind = super+6=unbind
-        keybind = super+7=unbind
-        keybind = super+8=unbind
-        keybind = super+9=unbind
+        keybind = super+left_bracket=unbind
+        keybind = super+right_bracket=unbind
 
-        # Quick Terminal: Opt+Space でグローバルドロップダウン
-        keybind = global:opt+space=toggle_quick_terminal
+        # Cmd+W = ウィンドウを閉じる（close_surfaceではなくclose_window）
+        keybind = super+w=close_window
+
+        keybind = global:f13=toggle_quick_terminal
         quick-terminal-position = bottom
         quick-terminal-screen = main
         quick-terminal-animation-duration = 0.2
       '';
     };
+
+    # Karabiner: opt+space → F13 (Ghostty Quick Terminal)
+    # Raycast が opt+space を使用しているため、Karabiner 経由で F13 に変換する
+    myConfig.darwin.karabiner.rules = [
+      {
+        description = "opt+space → F13 (Ghostty Quick Terminal)";
+        manipulators = [
+          {
+            type = "basic";
+            from = {
+              key_code = "spacebar";
+              modifiers.mandatory = [ "option" ];
+            };
+            to = [ { key_code = "f13"; } ];
+          }
+        ];
+      }
+    ];
   };
 }
