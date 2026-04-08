@@ -62,11 +62,15 @@ let cfg = config.myConfig.darwin.cmux; in {
             cmux new-split right --workspace $ws
             sleep 0.3
 
-            # 右ペイン ref を取得（list-panes 最終行 = 右ペイン）
-            # 出力形式: "pane:N [M surface]" → $1 = pane ref
-            set right_pane (cmux list-panes --workspace $ws | tail -1 | awk '{print $1}' | string trim)
+            # pane ref を取得
+            # list-panes 出力: "  pane:N  [M surface]" or "* pane:N  [M surface]  [focused]"
+            # $1 が * になる場合があるため grep -oE で pane:N を確実に抽出
+            # fish リスト添字 [1] = 先頭（左/AI ペイン）、[-1] = 末尾（右ペイン）
+            set _panes (cmux list-panes --workspace $ws)
+            set left_pane (echo $_panes[1] | grep -oE 'pane:[0-9]+')
+            set right_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
 
-            # 右ペイン surface ②: nvim（--pane 明示で誤送信を防ぐ）
+            # 右ペイン surface ②: nvim（--pane 明示で確実に右ペインに追加）
             # new-surface 出力: "OK surface:N pane:N workspace:N" → $2 = surface ref
             set nvim_out (cmux new-surface --type terminal --pane $right_pane --workspace $ws)
             set nvim_surface (echo $nvim_out | awk '{print $2}' | string trim)
@@ -80,7 +84,6 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # ワークスペースを選択＆左ペイン（AI）にフォーカスを戻す
             cmux select-workspace --workspace $ws
-            set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $1}' | string trim)
             if test -n "$left_pane"
               cmux focus-pane --pane $left_pane --workspace $ws
             end
