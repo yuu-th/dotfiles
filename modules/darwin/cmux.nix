@@ -24,6 +24,74 @@ let cfg = config.myConfig.darwin.cmux; in {
 
     home-manager.users.${config.myConfig.primaryUser} = {
 
+      # ── fish 関数 ──────────────────────────────────────────────────────
+      # aidev: カレントディレクトリ（worktree）を cmux ワークスペースとして展開する
+      #        左ペイン: Zellij AI セッション、右ペイン: shell / nvim / browser
+      # worktree-new: git worktree 作成 → aidev を自動実行
+      programs.fish.functions = {
+        aidev = {
+          description = "Start AI workspace in cmux (left: Zellij AI, right: shell/nvim/browser)";
+          body = ''
+            set proj (basename (pwd))
+            set cwd (pwd)
+
+            # ワークスペース作成（初期ターミナルは AI セッションとして起動）
+            set ws (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create" | string trim)
+            if test -z "$ws"
+              echo "aidev: failed to create cmux workspace" >&2
+              return 1
+            end
+            sleep 0.5
+
+            # 右ペインを作成（split right）
+            cmux new-split right --workspace $ws
+            sleep 0.3
+
+            # 右ペイン surface ①: Zellij shell（tools）セッション
+            cmux send --workspace $ws "zellij attach $proj-tools --create\n"
+
+            # 右ペイン surface ②: nvim
+            cmux new-surface --type terminal --workspace $ws
+            sleep 0.3
+            cmux send --workspace $ws "nvim .\n"
+
+            # 右ペイン surface ③: browser（http://localhost:3000）
+            cmux new-surface --type browser --url "http://localhost:3000" --workspace $ws
+
+            # フォーカスを左ペイン（AI）に戻す
+            set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $1}')
+            if test -n "$left_pane"
+              cmux focus-pane --pane $left_pane --workspace $ws
+            end
+
+            echo "✓ AI workspace '$proj' ready"
+          '';
+        };
+
+        worktree-new = {
+          description = "Create git worktree under ~/dev/ and open AI workspace in cmux";
+          body = ''
+            if test (count $argv) -lt 1
+              echo "Usage: worktree-new <name> [<branch-args>...]" >&2
+              echo "  e.g. worktree-new my-feature" >&2
+              echo "  e.g. worktree-new my-feature origin/main" >&2
+              return 1
+            end
+            set name $argv[1]
+            set branch_args $argv[2..]
+            set wt_path ~/dev/$name
+
+            if test (count $branch_args) -gt 0
+              git worktree add $wt_path $branch_args; or return 1
+            else
+              git worktree add $wt_path; or return 1
+            end
+
+            cd $wt_path; and aidev
+          '';
+        };
+      };
+
       # ── settings.json ──────────────────────────────────────────────────
       home.file.".config/cmux/settings.json" = {
         force = true;
@@ -42,60 +110,13 @@ let cfg = config.myConfig.darwin.cmux; in {
       };
 
       # ── cmux.json（グローバルコマンド定義） ──────────────────────────────
-      # "Start AI Dev": 左60% = Zellij AI、右40% = shell/nvim/browser の3サーフェス
       # "Open AI Viewer": 全 AI セッション俯瞰用（レイアウトは手動で構成）
+      # "Start AI Dev" は fish 関数 aidev に移行済み（cmux.json からは削除）
       home.file.".config/cmux/cmux.json" = {
         force = true;
         text = ''
           {
             "commands": [
-              {
-                "name": "Start AI Dev",
-                "keywords": ["ai", "dev", "start", "setup"],
-                "restart": "confirm",
-                "workspace": {
-                  "cwd": ".",
-                  "layout": {
-                    "direction": "horizontal",
-                    "split": 0.6,
-                    "children": [
-                      {
-                        "pane": {
-                          "surfaces": [
-                            {
-                              "type": "terminal",
-                              "name": "AI",
-                              "command": "zellij attach \"$(basename $(pwd))-ai\" --create",
-                              "focus": true
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "pane": {
-                          "surfaces": [
-                            {
-                              "type": "terminal",
-                              "name": "shell",
-                              "command": "zellij attach \"$(basename $(pwd))-tools\" --create"
-                            },
-                            {
-                              "type": "terminal",
-                              "name": "nvim",
-                              "command": "nvim ."
-                            },
-                            {
-                              "type": "browser",
-                              "name": "browser",
-                              "url": "http://localhost:3000"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
               {
                 "name": "Open AI Viewer",
                 "keywords": ["viewer", "watch", "monitor", "all"],
