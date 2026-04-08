@@ -109,6 +109,78 @@ let cfg = config.myConfig.darwin.cmux; in {
           '';
         };
 
+        ai-viewer = {
+          description = "Open viewer workspace showing all *-ai Zellij sessions in a grid";
+          body = ''
+            # *-ai セッション一覧を取得
+            set ai_sessions (zellij list-sessions --short --no-formatting 2>/dev/null | grep -- '-ai$' | grep -v '^$')
+            if test (count $ai_sessions) -eq 0
+              echo "ai-viewer: no active *-ai sessions found" >&2
+              echo "  Run 'aidev' in a project directory first." >&2
+              return 1
+            end
+
+            set n (count $ai_sessions)
+            set cols (math "min($n, 4)")
+            set rows (math "ceil($n / $cols)")
+            echo "ai-viewer: $n sessions → $cols col × $rows row"
+
+            # viewer ワークスペース作成（1セッション目を左ペインで起動）
+            set ws (cmux new-workspace --name "viewer" --cwd ~ --command "zellij attach $ai_sessions[1]" | awk '{print $NF}' | string trim)
+            if test -z "$ws"
+              echo "ai-viewer: failed to create viewer workspace" >&2
+              return 1
+            end
+            sleep 0.5
+
+            # 1行目: right split を繰り返して cols 列を作成
+            for i in (seq 2 $cols)
+              cmux new-split right --workspace $ws
+              sleep 0.3
+              set _panes (cmux list-panes --workspace $ws)
+              set new_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
+              set new_surface (cmux list-pane-surfaces --workspace $ws --pane $new_pane | head -1 | grep -oE 'surface:[0-9]+')
+              if test -n "$new_surface"
+                cmux send --surface $new_surface --workspace $ws "zellij attach $ai_sessions[$i]\n"
+              end
+            end
+
+            # 2行目以降: 各列ペインを focus-pane → down split
+            if test $rows -gt 1
+              # 1行目のペイン ref を収集（list-panes の順序 = 作成順）
+              set col_panes
+              for p in (cmux list-panes --workspace $ws)
+                set ref (echo $p | grep -oE 'pane:[0-9]+')
+                if test -n "$ref"
+                  set col_panes $col_panes $ref
+                end
+              end
+
+              for row in (seq 2 $rows)
+                for col in (seq 1 $cols)
+                  set session_idx (math "($row - 1) * $cols + $col")
+                  if test $session_idx -le $n
+                    # その列ペインにフォーカスして下に分割
+                    cmux focus-pane --pane $col_panes[$col] --workspace $ws
+                    sleep 0.2
+                    cmux new-split down --workspace $ws
+                    sleep 0.3
+                    set _panes2 (cmux list-panes --workspace $ws)
+                    set bot_pane (echo $_panes2[-1] | grep -oE 'pane:[0-9]+')
+                    set bot_surface (cmux list-pane-surfaces --workspace $ws --pane $bot_pane | head -1 | grep -oE 'surface:[0-9]+')
+                    if test -n "$bot_surface"
+                      cmux send --surface $bot_surface --workspace $ws "zellij attach $ai_sessions[$session_idx]\n"
+                    end
+                  end
+                end
+              end
+            end
+
+            cmux select-workspace --workspace $ws
+            echo "✓ viewer ready ($n AI sessions)"
+          '';
+        };
+
         worktree-new = {
           description = "Create git worktree under ~/dev/ and open AI workspace in cmux";
           body = ''
