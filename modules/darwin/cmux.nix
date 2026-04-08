@@ -44,19 +44,28 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             switch $ai_choice
               case claude
-                set ai_cmd "claude --dangerous-skip-permissions"
+                set ai_cmd "claude --dangerously-skip-permissions"
               case copilot
                 set ai_cmd "copilot --agent Myソクラテス --allow-all"
             end
 
-            # ワークスペース作成（左ペイン = AI 直接起動）
+            # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
             # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
-            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "$ai_cmd" | awk '{print $NF}' | string trim)
+            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $proj-ai --create" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
             sleep 0.5
+
+            # 左ペインの surface ref を取得し AI コマンドを送信
+            set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
+            set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
+            if test -n "$ai_surface"
+              cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
+            else
+              echo "aidev: warning: could not get AI surface ref" >&2
+            end
 
             # 右ペイン作成
             cmux new-split right --workspace $ws
