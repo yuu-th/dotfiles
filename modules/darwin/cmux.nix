@@ -58,18 +58,21 @@ let cfg = config.myConfig.darwin.cmux; in {
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
-            sleep 2  # zellij + fish プロンプトの起動を待つ
-            # 念のり Enter で既存入力をクリアしてから AI コマンドを送信
-            cmux send --surface $ai_surface --workspace $ws "\n"
-            sleep 0.3
 
             # 左ペインの surface ref を list-pane-surfaces で確実に取得
             # （new-workspace 出力は surface を含まない場合がある）
             set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
             set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
 
-            # zellij 内で AI コマンドを起動（surface 明示で確実に左ペインに送信）
+            # fish プロンプト（❯）が現れるまで read-screen でポーリング（最大 15s）
             if test -n "$ai_surface"
+              for _i in (seq 1 30)
+                set _screen (cmux read-screen --surface $ai_surface --workspace $ws --lines 5 2>/dev/null)
+                if echo $_screen | grep -qE '❯|>\s*$'
+                  break
+                end
+                sleep 0.5
+              end
               cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
             else
               echo "aidev: warning: could not get AI surface ref" >&2
