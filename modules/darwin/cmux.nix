@@ -49,34 +49,14 @@ let cfg = config.myConfig.darwin.cmux; in {
                 set ai_cmd "copilot --agent Myソクラテス --allow-all"
             end
 
-            # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
-            # 出力形式: "OK surface:N workspace:N"
-            # $2 = 左ペインの surface ref（zellij に AI を送り込む際に使用）
-            set new_ws_out (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $proj-ai --create")
-            set ws (echo $new_ws_out | awk '{print $NF}' | string trim)
+            # ワークスペース作成（左ペイン = AI 直接起動）
+            # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
+            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "$ai_cmd" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
-
-            # 左ペインの surface ref を list-pane-surfaces で確実に取得
-            # （new-workspace 出力は surface を含まない場合がある）
-            set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
-            set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
-
-            # fish プロンプト（❯）が現れるまで read-screen でポーリング（最大 15s）
-            if test -n "$ai_surface"
-              for _i in (seq 1 30)
-                set _screen (cmux read-screen --surface $ai_surface --workspace $ws --lines 5 2>/dev/null)
-                if echo $_screen | grep -qE '❯|>\s*$'
-                  break
-                end
-                sleep 0.5
-              end
-              cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
-            else
-              echo "aidev: warning: could not get AI surface ref" >&2
-            end
+            sleep 0.5
 
             # 右ペイン作成
             cmux new-split right --workspace $ws
@@ -88,7 +68,6 @@ let cfg = config.myConfig.darwin.cmux; in {
             set right_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
 
             # 右ペイン surface ①: zellij tools セッション
-            # new-split で作られた右ペインの既存 surface に送信
             set tools_surface (cmux list-pane-surfaces --workspace $ws --pane $right_pane | head -1 | grep -oE 'surface:[0-9]+')
             if test -n "$tools_surface"
               cmux send --surface $tools_surface --workspace $ws "zellij attach $proj-tools --create\n"
