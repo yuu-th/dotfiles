@@ -119,7 +119,10 @@ let cfg = config.myConfig.darwin.cmux; in {
             set rows (math "ceil($n / $cols)")
             echo "ai-viewer: $n sessions → $cols col × $rows row"
 
-            # viewer ワークスペースを --command なしで作成（不要な余分ペインを防ぐ）
+            # 呼び出し元 surface を記録（new-workspace が自動的に引き込む余分ペインを後で閉じる）
+            set my_surface_id $CMUX_SURFACE_ID
+
+            # viewer ワークスペースを作成
             set ws (cmux new-workspace --name "viewer" --cwd ~ | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "ai-viewer: failed to create viewer workspace" >&2
@@ -127,19 +130,43 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
             sleep 0.3
 
-            # デフォルトで作られた最初のペインの surface を取得し 1セッション目を送信
-            set first_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
+            # workspace 作成直後のペイン一覧を記録
+            # new-workspace が呼び出し元ペインを引き込む場合があるため
+            # 意図したペイン（first_pane 以外）を後で閉じる
+            set initial_panes
+            for p in (cmux list-panes --workspace $ws)
+              set ref (echo $p | grep -oE 'pane:[0-9]+')
+              if test -n "$ref"
+                set initial_panes $initial_panes $ref
+              end
+            end
+            set first_pane $initial_panes[1]
+
+            # 1セッション目を最初のペインに送信
             set first_surface (cmux list-pane-surfaces --workspace $ws --pane $first_pane | head -1 | grep -oE 'surface:[0-9]+')
             if test -n "$first_surface"
               cmux send --surface $first_surface --workspace $ws "zellij attach $ai_sessions[1]\n"
             end
 
+            # 意図せず引き込まれた余分ペインを閉じる（呼び出し元 surface を含むペイン）
+            # first_pane 以外で my_surface_id を持つ surface を close
+            if test -n "$my_surface_id"
+              for ep in $initial_panes[2..]
+                set ep_surfaces (cmux list-pane-surfaces --workspace $ws --pane $ep 2>/dev/null | grep -oE 'surface:[0-9A-Fa-f-]+')
+                for s in $ep_surfaces
+                  cmux close-surface --surface $s --workspace $ws 2>/dev/null
+                end
+              end
+            end
+
             # 1行目: right split を繰り返して cols 列を作成
+            set col_panes $first_pane
             for i in (seq 2 $cols)
               cmux new-split right --workspace $ws
               sleep 0.3
               set _panes (cmux list-panes --workspace $ws)
               set new_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
+              set col_panes $col_panes $new_pane
               set new_surface (cmux list-pane-surfaces --workspace $ws --pane $new_pane | head -1 | grep -oE 'surface:[0-9]+')
               if test -n "$new_surface"
                 cmux send --surface $new_surface --workspace $ws "zellij attach $ai_sessions[$i]\n"
@@ -148,14 +175,6 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # 2行目以降: 各列ペインを focus-pane → down split
             if test $rows -gt 1
-              set col_panes
-              for p in (cmux list-panes --workspace $ws)
-                set ref (echo $p | grep -oE 'pane:[0-9]+')
-                if test -n "$ref"
-                  set col_panes $col_panes $ref
-                end
-              end
-
               for row in (seq 2 $rows)
                 for col in (seq 1 $cols)
                   set session_idx (math "($row - 1) * $cols + $col")
