@@ -38,6 +38,7 @@ let cfg = config.myConfig.zellij; in {
         scroll_buffer_size 10000
         copy_on_select false
         pane_frames false
+        show_startup_tips false
         default_shell "fish"
         default_layout "minimal"
         theme "tokyonight-night"
