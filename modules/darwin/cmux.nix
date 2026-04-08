@@ -114,10 +114,38 @@ let cfg = config.myConfig.darwin.cmux; in {
               return 1
             end
 
+            # 既存の "viewer" workspace を閉じる（再起動対応）
+            for existing in (cmux list-workspaces | grep -E '\bviewer\b' | grep -oE 'workspace:[0-9]+')
+              cmux close-workspace --workspace $existing 2>/dev/null
+            end
+            sleep 0.2
+
+            # ai_sessions を cmux workspace の表示順に並び替え
+            # workspace 名 "proj [claude]" → "proj" → session "proj-ai" に対応
+            set ordered_sessions
+            for ws_line in (cmux list-workspaces)
+              set ws_name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[.*\]$//' | string trim)
+              set proj_name (echo $ws_name | sed 's/ \[.*\]$//')
+              set session_name "$proj_name-ai"
+              if contains -- $session_name $ai_sessions
+                set ordered_sessions $ordered_sessions $session_name
+              end
+            end
+            # 対応する workspace がないセッションは末尾に追加
+            for s in $ai_sessions
+              if not contains -- $s $ordered_sessions
+                set ordered_sessions $ordered_sessions $s
+              end
+            end
+            set ai_sessions $ordered_sessions
+
             set n (count $ai_sessions)
             set cols (math "min($n, 4)")
             set rows (math "ceil($n / $cols)")
             echo "ai-viewer: $n sessions → $cols col × $rows row"
+
+            # viewer workspace を末尾に配置するため、作成前に最後の workspace ref を記録
+            set last_ws_ref (cmux list-workspaces | grep -oE 'workspace:[0-9]+' | tail -1)
 
             # viewer ワークスペースを作成
             set ws (cmux new-workspace --name "viewer" --cwd ~ | awk '{print $NF}' | string trim)
@@ -151,7 +179,6 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
 
             # 2行目以降: 各列ペインを focus-pane → down split
-            # NOTE: 同様に seq 2 1 $rows で明示ステップ指定
             if test $rows -gt 1
               for row in (seq 2 1 $rows)
                 for col in (seq 1 1 $cols)
@@ -173,6 +200,10 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
 
             cmux select-workspace --workspace $ws
+            # viewer を末尾に移動
+            if test -n "$last_ws_ref"
+              cmux reorder-workspace --workspace $ws --after $last_ws_ref 2>/dev/null
+            end
             echo "✓ viewer ready ($n AI sessions)"
           '';
         };
