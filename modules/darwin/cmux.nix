@@ -58,7 +58,10 @@ let cfg = config.myConfig.darwin.cmux; in {
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
-            sleep 1  # zellij の起動を待つ
+            sleep 2  # zellij + fish プロンプトの起動を待つ
+            # 念のり Enter で既存入力をクリアしてから AI コマンドを送信
+            cmux send --surface $ai_surface --workspace $ws "\n"
+            sleep 0.3
 
             # 左ペインの surface ref を list-pane-surfaces で確実に取得
             # （new-workspace 出力は surface を含まない場合がある）
