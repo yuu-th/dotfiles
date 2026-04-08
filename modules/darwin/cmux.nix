@@ -119,13 +119,20 @@ let cfg = config.myConfig.darwin.cmux; in {
             set rows (math "ceil($n / $cols)")
             echo "ai-viewer: $n sessions → $cols col × $rows row"
 
-            # viewer ワークスペース作成（1セッション目を左ペインで起動）
-            set ws (cmux new-workspace --name "viewer" --cwd ~ --command "zellij attach $ai_sessions[1]" | awk '{print $NF}' | string trim)
+            # viewer ワークスペースを --command なしで作成（不要な余分ペインを防ぐ）
+            set ws (cmux new-workspace --name "viewer" --cwd ~ | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "ai-viewer: failed to create viewer workspace" >&2
               return 1
             end
-            sleep 0.5
+            sleep 0.3
+
+            # デフォルトで作られた最初のペインの surface を取得し 1セッション目を送信
+            set first_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
+            set first_surface (cmux list-pane-surfaces --workspace $ws --pane $first_pane | head -1 | grep -oE 'surface:[0-9]+')
+            if test -n "$first_surface"
+              cmux send --surface $first_surface --workspace $ws "zellij attach $ai_sessions[1]\n"
+            end
 
             # 1行目: right split を繰り返して cols 列を作成
             for i in (seq 2 $cols)
@@ -141,7 +148,6 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # 2行目以降: 各列ペインを focus-pane → down split
             if test $rows -gt 1
-              # 1行目のペイン ref を収集（list-panes の順序 = 作成順）
               set col_panes
               for p in (cmux list-panes --workspace $ws)
                 set ref (echo $p | grep -oE 'pane:[0-9]+')
@@ -154,7 +160,6 @@ let cfg = config.myConfig.darwin.cmux; in {
                 for col in (seq 1 $cols)
                   set session_idx (math "($row - 1) * $cols + $col")
                   if test $session_idx -le $n
-                    # その列ペインにフォーカスして下に分割
                     cmux focus-pane --pane $col_panes[$col] --workspace $ws
                     sleep 0.2
                     cmux new-split down --workspace $ws
