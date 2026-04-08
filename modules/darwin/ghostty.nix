@@ -67,21 +67,6 @@ let cfg = config.myConfig.darwin.ghostty; in {
 
         # ── キーバインド ─────────────────────────────────────────────────
         # アクション一覧: https://ghostty.org/docs/config/keybind/reference
-        #
-        # 純粋ウィンドウ派: タブ・ペイン分割は使わない。
-        # ウィンドウ管理は AeroSpace に任せる。
-        # Cmd+N=新規ウィンドウ(デフォルト), Cmd+W=ウィンドウを閉じる
-
-        # タブ・ペイン操作を無効化
-        keybind = super+t=unbind
-        keybind = super+d=unbind
-        keybind = super+shift+d=unbind
-        keybind = super+left_bracket=unbind
-        keybind = super+right_bracket=unbind
-
-        # Cmd+W = ウィンドウを閉じる（close_surfaceではなくclose_window）
-        keybind = super+w=close_window
-
         keybind = global:f13=toggle_quick_terminal
         quick-terminal-position = bottom
         quick-terminal-screen = main

@@ -4,7 +4,7 @@
 #
 # このファイルは Nix関数として attrset を返す
 # default.nix から import してプロファイルとマージされる
-{ pkgs, setupMediaWorkspace, focusTool, ... }:
+{ pkgs, setupMediaWorkspace, ... }:
 {
   config-version = 2;
 
@@ -138,12 +138,6 @@
       cmd-h = [];
       cmd-alt-h = [];
 
-      # ── Ghostty ウィンドウフォーカス ─────────────────────────────────────────
-      # Alt+Ctrl+1/2/3: 現在 WS の Ghostty ウィンドウを X 座標昇順で N 番目にフォーカス
-      alt-ctrl-1 = "exec-and-forget ${focusTool}/bin/focus-tool win 1";
-      alt-ctrl-2 = "exec-and-forget ${focusTool}/bin/focus-tool win 2";
-      alt-ctrl-3 = "exec-and-forget ${focusTool}/bin/focus-tool win 3";
-      # 新規ウィンドウは Ghostty ネイティブの Cmd+N を使う（AeroSpace バインド不要）
     };
 
     # ── リサイズモード ──

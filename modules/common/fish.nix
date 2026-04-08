@@ -84,6 +84,7 @@ let cfg = config.myConfig.fish; in {
           # Ctrl+C または "Zellijなし" を選べばそのまま fish を使える。
           if set -q TERM_PROGRAM; and test "$TERM_PROGRAM" = "ghostty"
             and not set -q ZELLIJ
+            and not set -q CMUX_WORKSPACE_ID
             set -l _sessions (zellij list-sessions --short --no-formatting 2>/dev/null | awk '{print ''$1}' | grep -v '^$')
             set -l _choices "Zellijなし (plain fish)" "新規セッション..."
             if test -n "$_sessions"

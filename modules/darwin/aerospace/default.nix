@@ -2,14 +2,13 @@
 let
   cfg = config.myConfig.darwin.aerospace;
   setupMediaWorkspace = pkgs.writeShellScriptBin "setup-media-workspace" (builtins.readFile ./scripts/setup-media-workspace.sh);
-  focusTool           = pkgs.writeShellScriptBin "focus-tool"           (builtins.readFile ./scripts/focus-tool.sh);
-  common  = import ./common.nix { inherit pkgs setupMediaWorkspace focusTool; };
+  common  = import ./common.nix { inherit pkgs setupMediaWorkspace; };
   profile = import ./profiles/triple-monitor.nix;
 in {
   options.myConfig.darwin.aerospace.enable = lib.mkEnableOption "AeroSpace tiling window manager";
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ setupMediaWorkspace focusTool ];
+    environment.systemPackages = [ setupMediaWorkspace ];
 
     services.aerospace = {
       enable = true;
