@@ -35,39 +35,57 @@ let cfg = config.myConfig.darwin.cmux; in {
             set proj (basename (pwd))
             set cwd (pwd)
 
-            # ワークスペース作成（初期ターミナルは AI セッションとして起動）
+            # AI ツール選択（fzf）
+            set ai_choice (printf "claude\ncopilot" | fzf --prompt "🤖 AI> " --height 5 --no-info)
+            if test -z "$ai_choice"
+              echo "aidev: cancelled"
+              return 0
+            end
+
+            switch $ai_choice
+              case claude
+                set ai_cmd "claude --dangerous-skip-permissions"
+              case copilot
+                set ai_cmd "copilot --agent Myソクラテス --allow-all"
+            end
+
+            # ワークスペース作成（左ペイン = AI 直接起動、zellij 不要）
             # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
-            set ws (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create" | awk '{print $NF}' | string trim)
+            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "$ai_cmd" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
             sleep 0.5
 
-            # 右ペインを作成（split right）
+            # 右ペイン作成
             cmux new-split right --workspace $ws
             sleep 0.3
 
-            # 右ペイン surface ①: Zellij shell（tools）セッション
-            cmux send --workspace $ws "zellij attach $proj-tools --create\n"
+            # 右ペイン ref を取得（list-panes 最終行 = 右ペイン）
+            # 出力形式: "pane:N [M surface]" → $1 = pane ref
+            set right_pane (cmux list-panes --workspace $ws | tail -1 | awk '{print $1}' | string trim)
 
-            # 右ペイン surface ②: nvim
-            cmux new-surface --type terminal --workspace $ws
+            # 右ペイン surface ②: nvim（--pane 明示で誤送信を防ぐ）
+            # new-surface 出力: "OK surface:N pane:N workspace:N" → $2 = surface ref
+            set nvim_out (cmux new-surface --type terminal --pane $right_pane --workspace $ws)
+            set nvim_surface (echo $nvim_out | awk '{print $2}' | string trim)
             sleep 0.3
-            cmux send --workspace $ws "nvim .\n"
+            if test -n "$nvim_surface"
+              cmux send --surface $nvim_surface --workspace $ws "nvim .\n"
+            end
 
-            # 右ペイン surface ③: browser（http://localhost:3000）
-            cmux new-surface --type browser --url "http://localhost:3000" --workspace $ws
+            # 右ペイン surface ③: browser（localhost:3000）
+            cmux new-surface --type browser --url "http://localhost:3000" --pane $right_pane --workspace $ws
 
-            # フォーカスを左ペイン（AI）に戻す
-            # list-panes 出力: "pane:N [M surface]" → $1 で pane ref を取得
-            # head -1 で最初のペイン（= new-workspace が作った左ペイン）を選択
+            # ワークスペースを選択＆左ペイン（AI）にフォーカスを戻す
+            cmux select-workspace --workspace $ws
             set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $1}' | string trim)
             if test -n "$left_pane"
               cmux focus-pane --pane $left_pane --workspace $ws
             end
 
-            echo "✓ AI workspace '$proj' ready"
+            echo "✓ AI workspace '$proj [$ai_choice]' ready"
           '';
         };
 
