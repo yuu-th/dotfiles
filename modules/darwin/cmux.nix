@@ -36,7 +36,8 @@ let cfg = config.myConfig.darwin.cmux; in {
             set cwd (pwd)
 
             # ワークスペース作成（初期ターミナルは AI セッションとして起動）
-            set ws (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create" | string trim)
+            # 出力は "OK workspace:N" 形式なので $NF で ref 部分だけ取り出す
+            set ws (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
@@ -59,7 +60,8 @@ let cfg = config.myConfig.darwin.cmux; in {
             cmux new-surface --type browser --url "http://localhost:3000" --workspace $ws
 
             # フォーカスを左ペイン（AI）に戻す
-            set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $1}')
+            # list-panes 出力も "OK pane:N" 形式の可能性があるため $NF で取り出す
+            set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $NF}')
             if test -n "$left_pane"
               cmux focus-pane --pane $left_pane --workspace $ws
             end
