@@ -36,11 +36,8 @@ let cfg = config.myConfig.darwin.cmux; in {
             set cwd (pwd)
 
             # ワークスペース作成（初期ターミナルは AI セッションとして起動）
-            # 出力形式: "OK surface:N workspace:N"
-            # $2 = AI surface ref、$NF = workspace ref
-            set ws_output (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create")
-            set ws (echo $ws_output | awk '{print $NF}' | string trim)
-            set ai_surface (echo $ws_output | awk '{print $2}' | string trim)
+            # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
+            set ws (cmux new-workspace --name $proj --cwd $cwd --command "zellij attach $proj-ai --create" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
@@ -62,9 +59,12 @@ let cfg = config.myConfig.darwin.cmux; in {
             # 右ペイン surface ③: browser（http://localhost:3000）
             cmux new-surface --type browser --url "http://localhost:3000" --workspace $ws
 
-            # フォーカスを左ペイン AI surface に戻す（new-workspace で取得した surface ref を使用）
-            if test -n "$ai_surface"
-              cmux focus-surface --surface $ai_surface --workspace $ws
+            # フォーカスを左ペイン（AI）に戻す
+            # list-panes 出力: "pane:N [M surface]" → $1 で pane ref を取得
+            # head -1 で最初のペイン（= new-workspace が作った左ペイン）を選択
+            set left_pane (cmux list-panes --workspace $ws | head -1 | awk '{print $1}' | string trim)
+            if test -n "$left_pane"
+              cmux focus-pane --pane $left_pane --workspace $ws
             end
 
             echo "✓ AI workspace '$proj' ready"
