@@ -54,15 +54,23 @@ let cfg = config.myConfig.darwin.cmux; in {
             # $2 = 左ペインの surface ref（zellij に AI を送り込む際に使用）
             set new_ws_out (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $proj-ai --create")
             set ws (echo $new_ws_out | awk '{print $NF}' | string trim)
-            set ai_surface (echo $new_ws_out | awk '{print $2}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
             sleep 1  # zellij の起動を待つ
 
+            # 左ペインの surface ref を list-pane-surfaces で確実に取得
+            # （new-workspace 出力は surface を含まない場合がある）
+            set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
+            set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
+
             # zellij 内で AI コマンドを起動（surface 明示で確実に左ペインに送信）
-            cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
+            if test -n "$ai_surface"
+              cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
+            else
+              echo "aidev: warning: could not get AI surface ref" >&2
+            end
 
             # 右ペイン作成
             cmux new-split right --workspace $ws
