@@ -49,29 +49,38 @@ let cfg = config.myConfig.darwin.cmux; in {
                 set ai_cmd "copilot --agent Myソクラテス --allow-all"
             end
 
-            # ワークスペース作成（左ペイン = AI 直接起動、zellij 不要）
-            # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
-            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "$ai_cmd" | awk '{print $NF}' | string trim)
+            # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
+            # 出力形式: "OK surface:N workspace:N"
+            # $2 = 左ペインの surface ref（zellij に AI を送り込む際に使用）
+            set new_ws_out (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $proj-ai --create")
+            set ws (echo $new_ws_out | awk '{print $NF}' | string trim)
+            set ai_surface (echo $new_ws_out | awk '{print $2}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
-            sleep 0.5
+            sleep 1  # zellij の起動を待つ
+
+            # zellij 内で AI コマンドを起動（surface 明示で確実に左ペインに送信）
+            cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
 
             # 右ペイン作成
             cmux new-split right --workspace $ws
             sleep 0.3
 
-            # pane ref を取得
-            # list-panes 出力: "  pane:N  [M surface]" or "* pane:N  [M surface]  [focused]"
-            # $1 が * になる場合があるため grep -oE で pane:N を確実に抽出
-            # fish リスト添字 [1] = 先頭（左/AI ペイン）、[-1] = 末尾（右ペイン）
+            # pane ref を取得（list-panes の * プレフィックス対策: grep -oE で抽出）
             set _panes (cmux list-panes --workspace $ws)
             set left_pane (echo $_panes[1] | grep -oE 'pane:[0-9]+')
             set right_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
 
-            # 右ペイン surface ②: nvim（--pane 明示で確実に右ペインに追加）
-            # new-surface 出力: "OK surface:N pane:N workspace:N" → $2 = surface ref
+            # 右ペイン surface ①: zellij tools セッション
+            # new-split で作られた右ペインの既存 surface に送信
+            set tools_surface (cmux list-pane-surfaces --workspace $ws --pane $right_pane | head -1 | grep -oE 'surface:[0-9]+')
+            if test -n "$tools_surface"
+              cmux send --surface $tools_surface --workspace $ws "zellij attach $proj-tools --create\n"
+            end
+
+            # 右ペイン surface ②: nvim
             set nvim_out (cmux new-surface --type terminal --pane $right_pane --workspace $ws)
             set nvim_surface (echo $nvim_out | awk '{print $2}' | string trim)
             sleep 0.3
