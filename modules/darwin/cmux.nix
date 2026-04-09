@@ -29,13 +29,30 @@ let cfg = config.myConfig.darwin.cmux; in {
       #        左ペイン: Zellij AI セッション、右ペイン: shell / nvim / browser
       # worktree-new: git worktree 作成 → aidev を自動実行
       programs.fish.functions = {
+        # zellij セッション名を最大19文字に安全に短縮するプライベート関数
+        # （zellij のセッション名上限は25文字。-tools サフィックス6文字を考慮して19文字以内）
+        # 19文字超の場合: 先頭12文字（末尾ハイフン除去）+ "-" + MD5先頭6文字
+        "_zellij_sname" = {
+          description = "Convert project name to zellij-safe base name (max 19 chars)";
+          body = ''
+            set _p $argv[1]
+            if test (string length $_p) -gt 19
+              set _h (echo $_p | md5 | string sub -l 6)
+              set _pre (string sub -l 12 $_p | string trim --right --chars '-')
+              echo "$_pre-$_h"
+            else
+              echo $_p
+            end
+          '';
+        };
+
         aidev = {
           description = "Start AI workspace in cmux (left: Zellij AI, right: shell/nvim/browser)";
           body = ''
             set proj (basename (pwd))
             set cwd (pwd)
-            # zellij セッション名は小文字のみ許可（大文字があると起動できない）
-            set session (string lower $proj)
+            # zellij セッション名上限25文字のため、長い場合はハッシュで短縮（最大19文字）
+            set session (_zellij_sname $proj)
 
             # AI ツール選択（fzf）
             set ai_choice (printf "claude\ncopilot" | fzf --prompt "🤖 AI> " --height 5 --no-info)
@@ -140,7 +157,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             for ws_line in (cmux list-workspaces)
               set ws_name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[.*\]$//' | string trim)
               set proj_name (echo $ws_name | sed 's/ \[.*\]$//')
-              set session_name (string lower "$proj_name-ai")
+              set session_name (_zellij_sname $proj_name)"-ai"
               if contains -- $session_name $ai_sessions
                 set ordered_sessions $ordered_sessions $session_name
               end
