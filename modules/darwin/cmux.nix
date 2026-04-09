@@ -55,7 +55,6 @@ let cfg = config.myConfig.darwin.cmux; in {
             set session (_zellij_sname $proj)
 
             # ── 既存の cmux workspace を確認（"proj [*]" パターンでマッチ）────
-            # 既存があれば再作成せずフォーカスして終了
             set _existing_ws ""
             for _ws_line in (cmux list-workspaces 2>/dev/null)
               set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
@@ -65,9 +64,15 @@ let cfg = config.myConfig.darwin.cmux; in {
               end
             end
             if test -n "$_existing_ws"
-              cmux select-workspace --workspace $_existing_ws
-              echo "✓ Reattached to existing workspace for '$proj'"
-              return 0
+              # zellijセッションが生存中 → フォーカスのみ
+              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai$"
+                cmux select-workspace --workspace $_existing_ws
+                echo "✓ Reattached to existing workspace for '$proj'"
+                return 0
+              end
+              # zellijセッションなし（cmux再起動後）→ 古い workspace を削除して再作成へ
+              cmux close-workspace --workspace $_existing_ws 2>/dev/null
+              sleep 0.2
             end
 
             # AI ツール選択（fzf）
