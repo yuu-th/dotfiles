@@ -114,9 +114,21 @@ let cfg = config.myConfig.darwin.cmux; in {
               return 1
             end
 
-            # 既存の "viewer" workspace を閉じる（再起動対応）
-            for existing in (cmux list-workspaces | grep -E '\bviewer\b' | grep -oE 'workspace:[0-9]+')
-              cmux close-workspace --workspace $existing 2>/dev/null
+            # 呼び出し元の workspace を記録（self-close 防止）
+            set caller_ws (cmux current-workspace 2>/dev/null | grep -oE 'workspace:[0-9]+')
+
+            # 既存の "viewer" workspace を閉じる（再起動対応、呼び出し元は除外）
+            for ws_line in (cmux list-workspaces)
+              set ws_ref (echo $ws_line | grep -oE 'workspace:[0-9]+')
+              # 呼び出し元は絶対に閉じない
+              if test "$ws_ref" = "$caller_ws"
+                continue
+              end
+              # workspace 名が厳密に "viewer" のものだけ閉じる
+              set _name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              if test "$_name" = "viewer"
+                cmux close-workspace --workspace $ws_ref 2>/dev/null
+              end
             end
             sleep 0.2
 
@@ -175,6 +187,21 @@ let cfg = config.myConfig.darwin.cmux; in {
               set new_surface (cmux list-pane-surfaces --workspace $ws --pane $new_pane | head -1 | grep -oE 'surface:[0-9]+')
               if test -n "$new_surface"
                 cmux send --surface $new_surface --workspace $ws "zellij attach $ai_sessions[$i]\n"
+              end
+            end
+
+            # 列幅の均等化（連続 right-split はバイナリ分割なので不均等になる）
+            # cmux のボーダー自動再配分(proportional)を考慮し左→右に順次リサイズ
+            # 公式: amount_k = round(pw * (N-1-k) / (2N))  (k=1..N-2)
+            if test $cols -gt 2
+              set _pw (osascript -e 'tell application "System Events" to tell (first process whose name contains "cmux") to get size of window 1' 2>/dev/null | cut -d',' -f1 | string trim)
+              if test -n "$_pw"
+                for k in (seq 1 (math "$cols - 2"))
+                  set _amt (math "round($_pw * ($cols - 1 - $k) / (2 * $cols))")
+                  if test $_amt -gt 0
+                    cmux resize-pane --pane $col_panes[(math "$k + 1")] --workspace $ws -L --amount $_amt
+                  end
+                end
               end
             end
 
