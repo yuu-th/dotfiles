@@ -34,6 +34,8 @@ let cfg = config.myConfig.darwin.cmux; in {
           body = ''
             set proj (basename (pwd))
             set cwd (pwd)
+            # zellij セッション名は小文字のみ許可（大文字があると起動できない）
+            set session (string lower $proj)
 
             # AI ツール選択（fzf）
             set ai_choice (printf "claude\ncopilot" | fzf --prompt "🤖 AI> " --height 5 --no-info)
@@ -51,7 +53,7 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
             # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
-            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $proj-ai --create" | awk '{print $NF}' | string trim)
+            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $session-ai --create" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
@@ -79,7 +81,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             # 右ペイン surface ①: zellij tools セッション
             set tools_surface (cmux list-pane-surfaces --workspace $ws --pane $right_pane | head -1 | grep -oE 'surface:[0-9]+')
             if test -n "$tools_surface"
-              cmux send --surface $tools_surface --workspace $ws "zellij attach $proj-tools --create\n"
+              cmux send --surface $tools_surface --workspace $ws "zellij attach $session-tools --create\n"
             end
 
             # 右ペイン surface ②: nvim
@@ -138,7 +140,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             for ws_line in (cmux list-workspaces)
               set ws_name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[.*\]$//' | string trim)
               set proj_name (echo $ws_name | sed 's/ \[.*\]$//')
-              set session_name "$proj_name-ai"
+              set session_name (string lower "$proj_name-ai")
               if contains -- $session_name $ai_sessions
                 set ordered_sessions $ordered_sessions $session_name
               end
