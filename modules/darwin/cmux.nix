@@ -64,13 +64,18 @@ let cfg = config.myConfig.darwin.cmux; in {
               end
             end
             if test -n "$_existing_ws"
-              # zellijセッションが生存中 → フォーカスのみ
-              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai$"
-                cmux select-workspace --workspace $_existing_ws
-                echo "✓ Reattached to existing workspace for '$proj'"
-                return 0
+              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
+                # zellijセッションが生存中 → ペインでプロセスが実際に動いているか確認
+                # pgrep は自身をリストしないため grep 自己マッチ問題なし
+                if pgrep -f "zellij attach $session-ai" > /dev/null 2>&1
+                  # プロセスあり = 正常稼働中 → フォーカスのみ
+                  cmux select-workspace --workspace $_existing_ws
+                  echo "✓ Reattached to existing workspace for '$proj'"
+                  return 0
+                end
+                # プロセスなし = cmux 再起動後（pane は空）→ workspace を閉じて再作成へ
               end
-              # zellijセッションなし（cmux再起動後）→ 古い workspace を削除して再作成へ
+              # zellijセッションなし or cmux再起動後 → 古い workspace を削除して再作成へ
               cmux close-workspace --workspace $_existing_ws 2>/dev/null
               sleep 0.2
             end
@@ -92,7 +97,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             # zellij セッションが既存かどうかを事前に確認
             # 既存 = AI はすでに起動中なので cmux send によるコマンド送信をスキップ
             set _zellij_session_exists 0
-            if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai$"
+            if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
               set _zellij_session_exists 1
             end
 
@@ -282,6 +287,63 @@ let cfg = config.myConfig.darwin.cmux; in {
               cmux reorder-workspace --workspace $ws --after $last_ws_ref 2>/dev/null
             end
             echo "✓ viewer ready ($n AI sessions)"
+          '';
+        };
+
+        aidev-stop = {
+          description = "Stop aidev workspace(s): kill zellij sessions and close cmux workspace";
+          body = ''
+            # aidev 管理下の workspace 一覧（"proj [claude/copilot]" パターン）を収集
+            set _candidates
+            set _ws_refs
+            for _ws_line in (cmux list-workspaces 2>/dev/null)
+              set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              # "[claude]" or "[copilot]" で終わるものだけ対象
+              if string match -qrE '^\S.*\[(claude|copilot)\]$' "$_ws_name"
+                set _candidates $candidates $_ws_name
+                set _ws_refs $_ws_refs (echo $_ws_line | grep -oE 'workspace:[0-9]+')
+              end
+            end
+
+            if test (count $_candidates) -eq 0
+              echo "aidev-stop: no aidev workspaces found" >&2
+              return 1
+            end
+
+            # fzf で対象を選択（TAB で複数選択）
+            set _selected (printf '%s\n' $_candidates | fzf --prompt "🛑 Stop> " --height 40% --multi --no-info)
+            if test -z "$_selected"
+              echo "aidev-stop: cancelled"
+              return 0
+            end
+
+            for _name in $_selected
+              # workspace ref を逆引き
+              set _idx 1
+              set _target_ws ""
+              for c in $_candidates
+                if test "$c" = "$_name"
+                  set _target_ws $_ws_refs[$_idx]
+                  break
+                end
+                set _idx (math "$_idx + 1")
+              end
+
+              # proj 名を抽出して zellij セッション名を計算
+              set _proj (echo $_name | sed 's/ \[.*\]$//')
+              set _session (_zellij_sname $_proj)
+
+              # zellij sessions を kill
+              zellij kill-session "$_session-ai" 2>/dev/null
+              zellij kill-session "$_session-tools" 2>/dev/null
+
+              # cmux workspace を閉じる
+              if test -n "$_target_ws"
+                cmux close-workspace --workspace $_target_ws 2>/dev/null
+              end
+
+              echo "✓ Stopped '$_name'"
+            end
           '';
         };
 
