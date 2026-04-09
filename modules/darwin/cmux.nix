@@ -54,6 +54,22 @@ let cfg = config.myConfig.darwin.cmux; in {
             # zellij セッション名上限25文字のため、長い場合はハッシュで短縮（最大19文字）
             set session (_zellij_sname $proj)
 
+            # ── 既存の cmux workspace を確認（"proj [*]" パターンでマッチ）────
+            # 既存があれば再作成せずフォーカスして終了
+            set _existing_ws ""
+            for _ws_line in (cmux list-workspaces 2>/dev/null)
+              set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              if string match -q "$proj [*]" "$_ws_name"
+                set _existing_ws (echo $_ws_line | grep -oE 'workspace:[0-9]+')
+                break
+              end
+            end
+            if test -n "$_existing_ws"
+              cmux select-workspace --workspace $_existing_ws
+              echo "✓ Reattached to existing workspace for '$proj'"
+              return 0
+            end
+
             # AI ツール選択（fzf）
             set ai_choice (printf "claude\ncopilot" | fzf --prompt "🤖 AI> " --height 5 --no-info)
             if test -z "$ai_choice"
@@ -68,6 +84,13 @@ let cfg = config.myConfig.darwin.cmux; in {
                 set ai_cmd "copilot --agent Myソクラテス --allow-all"
             end
 
+            # zellij セッションが既存かどうかを事前に確認
+            # 既存 = AI はすでに起動中なので cmux send によるコマンド送信をスキップ
+            set _zellij_session_exists 0
+            if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai$"
+              set _zellij_session_exists 1
+            end
+
             # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
             # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
             set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $session-ai --create" | awk '{print $NF}' | string trim)
@@ -77,13 +100,16 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
             sleep 0.5
 
-            # 左ペインの surface ref を取得し AI コマンドを送信
+            # 左ペインの surface ref を取得
             set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
             set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
-            if test -n "$ai_surface"
-              cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
-            else
-              echo "aidev: warning: could not get AI surface ref" >&2
+            # 新規セッションのみ AI コマンドを送信（既存セッションは AI 起動済みなのでスキップ）
+            if test $_zellij_session_exists -eq 0
+              if test -n "$ai_surface"
+                cmux send --surface $ai_surface --workspace $ws "$ai_cmd\n"
+              else
+                echo "aidev: warning: could not get AI surface ref" >&2
+              end
             end
 
             # 右ペイン作成
