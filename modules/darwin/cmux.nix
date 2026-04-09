@@ -299,8 +299,8 @@ let cfg = config.myConfig.darwin.cmux; in {
             for _ws_line in (cmux list-workspaces 2>/dev/null)
               set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
               # "[claude]" or "[copilot]" で終わるものだけ対象
-              if string match -qrE '^\S.*\[(claude|copilot)\]$' "$_ws_name"
-                set _candidates $candidates $_ws_name
+              if string match -qr '.*\[(claude|copilot)\]$' "$_ws_name"
+                set _candidates $_candidates $_ws_name
                 set _ws_refs $_ws_refs (echo $_ws_line | grep -oE 'workspace:[0-9]+')
               end
             end
