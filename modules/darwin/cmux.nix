@@ -121,24 +121,28 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
             if test -n "$_existing_ws"
               if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
-                # zellijセッションが生存中 → workspace の pane 構造で正常稼働を判定
-                # （pgrep は ai-viewer が同名セッションに attach するため誤検知する）
-                set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
-                if test (count $_panes_info) -ge 2
-                  set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
-                  set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
-                  if test $_right_surface_count -ge 2
-                    # 正常稼働中（左 AI pane + 右 2+ surface）→ フォーカスのみ
-                    if test $_no_focus -eq 0
-                      cmux select-workspace --workspace $_existing_ws
+                # zellijセッションが生存中 → pgrep でプロセス確認（元の判定を保持）
+                if pgrep -f "zellij attach $session-ai" > /dev/null 2>&1
+                  # pgrep OK → さらに pane 構造を確認
+                  # （ai-viewer が同名セッションに attach するため pgrep 単独では誤検知する）
+                  set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
+                  if test (count $_panes_info) -ge 2
+                    set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
+                    set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
+                    if test $_right_surface_count -ge 2
+                      # 正常稼働中（zellij ✓ + pgrep ✓ + pane 構造 ✓）→ フォーカスのみ
+                      if test $_no_focus -eq 0
+                        cmux select-workspace --workspace $_existing_ws
+                      end
+                      echo "✓ Already running: '$proj'"
+                      return 0
                     end
-                    echo "✓ Already running: '$proj'"
-                    return 0
                   end
+                  # pane 構造が壊れている → close して再作成へ
                 end
-                # pane 構造が壊れている → close して再作成へ
+                # pgrep NG = cmux 再起動後（pane は空の fish shell）→ close して再作成へ
               end
-              # zellijセッションなし or pane 構造壊れ → 古い workspace を削除して再作成へ
+              # zellijセッションなし / pgrep NG / pane 構造壊れ → workspace を削除して再作成へ
               cmux close-workspace --workspace $_existing_ws 2>/dev/null
               sleep 0.2
             end
