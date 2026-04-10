@@ -36,7 +36,7 @@ let cfg = config.myConfig.zellij; in {
       home.file.".config/zellij/config.kdl".text = ''
         mouse_mode true
         scroll_buffer_size 10000
-        copy_on_select false
+        copy_on_select true
         pane_frames false
         show_startup_tips false
         default_shell "fish"
@@ -52,6 +52,7 @@ let cfg = config.myConfig.zellij; in {
           scroll {
             bind "Esc" { SwitchToMode "Normal"; }
             bind "Alt s" { SwitchToMode "Normal"; }
+            bind "y" { Copy; SwitchToMode "Normal"; }
             bind "j" "Down" { ScrollDown; }
             bind "k" "Up" { ScrollUp; }
             bind "f" "PageDown" { PageScrollDown; }

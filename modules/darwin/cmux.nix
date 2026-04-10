@@ -121,16 +121,17 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
             if test -n "$_existing_ws"
               if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
-                # zellijセッションが生存中 → pgrep でプロセス確認（元の判定を保持）
-                if pgrep -f "zellij attach $session-ai" > /dev/null 2>&1
-                  # pgrep OK → さらに pane 構造を確認
-                  # （ai-viewer が同名セッションに attach するため pgrep 単独では誤検知する）
+                # zellijセッションが生存中 → pgrep でプロセス確認
+                # --create 付きで検索: aidev が作成した workspace の terminal のみマッチ
+                # ai-viewer は --create なしで zellij attach を実行するため誤検知しない
+                if pgrep -f "zellij attach $session-ai --create" > /dev/null 2>&1
+                  # pgrep OK → さらに pane 構造を確認（追加のガード）
                   set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
                   if test (count $_panes_info) -ge 2
                     set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
                     set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
                     if test $_right_surface_count -ge 2
-                      # 正常稼働中（zellij ✓ + pgrep ✓ + pane 構造 ✓）→ フォーカスのみ
+                      # 正常稼働中（zellij ✓ + pgrep --create ✓ + pane 構造 ✓）→ フォーカスのみ
                       if test $_no_focus -eq 0
                         cmux select-workspace --workspace $_existing_ws
                       end
@@ -140,7 +141,7 @@ let cfg = config.myConfig.darwin.cmux; in {
                   end
                   # pane 構造が壊れている → close して再作成へ
                 end
-                # pgrep NG = cmux 再起動後（pane は空の fish shell）→ close して再作成へ
+                # pgrep NG = ai-viewer のみ or cmux 再起動後 → close して再作成へ
               end
               # zellijセッションなし / pgrep NG / pane 構造壊れ → workspace を削除して再作成へ
               cmux close-workspace --workspace $_existing_ws 2>/dev/null
