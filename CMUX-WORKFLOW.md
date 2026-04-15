@@ -1,311 +1,179 @@
-# cmux ワークフロー設計書
+# cmux ワークフロー
 
-> **設計思想**:
-> cmux はワークスペース管理・AI通知・組み込みブラウザを担い、Zellij はプロセス永続化・内部ペイン分割を担う。
-> 役割を明確に分離し、直感的なキーボード操作で全ツールにアクセスできるワークフローを実現する。
+> cmux・zellij・git worktree・AI CLI は、それぞれが独立したツールではなく一つの開発体験として設計されています。cmux がワークスペースの器を管理し、zellij がセッションを永続化し、AI CLI が長時間タスクを担い、worktree が並走ブランチを分離します。「タブなし・ペイン分割なし」という選択も、役割ごとにレイヤーを分けてシンプルさを保つための設計判断です。
 
 ---
 
-## スタック全体像
+## 不変条件
 
+この環境の前提として、次の条件が常に成り立ちます。
+
+### 固定スロット
+
+- slot `0`: `shell`
+- slot `1`: `ai-viewer`
+- slot `2+`: project workspace
+
+`cmux-init` 後はこの並びが正です。
+
+### 1 project = 1 workspace / 2 zellij sessions / 2 panes
+
+各 project workspace は、
+
+- 1 つの作業ディレクトリまたは git worktree に対応
+- AI session と tools session の 2 つの zellij session を持つ
+- 左 pane（AI）と右 pane（tools / nvim / browser）の 2 pane 構成
+
+workspace 名は `proj [copilot]` / `proj [claude]` の形で見えます。
+
+### 半壊は直さない・消えたものだけ復元する
+
+半壊状態（workspace は存在するが中身が壊れている）は自動修復しません。  
+壊れたら閉じて作り直します。復元対象は「消えた workspace」だけです。
+
+---
+
+## コマンド早見表
+
+| コマンド | 役割 |
+|---|---|
+| `aidev` | 現在のディレクトリに対応する project workspace を開く |
+| `aidev --ai copilot` | AI を Copilot に明示して開く |
+| `aidev --ai claude` | AI を Claude に明示して開く |
+| `aidev-stop` | project workspace と関連 session を止める |
+| `worktree-new <branch> <base>` | sibling worktree を作成し、aidev まで進める |
+| `cmux-init` | 固定スロットを整え、消えた workspace を復元する |
+| `ai-viewer` | 全 AI session を一覧表示する |
+| `ai-viewer-refresh` | ai-viewer を壊して正しい session で作り直し slot `1` に置く |
+
+---
+
+## 作業を始める
+
+### 単一プロジェクトで始める
+
+project ディレクトリに移動して `aidev` を実行します。
+
+```bash
+cd /path/to/project
+aidev --ai copilot    # または --ai claude
 ```
-【cmux】        ... ワークスペース管理（サイドバー）・AI通知・WebViewブラウザ
-  【Zellij】   ... プロセス永続化・ペイン分割（AI用・shell用）
-    【AI】     ... Claude Code 等の AIエージェント（名前付きセッションで永続）
-  【nvim】     ... エディタ（cmux Surface として直接）
-  【browser】  ... フロントエンド確認 等（cmux WebView Surface）
+
+左 pane に AI、右 pane に tools / nvim / browser が並んだ workspace が作られます。
+
+### 並走ブランチを作る
+
+別ブランチで並行作業したいときは `worktree-new` を使います。
+
+```bash
+worktree-new <branch> <base>
 ```
 
-### 各レイヤーの責任分担
+例：
 
-| レイヤー | 担当 | 担わないこと |
+```bash
+worktree-new feature/login origin/main
+```
+
+- 親ディレクトリ直下に `dotfiles-feature-login` を sibling として作成
+- branch 名（`feature/login`）はそのまま Git に渡し、directory 名だけ sanitize する
+- 作成後そのまま `cd` して `aidev` まで進む
+
+base は必ず明示してください。どの地点から切ったかを明確にし、現在 checkout 中のブランチへの暗黙依存を避けるためです。
+
+### 既存 worktree に戻る
+
+既に worktree directory がある場合は、手動で移動して `aidev` を実行します。
+
+```bash
+cd ../dotfiles-feature-login
+aidev --ai copilot
+```
+
+---
+
+## 複数 AI を俯瞰する
+
+`ai-viewer` を使うと、存在中の AI session をまとめて確認できます。
+
+- `cmux-init` 実行後は `ai-viewer` が slot `1` に配置されます
+- `ai-viewer` だけを単独で作り直したい場合は `ai-viewer-refresh` を使います
+
+---
+
+## 止める・片付ける
+
+### workspace を止める
+
+作業を一時中断するときは `aidev-stop` を使います。
+
+```bash
+aidev-stop
+```
+
+workspace と関連 session を閉じますが、worktree directory は残ります。  
+停止と削除を分けることで、中断再開が安全になります。
+
+### worktree を削除する
+
+worktree が不要になったら、次の順で行います。
+
+```bash
+# 1. 未コミット変更を確認
+cd ../dotfiles-feature-login
+git status --short
+
+# 2. workspace / session を止める
+aidev-stop
+
+# 3. worktree directory を外す
+cd ../dotfiles
+git worktree remove ../dotfiles-feature-login
+
+# 4. (任意) branch も不要なら削除
+git branch -d feature/login
+```
+
+この順番にしておくと、まだ見たい作業を誤って消しにくく、AI workspace の取り残しも減らせます。
+
+### `git branch -d` / `-D` / remote delete の違い
+
+| コマンド | 役割 |
+|---|---|
+| `git branch -d <branch>` | local branch の安全削除（未 merge で危ない場合は Git が拒否） |
+| `git branch -D <branch>` | local branch の強制削除（意図的に捨てるときだけ使う）、これは厳格に禁止である。 |
+| `git push origin --delete <branch>` | remote branch の削除（local や worktree directory は消えない） |
+
+---
+
+## 状態を復元する
+
+### `cmux-init` がやること
+
+1. `shell` を slot `0` に置く
+2. 既存 session から `ai-viewer` を早めに出す
+3. 関係ない workspace を片付ける
+4. 既知の project workspace を復元する
+5. zellij session はあるが workspace がない project を復元する
+
+復元対象は「存在しない workspace」です。半壊だが残っている workspace は自動では直しません。
+
+---
+
+## 壊れたときの判断
+
+### 3 状態と対応手順
+
+| 状態 | 見た目 | 対応 |
 |---|---|---|
-| **cmux** | ワークスペース切替・通知・WebView・worktree単位の管理 | タブ/ペインの詳細制御 |
-| **Zellij（AI用）** | AIセッションの永続化 | UI 表示・タブ管理 |
-| **Zellij（shell用）** | shellの柔軟な分割・セッション | UI 表示 |
-| **nvim** | エディタ作業 | — |
-| **cmux browser** | フロントエンド確認・Web参照 | — |
+| **A. 正常** | 左 AI・右 tools/nvim/browser がある | そのまま使う |
+| **B. 消失** | zellij session は残っているが workspace がない | `cmux-init` で復元 |
+| **C. 半壊** | workspace は存在するが pane / surface が崩れている | `⌘⇧W` で閉じて `aidev` で再作成 |
 
----
+半壊状態は、利用者の目には明らかでも機械的には曖昧です。自動判定を増やすより「壊れたら閉じる」の方が全体として堅くなります。
 
-## ワークスペース構造
+### 迷ったときのルール
 
-### プロジェクトワークスペース
-
-各 cmux ワークスペース = git worktree の 1 ディレクトリに対応する。
-
-```
-cmux workspace [proj-X]   cwd = ~/dev/proj-X (worktree)
-
-┌──────────────────────────────┬────────────────────────┐
-│  左ペイン (60%)               │  右ペイン (40%)         │
-│                              │                        │
-│  Zellij session              │  [⌃1] Zellij session   │
-│  "proj-x-ai"                 │        shell           │
-│   └── AI (claude 等)         │        └─ 内部で分割・  │
-│       [プロセス永続]          │           タブ使い放題  │
-│                              ├────────────────────────┤
-│                              │  [⌃2] nvim             │
-│                              │       (direct terminal)│
-│                              ├────────────────────────┤
-│                              │  [⌃3] browser          │
-│                              │       (cmux WebView)   │
-└──────────────────────────────┴────────────────────────┘
-
-⌘⇧Enter: 現在のペインをズーム全画面 / もう一度で戻る
-```
-
-**ポイント:**
-- 左ペインの Zellij セッションは名前付き (`proj-x-ai`)。cmux 再起動後も AI セッションが生きている
-- 右ペインの 3 サーフェスは cmux.json で **ワークスペース起動時に自動作成** される（「開く」操作不要）
-- shell サーフェス（⌃1）内は Zellij が動いており、`⌘⇧Enter` でズームしてから自由に内部分割できる
-
-### viewerワークスペース
-
-全 AI セッションをまとめて監視する専用ワークスペース。入力は行わない（read-only 的運用）。
-
-```
-cmux workspace [viewer]   cwd = ~
-
-┌──────────────────────────┬───────────────────────────┐
-│  zellij attach proj-a-ai │  zellij attach proj-b-ai  │
-│  (監視のみ)              │  (監視のみ)               │
-├──────────────────────────┼───────────────────────────┤
-│  zellij attach proj-c-ai │  (追加可)                 │
-│  (監視のみ)              │                           │
-└──────────────────────────┴───────────────────────────┘
-```
-
----
-
-## キーボード操作早見表
-
-### cmux レベル（常に有効）
-
-| キー | 動作 |
-|---|---|
-| `⌘1` … `⌘9` | ワークスペース 1〜9 を選択 |
-| `⌘P` | ワークスペーススイッチャー（名前検索） |
-| `⌘N` | 新規ワークスペース |
-| `⌘⇧P` | コマンドパレット（cmux.json のコマンドを呼ぶ） |
-| `⌘⇧W` | ワークスペースを閉じる |
-| `⌃⌘]` / `⌃⌘[` | 次/前のワークスペース |
-
-### ペイン操作（cmux レベル）
-
-| キー | 動作 |
-|---|---|
-| `⌥⌘←` | 左ペインにフォーカス（AI ペインへ） |
-| `⌥⌘→` | 右ペインにフォーカス（ツールペインへ） |
-| `⌥⌘↑` / `⌥⌘↓` | 上/下ペインにフォーカス（分割後） |
-| `⌘⇧Enter` | 現在のペインをズーム全画面 / トグル |
-
-### サーフェス（タブ）操作（右ペイン内）
-
-| キー | 動作 |
-|---|---|
-| `⌃1` | shell（Zellij）サーフェスに切替 |
-| `⌃2` | nvim サーフェスに切替 |
-| `⌃3` | browser（WebView）サーフェスに切替 |
-| `⌘T` | 新サーフェス追加（現在のペインに） |
-| `⌘W` | 現在のサーフェスを閉じる |
-
-### ブラウザ操作（browser サーフェス内）
-
-| キー | 動作 |
-|---|---|
-| `⌘L` | アドレスバーにフォーカス（URL 入力） |
-| `⌘R` | ページ再読み込み |
-| `⌘[` / `⌘]` | 戻る / 進む |
-| `⌥⌘I` | DevTools トグル |
-| `⌥⌘D` | ブラウザペインを右に追加分割（追加で使いたい時） |
-
-### Zellij 内（shell サーフェス ⌃1 内で有効）
-
-| キー | 動作 |
-|---|---|
-| `Ctrl+D` | Zellij セッションからデタッチ |
-| `Alt+S` | スクロールモード |
-| （Zellij keybind を別途設定） | ペイン分割・タブ切替 等 |
-
----
-
-## 典型的なワークフロー
-
-### ① 新しいプロジェクトを始める
-
-```
-1. git worktree を作成
-   git worktree add ~/dev/my-feature origin/my-feature
-
-2. cmux で ⌘⇧P（コマンドパレット）
-   → "Start AI Dev" を選択
-   → 自動的に左: AI + 右: shell/nvim/browser のレイアウトが展開される
-
-3. 左ペイン（AI）に自動フォーカス
-   → AI に指示を出す
-```
-
-### ② AIを走らせながらフロントエンドを確認する
-
-```
-AI が動いている間:
-
-⌥⌘→     → 右ペインに移動
-⌃3       → browser に切替
-⌘L       → URL 入力（例: localhost:3000）
-Enter    → 確認
-
-⌘⇧Enter  → browser を全画面にして確認
-⌘⇧Enter  → 元の分割に戻る
-⌥⌘←     → AI ペインに戻って状況確認
-```
-
-### ③ コードを確認・編集する
-
-```
-⌥⌘→     → 右ペインに移動
-⌃2       → nvim に切替
-（nvim で編集）
-
-または
-
-⌃1       → shell に切替して git diff, grep 等
-```
-
-### ④ shell で複数のコマンドを同時に見たい
-
-```
-⌥⌘→      → 右ペインに移動
-⌃1        → shell（Zellij）に切替
-⌘⇧Enter   → shell ペインを全画面に
-
-（Zellij 内で自由に分割: Zellij keybind で）
-  → サーバー起動ログ + テスト実行 等を横に並べる
-
-⌘⇧Enter   → 元の cmux 分割に戻る
-```
-
-### ⑤ 全 AI の進捗を俯瞰する
-
-```
-⌘P または ⌘1   → viewer ワークスペースに切替
-→ 全 proj-x-ai セッションが見える
-→ 気になるセッションのあるプロジェクトに ⌘P で飛ぶ
-```
-
----
-
-## 新しいワークスペース（プロジェクト）の開き方
-
-### フロー
-
-```
-① git worktree add ~/dev/proj-name <branch>
-② cmux で ⌘⇧P → "Start AI Dev" を実行
-   または ⌘O でワークスペースのフォルダを開く
-③ レイアウトが自動展開される
-```
-
-### cmux.json テンプレート（グローバル: ~/.config/cmux/cmux.json）
-
-```json
-{
-  "commands": [
-    {
-      "name": "Start AI Dev",
-      "keywords": ["ai", "dev", "start", "setup"],
-      "restart": "confirm",
-      "workspace": {
-        "cwd": ".",
-        "layout": {
-          "direction": "horizontal",
-          "split": 0.6,
-          "children": [
-            {
-              "pane": {
-                "surfaces": [
-                  {
-                    "type": "terminal",
-                    "name": "AI",
-                    "command": "zellij attach \"$(basename $(pwd))-ai\" --create",
-                    "focus": true
-                  }
-                ]
-              }
-            },
-            {
-              "pane": {
-                "surfaces": [
-                  {
-                    "type": "terminal",
-                    "name": "shell",
-                    "command": "zellij attach \"$(basename $(pwd))-tools\" --create"
-                  },
-                  {
-                    "type": "terminal",
-                    "name": "nvim",
-                    "command": "nvim ."
-                  },
-                  {
-                    "type": "browser",
-                    "name": "browser",
-                    "url": "http://localhost:3000"
-                  }
-                ]
-              }
-            }
-          ]
-        }
-      }
-    },
-    {
-      "name": "Open AI Viewer",
-      "keywords": ["viewer", "watch", "monitor", "all"],
-      "restart": "confirm",
-      "workspace": {
-        "name": "viewer",
-        "cwd": "~"
-      }
-    }
-  ]
-}
-```
-
-> **注意:** viewer ワークスペースのレイアウト（どのプロジェクトを監視するか）は
-> 手動で構成する（プロジェクト数が動的なため、テンプレートでは自動化困難）。
-> viewer 内で `⌘D` 等で分割し、各ペインで `zellij attach <proj>-ai` を手動実行。
-
----
-
-## Zellij セッション命名規則
-
-| セッション | 命名規則 | 例 |
-|---|---|---|
-| AI セッション | `<プロジェクト名>-ai` | `my-feature-ai` |
-| shell ツールセッション | `<プロジェクト名>-tools` | `my-feature-tools` |
-
-cmux ワークスペース名 = プロジェクト名（worktree の basename）で統一する。
-
----
-
-## 設計上の判断メモ（Why）
-
-| 判断 | 理由 |
-|---|---|
-| AI セッションを Zellij 内で動かす | cmux 再起動後もプロセスが生きる。AI は長時間動くことが多いため |
-| shell サーフェスも Zellij にする | 内部分割・タブを Zellij のkeybindで自由に制御できる。cmux ペインを増やさなくていい |
-| nvim は直接 cmux Surface | Zellij 不要。シンプルで速い |
-| browser は cmux WebView Surface | Zellij では WebView を提供できない。cmux 独自機能を活用 |
-| Ghostty keybind はカスタムスクリプトに使わない | Ghostty は built-in アクションのみで任意コマンド実行不可 |
-| 領域移動は ⌥⌘ 方向キー（相対） | 3ペイン構成なら最大 2 回で到達できる。絶対指定は Karabiner が必要（将来検討） |
-
----
-
-## 未解決・将来検討事項
-
-- [ ] **Zellij keybind 設定**: shell サーフェス（⌃1）内の Zellij 分割・タブ操作のキーをどう定義するか
-- [ ] **viewer の構造**: セッション数が増えたときのレイアウト管理方法
-- [ ] **絶対位置ジャンプ**: 「右上ペインに直接ジャンプ」には Karabiner + cmux socket API が必要（今は ⌥⌘ 相対移動で対応）
-- [ ] **Nix での管理**: cmux 設定（settings.json, cmux.json）を Nix flake でどう管理するか
-- [ ] **worktree 作成コマンド**: `git worktree add` → cmux ワークスペース起動 を 1 コマンドにまとめるか
+1. **この workspace は正常か？** → 正常ならそのまま使う
+2. **workspace が消えているだけか？** → `cmux-init` で戻せる
+3. **半壊か？** → `⌘⇧W` で閉じて作り直す
