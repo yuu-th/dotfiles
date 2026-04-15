@@ -67,9 +67,9 @@ let cfg = config.myConfig.darwin.cmux; in {
       # worktree-new: git worktree 作成 → aidev を自動実行
       programs.fish.functions = {
         # zellij セッション名を最大19文字に安全に短縮するプライベート関数
-        # （zellij のセッション名上限は25文字。-tools サフィックス6文字を考慮して19文字以内）
+        # （zellij のセッション名上限は25文字。最長サフィックス -{cp|cl}-ai / -tools = 6文字を考慮して19文字以内）
         # 19文字超の場合: 先頭12文字（末尾ハイフン除去）+ "-" + MD5先頭6文字
-        # Dependents: aidev, ai-viewer, aidev-stop
+        # Dependents: aidev, ai-viewer, aidev-stop, cmux-init
         "_zellij_sname" = {
           description = "Convert project name to zellij-safe base name (max 19 chars)";
           body = ''
@@ -81,6 +81,95 @@ let cfg = config.myConfig.darwin.cmux; in {
             else
               echo $_p
             end
+          '';
+        };
+
+        # AI 名 → 2文字省略形（セッション名に埋め込む用）
+        # Dependents: aidev, ai-viewer, aidev-stop, cmux-init
+        "_ai_short" = {
+          description = "Convert AI name to 2-char abbreviation (claude→cl, copilot→cp)";
+          body = ''
+            switch $argv[1]
+              case claude; echo cl
+              case copilot; echo cp
+              case '*'; echo $argv[1]
+            end
+          '';
+        };
+
+        # 2文字省略形 → AI 名（表示用）
+        "_ai_long" = {
+          description = "Convert 2-char AI abbreviation to full name (cl→claude, cp→copilot)";
+          body = ''
+            switch $argv[1]
+              case cl; echo claude
+              case cp; echo copilot
+              case '*'; echo $argv[1]
+            end
+          '';
+        };
+
+        # 共有 project plan を 1 回で計算して返す
+        # 出力形式: project<TAB>ai<TAB>cwd<TAB>session<TAB>source
+        # source = workspace | orphan
+        "_cmux_project_plan" = {
+          description = "List project plan rows sorted by project name";
+          body = ''
+            set _ws_json (cmux rpc workspace.list 2>/dev/null)
+            if test -z "$_ws_json"
+              return 1
+            end
+
+            set _rows
+            set _known_sessions
+            set _known_projects
+            set _tab (printf '\t')
+
+            for _row in (echo $_ws_json | jq -r '
+              .workspaces[]
+              | select(.title | test("^.+ \\[(claude|copilot)\\]$"))
+              | (.title | capture("^(?<project>.+) \\[(?<ai>claude|copilot)\\]$")) as $m
+              | $m.project + "\t" + $m.ai + "\t" + (.current_directory // "")
+            ' 2>/dev/null)
+              set _parts (string split $_tab $_row)
+              set _project $_parts[1]
+              set _ai $_parts[2]
+              set _cwd $_parts[3]
+              set _session (_zellij_sname $_project)"-"(_ai_short $_ai)"-ai"
+              set _known_sessions $_known_sessions $_session
+              set _known_projects $_known_projects $_project
+              set _rows $_rows (printf '%s\t%s\t%s\t%s\t%s' "$_project" "$_ai" "$_cwd" "$_session" workspace)
+            end
+
+            set _zellij_sessions (zellij list-sessions --short --no-formatting 2>/dev/null)
+            for _sess in (printf '%s\n' $_zellij_sessions | grep -E -- '-(cp|cl)-ai$')
+              if contains -- $_sess $_known_sessions
+                continue
+              end
+              set _base (string replace -r -- '-(cp|cl)-ai$' "" $_sess)
+              set _tools_sess $_base"-tools"
+              if not printf '%s\n' $_zellij_sessions | grep -Fxq -- "$_tools_sess"
+                continue
+              end
+              set _orph_abbr (string match -r '(cp|cl)-ai$' $_sess | tail -1)
+              set _orph_ai (_ai_long $_orph_abbr)
+              set _orph_cwd (zellij -s $_sess action dump-layout 2>/dev/null | awk -F'"' '/cwd / {print $2; exit}')
+              if test -z "$_orph_cwd"
+                continue
+              end
+              set _orph_project (basename $_orph_cwd)
+              if contains -- $_orph_project $_known_projects
+                continue
+              end
+              set _known_projects $_known_projects $_orph_project
+              set _rows $_rows (printf '%s\t%s\t%s\t%s\t%s' "$_orph_project" "$_orph_ai" "$_orph_cwd" "$_sess" orphan)
+            end
+
+            if test (count $_rows) -eq 0
+              return 0
+            end
+
+            printf '%s\n' $_rows | env LC_ALL=C sort
           '';
         };
 
@@ -112,40 +201,44 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # ── 既存の cmux workspace を確認（"proj [*]" パターンでマッチ）────
             set _existing_ws ""
+            set _existing_ai ""
             for _ws_line in (cmux list-workspaces 2>/dev/null)
               set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
               if string match -q "$proj [*]" "$_ws_name"
                 set _existing_ws (echo $_ws_line | grep -oE 'workspace:[0-9]+')
+                set _existing_ai (string match -r '\[(claude|copilot)\]' "$_ws_name" | tail -1)
                 break
               end
             end
             if test -n "$_existing_ws"
-              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
-                # zellijセッションが生存中 → pgrep でプロセス確認
-                # --create 付きで検索: aidev が作成した workspace の terminal のみマッチ
-                # ai-viewer は --create なしで zellij attach を実行するため誤検知しない
-                if pgrep -f "zellij attach $session-ai --create" > /dev/null 2>&1
-                  # pgrep OK → さらに pane 構造を確認（追加のガード）
-                  set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
-                  if test (count $_panes_info) -ge 2
-                    set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
-                    set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
-                    if test $_right_surface_count -ge 2
-                      # 正常稼働中（zellij ✓ + pgrep --create ✓ + pane 構造 ✓）→ フォーカスのみ
-                      if test $_no_focus -eq 0
-                        cmux select-workspace --workspace $_existing_ws
+              set _ai_abbr (_ai_short $_existing_ai)
+              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-$_ai_abbr-ai\$"
+                # -ai セッション生存中 → -tools も確認（両方存在が正常稼働の条件）
+                if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-tools\$"
+                  # pgrep でプロセス確認（--create 付き: ai-viewer 誤検知防止）
+                  if pgrep -f "zellij attach $session-$_ai_abbr-ai --create" > /dev/null 2>&1
+                    # pgrep OK → さらに pane 構造を確認（追加のガード）
+                    set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
+                    if test (count $_panes_info) -ge 2
+                      set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
+                      set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
+                      if test $_right_surface_count -ge 2
+                        # 正常稼働中（-ai ✓ + -tools ✓ + pgrep ✓ + pane 構造 ✓）
+                        if test $_no_focus -eq 0
+                          cmux select-workspace --workspace $_existing_ws
+                        end
+                        echo "✓ Already running: '$proj'"
+                        return 0
                       end
-                      echo "✓ Already running: '$proj'"
-                      return 0
                     end
+                    # pane 構造が壊れている → close して再作成へ
                   end
-                  # pane 構造が壊れている → close して再作成へ
+                  # pgrep NG = ai-viewer のみ or cmux 再起動後 → close して再作成へ
                 end
-                # pgrep NG = ai-viewer のみ or cmux 再起動後 → close して再作成へ
+                # -tools セッションなし → close して再作成へ
               end
-              # zellijセッションなし / pgrep NG / pane 構造壊れ → workspace を削除して再作成へ
+              # -ai セッションなし or 上記チェック不合格 → workspace を削除して再作成へ
               cmux close-workspace --workspace $_existing_ws 2>/dev/null
-              sleep 0.2
             end
 
             # AI ツール選択（--ai フラグがない場合は fzf）
@@ -165,23 +258,22 @@ let cfg = config.myConfig.darwin.cmux; in {
               case copilot
                 set ai_cmd "copilot --agent Myソクラテス --allow-all"
             end
+            set _ai_abbr (_ai_short $ai_choice)
 
             # zellij セッションが既存かどうかを事前に確認
             # 既存 = AI はすでに起動中なので cmux send によるコマンド送信をスキップ
             set _zellij_session_exists 0
-            if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-ai\$"
+            if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-$_ai_abbr-ai\$"
               set _zellij_session_exists 1
             end
 
             # ワークスペース作成（左ペイン = zellij AI セッションで永続化）
             # 出力形式: "OK surface:N workspace:N"  →  $NF = workspace ref
-            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $session-ai --create" | awk '{print $NF}' | string trim)
+            set ws (cmux new-workspace --name "$proj [$ai_choice]" --cwd $cwd --command "zellij attach $session-$_ai_abbr-ai --create" | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "aidev: failed to create cmux workspace" >&2
               return 1
             end
-            sleep 0.5
-
             # 左ペインの surface ref を取得
             set ai_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
             set ai_surface (cmux list-pane-surfaces --workspace $ws --pane $ai_pane | head -1 | grep -oE 'surface:[0-9]+')
@@ -196,7 +288,6 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             # 右ペイン作成
             cmux new-split right --workspace $ws
-            sleep 0.3
 
             # pane ref を取得（list-panes の * プレフィックス対策: grep -oE で抽出）
             set _panes (cmux list-panes --workspace $ws)
@@ -212,7 +303,6 @@ let cfg = config.myConfig.darwin.cmux; in {
             # 右ペイン surface ②: nvim
             set nvim_out (cmux new-surface --type terminal --pane $right_pane --workspace $ws)
             set nvim_surface (echo $nvim_out | awk '{print $2}' | string trim)
-            sleep 0.3
             if test -n "$nvim_surface"
               cmux send --surface $nvim_surface --workspace $ws "nvim .\n"
             end
@@ -234,11 +324,12 @@ let cfg = config.myConfig.darwin.cmux; in {
 
         ai-viewer = {
           description = "Open viewer workspace showing all *-ai Zellij sessions in a grid";
-          # Requires: _zellij_sname
+          # Requires: _cmux_project_plan
           body = ''
-            # ── フラグ解析（--index N: 作成後に指定インデックスに配置）────────
+            # ── フラグ解析（--index N / --session SESSION）───────────────────
             # --index なし → 末尾に配置（単体起動時のデフォルト動作）
             set _target_index ""
+            set _sessions_from_args
             set _i 1
             while test $_i -le (count $argv)
               switch $argv[$_i]
@@ -247,12 +338,37 @@ let cfg = config.myConfig.darwin.cmux; in {
                   if test $_i -le (count $argv)
                     set _target_index $argv[$_i]
                   end
+                case --session
+                  set _i (math $_i + 1)
+                  if test $_i -le (count $argv)
+                    set _sessions_from_args $_sessions_from_args $argv[$_i]
+                  end
               end
               set _i (math $_i + 1)
             end
 
-            # *-ai セッション一覧を取得
-            set ai_sessions (zellij list-sessions --short --no-formatting 2>/dev/null | grep -- '-ai$' | grep -v '^$')
+            # 明示 session が渡された場合はその順序を優先し、なければ共有 plan 順で収集
+            if test (count $_sessions_from_args) -gt 0
+              set ai_sessions $_sessions_from_args
+            else
+              set ai_sessions (zellij list-sessions --short --no-formatting 2>/dev/null | grep -E -- '-(cp|cl)-ai$' | grep -v '^$')
+              set ordered_sessions
+              set _plan_rows (_cmux_project_plan)
+              for _row in $_plan_rows
+                set _parts (string split (printf '\t') $_row)
+                set _session $_parts[4]
+                if contains -- $_session $ai_sessions
+                  set ordered_sessions $ordered_sessions $_session
+                end
+              end
+              for s in $ai_sessions
+                if not contains -- $s $ordered_sessions
+                  set ordered_sessions $ordered_sessions $s
+                end
+              end
+              set ai_sessions $ordered_sessions
+            end
+
             if test (count $ai_sessions) -eq 0
               echo "ai-viewer: no active *-ai sessions found" >&2
               echo "  Run 'aidev' in a project directory first." >&2
@@ -275,26 +391,6 @@ let cfg = config.myConfig.darwin.cmux; in {
                 cmux close-workspace --workspace $ws_ref 2>/dev/null
               end
             end
-            sleep 0.2
-
-            # ai_sessions を cmux workspace の表示順に並び替え
-            # workspace 名 "proj [claude]" → "proj" → session "proj-ai" に対応
-            set ordered_sessions
-            for ws_line in (cmux list-workspaces)
-              set ws_name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[.*\]$//' | string trim)
-              set proj_name (echo $ws_name | sed 's/ \[.*\]$//')
-              set session_name (_zellij_sname $proj_name)"-ai"
-              if contains -- $session_name $ai_sessions
-                set ordered_sessions $ordered_sessions $session_name
-              end
-            end
-            # 対応する workspace がないセッションは末尾に追加
-            for s in $ai_sessions
-              if not contains -- $s $ordered_sessions
-                set ordered_sessions $ordered_sessions $s
-              end
-            end
-            set ai_sessions $ordered_sessions
 
             set n (count $ai_sessions)
             set cols (math "min($n, 4)")
@@ -308,31 +404,27 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
 
             # viewer ワークスペースを作成
-            set ws (cmux new-workspace --name "ai-viewer" --cwd ~ | awk '{print $NF}' | string trim)
+            # 先頭 pane は new-workspace の --command を使い、
+            # post-create の外部 send に依存しない経路へ寄せる
+            set _viewer_out (cmux new-workspace --name "ai-viewer" --cwd ~ --command "zellij attach $ai_sessions[1]")
+            set ws (echo $_viewer_out | awk '{print $NF}' | string trim)
             if test -z "$ws"
               echo "ai-viewer: failed to create ai-viewer workspace" >&2
               return 1
             end
-            sleep 0.3
-
             # 最初のペインに session 1 を送信
             set first_pane (cmux list-panes --workspace $ws | head -1 | grep -oE 'pane:[0-9]+')
-            set first_surface (cmux list-pane-surfaces --workspace $ws --pane $first_pane | head -1 | grep -oE 'surface:[0-9]+')
-            if test -n "$first_surface"
-              cmux send --surface $first_surface --workspace $ws "zellij attach $ai_sessions[1]\n"
-            end
 
             # 1行目: right split を繰り返して cols 列を作成
             # NOTE: macOS seq は seq 2 1 のとき降順で 2,1 を返すため
             #       明示的にステップ 1 を指定（seq first step last）
             set col_panes $first_pane
             for i in (seq 2 1 $cols)
-              cmux new-split right --workspace $ws
-              sleep 0.3
+              set _split_out (cmux new-split right --workspace $ws)
               set _panes (cmux list-panes --workspace $ws)
               set new_pane (echo $_panes[-1] | grep -oE 'pane:[0-9]+')
               set col_panes $col_panes $new_pane
-              set new_surface (cmux list-pane-surfaces --workspace $ws --pane $new_pane | head -1 | grep -oE 'surface:[0-9]+')
+              set new_surface (echo $_split_out | grep -oE 'surface:[0-9]+')
               if test -n "$new_surface"
                 cmux send --surface $new_surface --workspace $ws "zellij attach $ai_sessions[$i]\n"
               end
@@ -360,12 +452,8 @@ let cfg = config.myConfig.darwin.cmux; in {
                   set session_idx (math "($row - 1) * $cols + $col")
                   if test $session_idx -le $n
                     cmux focus-pane --pane $col_panes[$col] --workspace $ws
-                    sleep 0.2
-                    cmux new-split down --workspace $ws
-                    sleep 0.3
-                    set _panes2 (cmux list-panes --workspace $ws)
-                    set bot_pane (echo $_panes2[-1] | grep -oE 'pane:[0-9]+')
-                    set bot_surface (cmux list-pane-surfaces --workspace $ws --pane $bot_pane | head -1 | grep -oE 'surface:[0-9]+')
+                    set _down_out (cmux new-split down --workspace $ws)
+                    set bot_surface (echo $_down_out | grep -oE 'surface:[0-9]+')
                     if test -n "$bot_surface"
                       cmux send --surface $bot_surface --workspace $ws "zellij attach $ai_sessions[$session_idx]\n"
                     end
@@ -382,6 +470,45 @@ let cfg = config.myConfig.darwin.cmux; in {
               cmux reorder-workspace --workspace $ws --after $last_ws_ref 2>/dev/null
             end
             echo "✓ viewer ready ($n AI sessions)"
+          '';
+        };
+
+        ai-viewer-refresh = {
+          description = "Recreate ai-viewer and place it at slot 1";
+          body = ''
+            set _helper 0
+            if test (count $argv) -gt 0
+              for _arg in $argv
+                switch $_arg
+                  case --helper-internal
+                    set _helper 1
+                end
+              end
+            end
+
+            set _current_ws (cmux current-workspace 2>/dev/null | grep -oE 'workspace:[0-9]+')
+            set _self_ws_id "$CMUX_WORKSPACE_ID"
+            set _current_title ""
+            if test -n "$_current_ws"
+              set _current_title (cmux rpc workspace.list 2>/dev/null | jq -r --arg ref "$_current_ws" '
+                first(.workspaces[] | select(.ref == $ref) | .title) // empty
+              ' 2>/dev/null)
+            end
+
+            if test $_helper -eq 0 -a "$_current_title" = "ai-viewer"
+              cmux new-workspace --name "_ai_viewer_refresh" --cwd ~ --command "ai-viewer-refresh --helper-internal" >/dev/null
+              echo "ai-viewer-refresh: delegated via helper workspace"
+              return 0
+            end
+
+            ai-viewer --index 1
+            set _status $status
+
+            if test $_helper -eq 1 -a -n "$_self_ws_id"
+              cmux close-workspace --workspace "$_self_ws_id" 2>/dev/null
+            end
+
+            return $_status
           '';
         };
 
@@ -403,12 +530,14 @@ let cfg = config.myConfig.darwin.cmux; in {
               end
             end
 
-            # ── 2. 孤立 zellij session を収集（cmux workspace に紐付かない *-ai セッション）──
+            # ── 2. 孤立 zellij session を収集（cmux workspace に紐付かない *-(cp|cl)-ai セッション）──
             set _orphan_candidates
-            for _sess in (zellij list-sessions --short --no-formatting 2>/dev/null | grep -- '-ai$')
-              set _base (string replace -r -- '-ai$' "" $_sess)
+            for _sess in (zellij list-sessions --short --no-formatting 2>/dev/null | grep -E -- '-(cp|cl)-ai$')
+              set _base (string replace -r -- '-(cp|cl)-ai$' "" $_sess)
+              set _orph_abbr (string match -r '(cp|cl)-ai$' $_sess | tail -1)
               if not contains $_base $_known_bases
-                set _orphan_candidates $_orphan_candidates "$_base [orphaned]"
+                set _orph_ai (_ai_long $_orph_abbr)
+                set _orphan_candidates $_orphan_candidates "$_base [$_orph_ai] (orphaned)"
               end
             end
 
@@ -428,15 +557,17 @@ let cfg = config.myConfig.darwin.cmux; in {
 
             for _name in $_selected
               # proj 名を抽出して zellij セッション名を計算
-              set _proj (echo $_name | sed 's/ \[.*\]$//')
+              set _proj (echo $_name | sed 's/ \[.*$//')
               set _session (_zellij_sname $_proj)
+              set _del_ai (string match -r '\[(claude|copilot)\]' "$_name" | tail -1)
+              set _del_abbr (_ai_short $_del_ai)
 
               # zellij sessions を完全削除（EXITED 状態で残さない）
-              zellij delete-session --force "$_session-ai" 2>/dev/null
+              zellij delete-session --force "$_session-$_del_abbr-ai" 2>/dev/null
               zellij delete-session --force "$_session-tools" 2>/dev/null
 
-              # [orphaned] でない場合のみ cmux workspace を閉じる
-              if not string match -q "*[orphaned]" "$_name"
+              # (orphaned) でない場合のみ cmux workspace を閉じる
+              if not string match -q "*(orphaned)" "$_name"
                 set _idx 1
                 set _target_ws ""
                 for c in $_candidates
@@ -457,32 +588,70 @@ let cfg = config.myConfig.darwin.cmux; in {
         };
 
         worktree-new = {
-          description = "Create git worktree under ~/dev/ and open AI workspace in cmux";
+          description = "Create a sibling git worktree from a new branch and open AI workspace in cmux";
           body = ''
-            if test (count $argv) -lt 1
-              echo "Usage: worktree-new <name> [<branch-args>...]" >&2
-              echo "  e.g. worktree-new my-feature" >&2
-              echo "  e.g. worktree-new my-feature origin/main" >&2
+            if test (count $argv) -ne 2
+              echo "Usage: worktree-new <branch> <base>" >&2
+              echo "  e.g. worktree-new feature/login origin/main" >&2
               return 1
             end
-            set name $argv[1]
-            set branch_args $argv[2..]
-            set wt_path ~/dev/$name
 
-            if test (count $branch_args) -gt 0
-              git worktree add $wt_path $branch_args; or return 1
-            else
-              git worktree add $wt_path; or return 1
+            set branch $argv[1]
+            set base $argv[2]
+
+            git check-ref-format --branch $branch >/dev/null 2>&1
+            or begin
+              echo "worktree-new: invalid branch name: $branch" >&2
+              return 1
             end
 
-            cd $wt_path; and aidev
+            set repo_root (git rev-parse --show-toplevel 2>/dev/null)
+            or begin
+              echo "worktree-new: not inside a git repo" >&2
+              return 1
+            end
+
+            git rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1
+            or begin
+              echo "worktree-new: base '$base' not found" >&2
+              return 1
+            end
+
+            if git show-ref --verify --quiet "refs/heads/$branch"
+              echo "worktree-new: branch '$branch' already exists" >&2
+              return 1
+            end
+
+            set repo_name (basename $repo_root)
+            set parent_dir (dirname $repo_root)
+            set branch_slug (string replace -a -- "/" "-" "$branch")
+            set branch_slug (string replace -ra -- "[^A-Za-z0-9._-]+" "-" "$branch_slug")
+            set branch_slug (string trim --chars "-." "$branch_slug")
+
+            if test -z "$branch_slug"
+              echo "worktree-new: branch '$branch' cannot be converted to a directory name" >&2
+              return 1
+            end
+
+            set wt_path "$parent_dir/$repo_name-$branch_slug"
+            if test -e "$wt_path"
+              echo "worktree-new: path already exists: $wt_path" >&2
+              return 1
+            end
+
+            git worktree add -b "$branch" "$wt_path" "$base"; or return 1
+
+            cd "$wt_path"; and aidev
           '';
         };
 
         cmux-init = {
           description = "Restore all AI workspaces after cmux restart (re-runs aidev for each dead workspace)";
           body = ''
-            # cmux rpc でワークスペース一覧を取得（CWD 付き）
+            # 呼び出し元 workspace を記録（viewer 再生成時の self-close 回避用）
+            set _caller_ws (cmux current-workspace 2>/dev/null | grep -oE 'workspace:[0-9]+')
+
+            # cmux rpc でワークスペース一覧を取得（cleanup 対象判定に使用）
             set _ws_json (cmux rpc workspace.list 2>/dev/null)
             if test -z "$_ws_json"
               echo "cmux-init: failed to get workspace list" >&2
@@ -492,59 +661,24 @@ let cfg = config.myConfig.darwin.cmux; in {
             # 現在の workspace ID（最後に _cmux_restore workspace を close するために使用）
             set _current_ws_id "$CMUX_WORKSPACE_ID"
 
-            # ── STEP 0: 不要な workspace を全て close ────────────────────────
-            # 残すもの: "shell"、"proj [claude|copilot]" パターン、自分自身 (_cmux_restore)
-            # それ以外（ai-viewer 含む）は close → ai-viewer は後で ai-viewer コマンドが recreate
-            echo "cmux-init: cleaning up unrelated workspaces ..."
-            set _to_close (echo $_ws_json | jq -r --arg cur_id "$_current_ws_id" '
-              .workspaces[]
-              | select(
-                  .title != "shell"
-                  and (.title | test("^.+ \\[(claude|copilot)\\]$") | not)
-                  and (.id != $cur_id)
-                )
-              | .ref
-            ' 2>/dev/null)
-            for _ref in $_to_close
-              echo "cmux-init: closing unrelated workspace ($_ref) ..."
-              cmux close-workspace --workspace $_ref 2>/dev/null
-            end
-            if test (count $_to_close) -gt 0
-              sleep 0.3
-            end
-
-            # ── STEP 1: "PROJ [claude|copilot]" の workspace を aidev で復元 ──
-            # aidev 内部で alive/dead 判定 → dead なら close して末尾に recreate
-            set _entries (echo $_ws_json | jq -r '
-              .workspaces[]
-              | select(.title | test("^.+ \\[(claude|copilot)\\]$"))
-              | .current_directory + "\t" + (.title | capture("^.+ \\[(?P<ai>claude|copilot)\\]$") | .ai)
-            ' 2>/dev/null)
-
-            if test -z "$_entries"
-              echo "cmux-init: no project workspaces found"
-            end
-
-            set _restored 0
-            set _prev_cwd (pwd)
-            for _entry in $_entries
-              set _parts (string split \t $_entry)
-              set _cwd $_parts[1]
-              set _ai $_parts[2]
-              if not test -d "$_cwd"
-                echo "cmux-init: skipping (directory not found: $_cwd)"
-                continue
+            # 共有 plan を 1 回だけ計算し、viewer と restore の両方で使い回す
+            set _plan_rows (_cmux_project_plan)
+            set _plan_sessions
+            set _viewer_sessions
+            set _needs_viewer_refresh 0
+            set _zellij_sessions (zellij list-sessions --short --no-formatting 2>/dev/null)
+            for _row in $_plan_rows
+              set _parts (string split (printf '\t') $_row)
+              set _session $_parts[4]
+              set _plan_sessions $_plan_sessions $_session
+              if contains -- $_session $_zellij_sessions
+                set _viewer_sessions $_viewer_sessions $_session
+              else
+                set _needs_viewer_refresh 1
               end
-              echo "cmux-init: restoring [$_ai] $_cwd ..."
-              cd $_cwd
-              aidev --ai $_ai --no-focus
-              set _restored (math $_restored + 1)
             end
-            cd $_prev_cwd
-            echo "✓ cmux-init: $_restored workspace(s) restored"
 
-            # ── STEP 2: shell workspace を index 0 に配置（先に行う！）────────
-            # 順序が重要: shell → 0 を先にやってから ai-viewer → 1 にする
+            # ── STEP 0: shell workspace を index 0 に配置 ────────────────────
             set _ws_json2 (cmux rpc workspace.list 2>/dev/null)
             set _shell_ref (echo $_ws_json2 | jq -r 'first(.workspaces[] | select(.title == "shell") | .ref) // empty' 2>/dev/null)
             if test -z "$_shell_ref"
@@ -562,14 +696,87 @@ let cfg = config.myConfig.darwin.cmux; in {
               echo "cmux-init: shell positioned at slot 0"
             end
 
-            # ── STEP 3: ai-viewer コマンドを実行（--index 1 で直接 slot 1 に配置）
-            # ai-viewer が内部で recreate + reorder を完結させるため、
-            # cmux-init 側で reorder を追加する必要はない
-            echo "cmux-init: launching ai-viewer ..."
-            ai-viewer --index 1 2>/dev/null
-            or echo "cmux-init: ai-viewer skipped (no active AI sessions yet)"
+            # ── STEP 1: 既に存在する AI セッションだけで viewer を早めに出す ───
+            if test (count $_viewer_sessions) -gt 0
+              if test -n "$_caller_ws"
+                cmux select-workspace --workspace $_caller_ws 2>/dev/null
+              end
+              echo "cmux-init: launching ai-viewer ..."
+              set _viewer_args --index 1
+              for _session in $_viewer_sessions
+                set _viewer_args $_viewer_args --session $_session
+              end
+              ai-viewer $_viewer_args 2>/dev/null
+              or echo "cmux-init: ai-viewer skipped (failed to create early viewer)"
+            end
 
-            # ── STEP 4: 自分自身 (_cmux_restore workspace) を close ──────────
+            # ── STEP 2: viewer を残しつつ不要な workspace を close ────────────
+            # 残すもの: "shell"、"ai-viewer"、"proj [claude|copilot]"、自分自身 (_cmux_restore)
+            echo "cmux-init: cleaning up unrelated workspaces ..."
+            set _ws_json_cleanup (cmux rpc workspace.list 2>/dev/null)
+            set _to_close (echo $_ws_json_cleanup | jq -r --arg cur_id "$_current_ws_id" '
+              .workspaces[]
+              | select(
+                  .title != "shell"
+                  and .title != "ai-viewer"
+                  and (.title | (endswith(" [claude]") or endswith(" [copilot]")) | not)
+                  and (.id != $cur_id)
+                )
+              | .ref
+            ' 2>/dev/null)
+            for _ref in $_to_close
+              echo "cmux-init: closing unrelated workspace ($_ref) ..."
+              cmux close-workspace --workspace $_ref 2>/dev/null
+            end
+
+            # ── STEP 3: 共有 plan 順に project workspace を復元 ───────────────
+            if test (count $_plan_rows) -eq 0
+              echo "cmux-init: no project workspaces found"
+            end
+
+            set _restored 0
+            set _prev_cwd (pwd)
+            for _entry in $_plan_rows
+              set _parts (string split (printf '\t') $_entry)
+              set _project $_parts[1]
+              set _ai $_parts[2]
+              set _cwd $_parts[3]
+              set _source $_parts[5]
+              if not test -d "$_cwd"
+                echo "cmux-init: skipping $_project ($_source; directory not found: $_cwd)"
+                continue
+              end
+              echo "cmux-init: restoring $_project [$_ai] ($_source) ..."
+              cd $_cwd
+              aidev --ai $_ai --no-focus
+              set _restored (math $_restored + 1)
+            end
+
+            cd $_prev_cwd
+            echo "✓ cmux-init: $_restored workspace(s) restored"
+
+            # ── STEP 4: early viewer に未反映だった session があれば最後に同期 ──
+            set _final_viewer_sessions
+            set _final_zellij_sessions (zellij list-sessions --short --no-formatting 2>/dev/null)
+            for _session in $_plan_sessions
+              if contains -- $_session $_final_zellij_sessions
+                set _final_viewer_sessions $_final_viewer_sessions $_session
+              end
+            end
+            if test $_needs_viewer_refresh -eq 1 -a (count $_final_viewer_sessions) -gt 0
+              if test -n "$_caller_ws"
+                cmux select-workspace --workspace $_caller_ws 2>/dev/null
+              end
+              echo "cmux-init: refreshing ai-viewer ..."
+              set _viewer_args --index 1
+              for _session in $_final_viewer_sessions
+                set _viewer_args $_viewer_args --session $_session
+              end
+              ai-viewer $_viewer_args 2>/dev/null
+              or echo "cmux-init: ai-viewer refresh skipped"
+            end
+
+            # ── STEP 5: 自分自身 (_cmux_restore workspace) を close ──────────
             if test -n "$_current_ws_id"
               set _my_title (cmux rpc workspace.list 2>/dev/null | jq -r --arg id "$_current_ws_id" 'first(.workspaces[] | select(.id == $id) | .title) // empty' 2>/dev/null)
               if test "$_my_title" = "_cmux_restore"
@@ -578,7 +785,7 @@ let cfg = config.myConfig.darwin.cmux; in {
               end
             end
 
-            echo "✓ cmux-init: done — shell(0) → ai-viewer(1) → projects(2+)"
+            echo "✓ cmux-init: done — shell(0) → ai-viewer(1) → cleanup → projects(2+)"
           '';
         };
       };
@@ -616,8 +823,23 @@ let cfg = config.myConfig.darwin.cmux; in {
                 "keywords": ["viewer", "watch", "monitor", "all"],
                 "restart": "confirm",
                 "workspace": {
-                "name": "ai-viewer",
+                  "name": "ai-viewer",
                   "cwd": "~"
+                }
+              },
+              {
+                "name": "Refresh AI Viewer",
+                "description": "既存 ai-viewer を壊して正しい session で作り直す",
+                "keywords": ["viewer", "refresh", "rebuild", "reconnect"],
+                "restart": "recreate",
+                "workspace": {
+                  "name": "_ai_viewer_refresh",
+                  "cwd": "~",
+                  "layout": {
+                    "pane": {
+                      "surfaces": [{"type": "terminal", "command": "ai-viewer-refresh"}]
+                    }
+                  }
                 }
               },
               {
