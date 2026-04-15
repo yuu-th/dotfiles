@@ -109,6 +109,14 @@ let cfg = config.myConfig.darwin.cmux; in {
           '';
         };
 
+        # cmux list-workspaces の1行からタイトルを抽出（"* workspace:N  title [selected]" → "title"）
+        "_ws_title_from_line" = {
+          description = "Extract workspace title from a cmux list-workspaces output line";
+          body = ''
+            echo $argv[1] | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim
+          '';
+        };
+
         # 共有 project plan を 1 回で計算して返す
         # 出力形式: project<TAB>ai<TAB>cwd<TAB>session<TAB>source
         # source = workspace | orphan
@@ -173,9 +181,48 @@ let cfg = config.myConfig.darwin.cmux; in {
           '';
         };
 
+        # aidev workspace が正常稼働中かを確認（全チェック通過で 0 を返す）
+        # argv[1] = workspace ref, argv[2] = session base (_zellij_sname 済み), argv[3] = ai abbr (cp|cl)
+        "_aidev_is_running" = {
+          description = "Return 0 if aidev workspace is fully operational (sessions alive, pane structure intact)";
+          body = ''
+            set _ws      $argv[1]  # workspace ref (e.g. workspace:5)
+            set _session $argv[2]  # session base from _zellij_sname (e.g. dotfiles)
+            set _abbr    $argv[3]  # ai abbreviation (cp or cl)
+
+            # 現在の zellij session 一覧を 1 回だけ取得
+            set _live (zellij list-sessions --short --no-formatting 2>/dev/null)
+
+            # -ai セッション確認
+            if not printf '%s\n' $_live | grep -q "^$_session-$_abbr-ai\$"
+              return 1
+            end
+            # -tools セッション確認
+            if not printf '%s\n' $_live | grep -q "^$_session-tools\$"
+              return 1
+            end
+            # zellij attach プロセス確認（--create 付きパターンで ai-viewer 誤検知防止）
+            if not pgrep -f "zellij attach $_session-$_abbr-ai --create" > /dev/null 2>&1
+              return 1
+            end
+            # pane 構造確認（左右 2 pane 以上）
+            set _panes_info (cmux list-panes --workspace $_ws 2>/dev/null)
+            if test (count $_panes_info) -lt 2
+              return 1
+            end
+            # 右 pane の surface 数確認（tools/nvim/browser 計 2 以上）
+            set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
+            set _right_surfaces (count (cmux list-pane-surfaces --workspace $_ws --pane $_right_pane 2>/dev/null))
+            if test $_right_surfaces -lt 2
+              return 1
+            end
+            return 0
+          '';
+        };
+
         aidev = {
           description = "Start AI workspace in cmux (left: Zellij AI, right: shell/nvim/browser)";
-          # Requires: _zellij_sname
+          # Requires: _zellij_sname, _aidev_is_running
           body = ''
             # ── フラグ解析（--ai claude|copilot, --no-focus）──────────────────
             set _ai_flag ""
@@ -203,7 +250,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             set _existing_ws ""
             set _existing_ai ""
             for _ws_line in (cmux list-workspaces 2>/dev/null)
-              set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              set _ws_name (_ws_title_from_line $_ws_line)
               if string match -q "$proj [*]" "$_ws_name"
                 set _existing_ws (echo $_ws_line | grep -oE 'workspace:[0-9]+')
                 set _existing_ai (string match -r '\[(claude|copilot)\]' "$_ws_name" | tail -1)
@@ -212,32 +259,15 @@ let cfg = config.myConfig.darwin.cmux; in {
             end
             if test -n "$_existing_ws"
               set _ai_abbr (_ai_short $_existing_ai)
-              if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-$_ai_abbr-ai\$"
-                # -ai セッション生存中 → -tools も確認（両方存在が正常稼働の条件）
-                if zellij list-sessions --short --no-formatting 2>/dev/null | grep -q "^$session-tools\$"
-                  # pgrep でプロセス確認（--create 付き: ai-viewer 誤検知防止）
-                  if pgrep -f "zellij attach $session-$_ai_abbr-ai --create" > /dev/null 2>&1
-                    # pgrep OK → さらに pane 構造を確認（追加のガード）
-                    set _panes_info (cmux list-panes --workspace $_existing_ws 2>/dev/null)
-                    if test (count $_panes_info) -ge 2
-                      set _right_pane (echo $_panes_info[-1] | grep -oE 'pane:[0-9]+')
-                      set _right_surface_count (count (cmux list-pane-surfaces --workspace $_existing_ws --pane $_right_pane 2>/dev/null))
-                      if test $_right_surface_count -ge 2
-                        # 正常稼働中（-ai ✓ + -tools ✓ + pgrep ✓ + pane 構造 ✓）
-                        if test $_no_focus -eq 0
-                          cmux select-workspace --workspace $_existing_ws
-                        end
-                        echo "✓ Already running: '$proj'"
-                        return 0
-                      end
-                    end
-                    # pane 構造が壊れている → close して再作成へ
-                  end
-                  # pgrep NG = ai-viewer のみ or cmux 再起動後 → close して再作成へ
+              # 正常稼働中（-ai ✓ + -tools ✓ + pgrep ✓ + pane 構造 ✓）
+              if _aidev_is_running $_existing_ws $session $_ai_abbr
+                if test $_no_focus -eq 0
+                  cmux select-workspace --workspace $_existing_ws
                 end
-                # -tools セッションなし → close して再作成へ
+                echo "✓ Already running: '$proj'"
+                return 0
               end
-              # -ai セッションなし or 上記チェック不合格 → workspace を削除して再作成へ
+              # チェック不合格 → workspace を削除して再作成へ
               cmux close-workspace --workspace $_existing_ws 2>/dev/null
             end
 
@@ -386,7 +416,7 @@ let cfg = config.myConfig.darwin.cmux; in {
                 continue
               end
               # workspace 名が厳密に "ai-viewer" のものだけ閉じる
-              set _name (echo $ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              set _name (_ws_title_from_line $ws_line)
               if test "$_name" = "ai-viewer"
                 cmux close-workspace --workspace $ws_ref 2>/dev/null
               end
@@ -521,7 +551,7 @@ let cfg = config.myConfig.darwin.cmux; in {
             set _ws_refs
             set _known_bases  # cmux で管理中のセッションベース名（重複チェック用）
             for _ws_line in (cmux list-workspaces 2>/dev/null)
-              set _ws_name (echo $_ws_line | sed 's/^[* ]*workspace:[0-9]* *//' | sed 's/ *\[selected\]$//' | string trim)
+              set _ws_name (_ws_title_from_line $_ws_line)
               if string match -qr '.*\[(claude|copilot)\]$' "$_ws_name"
                 set _candidates $_candidates $_ws_name
                 set _ws_refs $_ws_refs (echo $_ws_line | grep -oE 'workspace:[0-9]+')
