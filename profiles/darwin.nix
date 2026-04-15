@@ -41,6 +41,7 @@
     ../modules/common/zellij.nix
     ../modules/common/neovim.nix
     ../modules/common/teams.nix
+    ../modules/common/zen-browser.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -128,6 +129,7 @@
   myConfig.zellij.enable           = true;
   myConfig.neovim.enable           = true;
   myConfig.teams.enable            = true;
+  myConfig.zenBrowser.enable       = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
