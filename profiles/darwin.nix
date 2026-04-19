@@ -42,6 +42,9 @@
     ../modules/common/neovim.nix
     ../modules/common/teams.nix
     ../modules/common/zen-browser.nix
+    ../modules/common/gemini-cli.nix
+    ../modules/common/uv.nix
+    ../modules/common/browser-use.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -130,6 +133,9 @@
   myConfig.neovim.enable           = true;
   myConfig.teams.enable            = true;
   myConfig.zenBrowser.enable       = true;
+  myConfig.geminiCli.enable        = true;
+  myConfig.uv.enable               = true;
+  myConfig.browserUse.enable       = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
