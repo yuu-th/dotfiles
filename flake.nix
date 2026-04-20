@@ -31,8 +31,6 @@
     vsci-feed-linux-arm64  = { url = "https://update.code.visualstudio.com/api/update/linux-arm64/insider/latest"; flake = false; };
     vsci-feed-linux-x64    = { url = "https://update.code.visualstudio.com/api/update/linux-x64/insider/latest"; flake = false; };
 
-    # Agent skills catalog (child flake — skill sources pinned independently)
-    skills-catalog.url = "path:./modules/common/agent-skills";
   };
 
   outputs = inputs@{ self, nixpkgs, nix-darwin, home-manager, ... }: {
