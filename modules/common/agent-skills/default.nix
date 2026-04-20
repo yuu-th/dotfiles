@@ -26,22 +26,23 @@ let
     "browser-use"
     "my_gemini_cli"
   ];
-
-  # Generate home.file entries for personal skill symlinks across all targets
-  personalSymlinks = builtins.listToAttrs (lib.concatMap (target:
-    map (skill: {
-      name  = "${target}/${skill}";
-      value = {
-        source = config.lib.file.mkOutOfStoreSymlink "${mySkillsDir}/${skill}";
-      };
-    }) personalSkills
-  ) skillsTargets);
 in
 {
   options.myConfig.agentSkills.enable = lib.mkEnableOption "Agent Skills (Nix-managed)";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${user} = {
+    # HM module context: config.lib.file.mkOutOfStoreSymlink is available here
+    home-manager.users.${user} = { config, ... }:
+    let
+      personalSymlinks = builtins.listToAttrs (lib.concatMap (target:
+        map (skill: {
+          name  = "${target}/${skill}";
+          value = {
+            source = config.lib.file.mkOutOfStoreSymlink "${mySkillsDir}/${skill}";
+          };
+        }) personalSkills
+      ) skillsTargets);
+    in {
       imports = [ inputs.skills-catalog.homeManagerModules.default ];
 
       # Personal skills: direct symlinks for immediate reflection

@@ -45,6 +45,7 @@
     ../modules/common/gemini-cli.nix
     ../modules/common/uv.nix
     ../modules/common/browser-use.nix
+    ../modules/common/agent-skills
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -136,6 +137,7 @@
   myConfig.geminiCli.enable        = true;
   myConfig.uv.enable               = true;
   myConfig.browserUse.enable       = true;
+  myConfig.agentSkills.enable      = true;
 
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
