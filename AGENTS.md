@@ -387,7 +387,128 @@ darwin 環境の全設定を集約する単一ファイル。ここで行うこ�
 
 ---
 
-## 新しいモジュールを追加する手順
+## modules/common/agent-skills/ のパターン
+
+AI エージェント向けスキルを Nix で宣言管理する仕組み。
+外部スキル（公式・サードパーティ）と個人スキルを**別々のメカニズムで共存**させる点が特徴。
+
+### 2 種類のスキルとその扱い
+
+| 種類 | 場所 | 更新方法 | 反映タイミング |
+|---|---|---|---|
+| 外部スキル | Nix store（読み取り専用） | `flake.lock` 更新 → HM switch | ビルド後 |
+| 個人スキル | `~/dev/my-skills/`（mutable） | ファイルを保存するだけ | 即時（シンボリックリンク） |
+
+### ファイル構造
+
+```
+modules/common/agent-skills/
+├── flake.nix      # ① 外部スキルの宣言（どのリポジトリのどのスキルを使うか）
+├── flake.lock     # ② 外部スキルのコミットをピン留め（このディレクトリ専用の lock）
+└── default.nix    # ③ nix-darwin ラッパー（gitwatch + 個人スキルシンボリックリンク）
+```
+
+**`flake.nix`（外部スキル管理）の責務:**
+- 外部リポジトリを `inputs` として取り込む（`flake = false` でピン留め）
+- `skills.enable = [ "skill-name" ]` で有効化するスキルを選択
+- `targets.*.enable = true` で配置先ディレクトリを指定
+
+**`default.nix`（nix-darwin ラッパー）の責務:**
+- `myConfig.agentSkills.enable` option を提供
+- `~/dev/my-skills/` の各スキルを全ターゲットに `mkOutOfStoreSymlink` で直接リンク
+- `gitwatch` launchd agent を登録（`~/dev/my-skills/` の変更を自動 commit & push）
+
+### 外部スキルを追加・変更する手順
+
+編集対象は **`flake.nix` のみ**。
+
+```nix
+# ① 新しいスキルソースを inputs に追加
+my-new-source = {
+  url = "github:owner/repo";
+  flake = false;
+};
+
+# ② sources に登録
+sources.my-new-source = {
+  path   = my-new-source;
+  subdir = "skills";  # スキルファイルが置かれているサブディレクトリ
+};
+
+# ③ 有効化
+skills.enable = [ "existing-skill" "new-skill-id" ];
+```
+
+```bash
+git add modules/common/agent-skills/
+# チャイルドフレークの lock を更新してからビルド
+nix flake update --update-input skills-catalog --flake .
+sudo darwin-rebuild switch --flake .#yuta
+```
+
+> **注意:** メインの `flake.lock` ではなく `modules/common/agent-skills/flake.lock` が更新される。
+> `skills-catalog` input がチャイルドフレーク全体をラップしているため。
+
+### 個人スキルを追加する手順
+
+`~/dev/my-skills/` に新しいスキルディレクトリを作り、`default.nix` の `personalSkills` リストに追加する。
+
+**Step 1:** `~/dev/my-skills/<skill-name>/SKILL.md` を作成（gitwatch が自動 push）
+
+**Step 2:** `default.nix` の `personalSkills` に追加してビルド:
+
+```nix
+personalSkills = [
+  "browser-use"
+  "my_gemini_cli"
+  "new-skill"   # ← 追加
+];
+```
+
+```bash
+sudo darwin-rebuild switch --flake .#yuta
+# → 全ターゲット（.claude/skills/, .copilot/skills/ 等）に即時シンボリックリンクが張られる
+```
+
+### gitwatch の動作
+
+`launchd.user.agents.gitwatch-my-skills` として常駐。
+
+- `~/dev/my-skills/` 以下のファイル変更を検知
+- 変更後 10 秒待機してから `git commit` + `git push origin main`
+- ログ: `~/.local/log/gitwatch-my-skills.log`
+- Keychain 経由で `gh auth git-credential` を使うため `gh auth login` が事前に必要
+
+```bash
+# gitwatch が動いているか確認
+launchctl list | grep gitwatch
+
+# ログ確認
+tail -f ~/.local/log/gitwatch-my-skills.log
+```
+
+### チャイルドフレークについて
+
+`modules/common/agent-skills/` は**独立したフレーク**。メインの `flake.nix` からは `path:` で参照される。
+
+```nix
+# メイン flake.nix
+skills-catalog.url = "path:./modules/common/agent-skills";
+```
+
+外部スキルのピン留めは `modules/common/agent-skills/flake.lock` で管理される（メインの `flake.lock` とは別）。
+特定のスキルソースだけ更新したい場合:
+
+```bash
+# チャイルドフレーク内の特定 input を更新
+cd modules/common/agent-skills
+nix flake update anthropic-skills
+# → modules/common/agent-skills/flake.lock が更新される
+```
+
+---
+
+
 
 ### macOS 向け Cask アプリを追加する場合
 
