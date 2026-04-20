@@ -4,7 +4,7 @@ let cfg = config.myConfig.browserUse; in {
   options.myConfig.browserUse.enable = lib.mkEnableOption "browser-use AI browser automation";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.myConfig.primaryUser} = {
+    home-manager.users.${config.myConfig.primaryUser} = { lib, ... }: {
       home.sessionPath = [
         "$HOME/.browser-use-env/bin"
         "$HOME/.browser-use/bin"
