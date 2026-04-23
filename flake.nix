@@ -25,6 +25,9 @@
       inputs.home-manager.follows = "home-manager";
     };
 
+    # GitHub Copilot CLI - updated 4x/day by numtide bot
+    llm-agents.url = "github:numtide/llm-agents.nix";
+
     # VS Code Insiders feeds - tracked in flake.lock
     vsci-feed-darwin-arm64 = { url = "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"; flake = false; };
     vsci-feed-darwin-x64   = { url = "https://update.code.visualstudio.com/api/update/darwin/insider/latest"; flake = false; };

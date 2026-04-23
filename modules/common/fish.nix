@@ -70,7 +70,8 @@ let cfg = config.myConfig.fish; in {
           gp  = "git push";
           gd  = "git diff";
           # エイリアスを追加したい場合はここに追記
-          copilot = "copilot --alt-screen";
+          copilot   = "copilot --alt-screen";
+          darwin-up = "$HOME/bin/darwin-up";
         };
 
         interactiveShellInit = ''
@@ -367,6 +368,24 @@ let cfg = config.myConfig.fish; in {
         dust
         yazi
       ];
+
+      # darwin-up: flake.lock を更新して rebuild し、変更を git push する
+      home.file."bin/darwin-up" = lib.mkIf pkgs.stdenv.isDarwin {
+        executable = true;
+        text = ''
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd ~/dev/dotfiles
+          git pull --rebase origin main
+          nix flake update llm-agents
+          sudo darwin-rebuild switch --flake .#yuta
+          if ! git diff --quiet flake.lock; then
+            git add flake.lock
+            git commit -m "chore: update llm-agents ($(date +%Y-%m-%d))"
+            git push
+          fi
+        '';
+      };
     };
   };
 }

@@ -76,7 +76,8 @@ in
             --update-input vsci-feed-darwin-arm64 \
             --update-input vsci-feed-darwin-x64 \
             --update-input vsci-feed-linux-arm64 \
-            --update-input vsci-feed-linux-x64
+            --update-input vsci-feed-linux-x64 \
+            --update-input llm-agents
 
           # If nothing changed, exit cleanly
           if git diff --quiet flake.lock; then

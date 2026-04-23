@@ -99,22 +99,39 @@ dotfiles/
 
 ---
 
-## 日常の運用
+## macOS セットアップ
 
-### A. 通常の同期パス (推奨 / サーバ主導)
+### 初回（新しい Mac）
 
 ```bash
-# 1. GitHub からサーバが更新した最新ハッシュを受け取る
-git pull
+# 1. Nix をインストール（未インストールの場合）
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 
-# 2. 手元の環境に適用する
+# 2. dotfiles をクローン
+git clone https://github.com/yuu-th/dotfiles ~/dev/dotfiles
+cd ~/dev/dotfiles
+
+# 3. 初回 rebuild（この時点ではまだ darwin-up が使えないため直接実行）
 sudo darwin-rebuild switch --flake .#yuta
 ```
 
-### B. 即時アップデートパス (手動ブースト)
+初回 rebuild 後は `darwin-up` エイリアスが登録されるため、以降は下記の日常運用コマンドのみで OK。
+
+---
+
+## 日常の運用
+
+### A. 通常の同期・アップデート（推奨）
 
 ```bash
-# git pull -> flake update -> darwin-rebuild switch を一括実行
+# git pull → llm-agents 更新 → rebuild → flake.lock を git push まで一括実行
+darwin-up
+```
+
+### B. VS Code Insiders のみ更新
+
+```bash
+# git pull -> vscode feed 更新 -> darwin-rebuild switch を一括実行
 vsci-up
 ```
 
