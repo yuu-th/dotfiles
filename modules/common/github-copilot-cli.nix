@@ -7,6 +7,6 @@ let cfg = config.myConfig.githubCopilotCli; in {
   # flake-autoupdate.nix の daily job で --update-input llm-agents を実行して追従
   config = lib.mkIf cfg.enable {
     home-manager.users.${config.myConfig.primaryUser}.home.packages =
-      [ inputs.llm-agents.packages.${pkgs.system}.copilot-cli ];
+      [ inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.copilot-cli ];
   };
 }

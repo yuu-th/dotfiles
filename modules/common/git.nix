@@ -10,6 +10,7 @@ in {
     home-manager.users.${user} = {
       programs.git = {
         enable = true;
+        signing.format = null;
         settings = {
           user = {
             name  = "yuu-th";

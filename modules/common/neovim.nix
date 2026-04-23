@@ -34,7 +34,7 @@ let cfg = config.myConfig.neovim; in {
           lualine-nvim
         ];
 
-        extraLuaConfig = ''
+        initLua = ''
           -- ── 基本設定 ──────────────────────────────────────────────────────
           vim.opt.number         = true
           vim.opt.relativenumber = true
