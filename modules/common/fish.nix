@@ -70,7 +70,6 @@ let cfg = config.myConfig.fish; in {
           gp  = "git push";
           gd  = "git diff";
           # エイリアスを追加したい場合はここに追記
-          copilot   = "copilot --alt-screen";
           darwin-up = "$HOME/bin/darwin-up";
         };
 
