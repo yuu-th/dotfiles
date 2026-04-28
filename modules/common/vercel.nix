@@ -8,7 +8,9 @@ let cfg = config.myConfig.vercel; in {
       home.sessionPath = [ "$HOME/Library/pnpm" ];
 
       home.activation.vercelSetup = lib.hm.dag.entryAfter ["writeBoundary"] ''
-        if ! command -v vercel &>/dev/null; then
+        export PNPM_HOME="$HOME/Library/pnpm"
+        mkdir -p "$PNPM_HOME"
+        if [ ! -f "$PNPM_HOME/vercel" ]; then
           ${pkgs.pnpm}/bin/pnpm add -g vercel
         fi
       '';
