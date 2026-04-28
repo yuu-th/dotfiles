@@ -46,6 +46,10 @@
     ../modules/common/uv.nix
     ../modules/common/browser-use.nix
     ../modules/common/vercel.nix
+    ../modules/common/direnv.nix
+    ../modules/common/flutter.nix
+    ../modules/common/android-tools.nix
+    ../modules/darwin/android-studio.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -138,6 +142,10 @@
   myConfig.uv.enable               = true;
   myConfig.browserUse.enable        = true;
   myConfig.vercel.enable            = true;
+  myConfig.direnv.enable            = true;
+  myConfig.flutter.enable           = true;
+  myConfig.androidTools.enable      = true;
+  myConfig.darwin.androidStudio.enable = true;
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
     home.username      = config.myConfig.primaryUser;
