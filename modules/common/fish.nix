@@ -375,9 +375,14 @@ let cfg = config.myConfig.fish; in {
           #!/usr/bin/env bash
           set -euo pipefail
           cd ~/dev/dotfiles
+          # sudo darwin-rebuild が .git/objects に root 所有ファイルを作る場合があるので修復
+          sudo chown -R "$(whoami)" .git/objects 2>/dev/null || true
+          # 前回の nix flake update が途中失敗して flake.lock が dirty になっていても続行できるよう破棄
+          git checkout -- flake.lock 2>/dev/null || true
           git pull --rebase origin main
           nix flake update llm-agents
           sudo darwin-rebuild switch --flake .#yuta
+          sudo chown -R "$(whoami)" .git/objects 2>/dev/null || true
           if ! git diff --quiet flake.lock; then
             git add flake.lock
             git commit -m "chore: update llm-agents ($(date +%Y-%m-%d))"
