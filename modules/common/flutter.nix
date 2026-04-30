@@ -13,7 +13,11 @@
 # Android 実機デバッグには android-tools.nix (ADB) も有効にすること。
 #
 # プロジェクト別に Flutter バージョンを固定したい場合は
-# プロジェクト内の flake.nix で pkgs.flutter を上書きする。
+# プロジェクト内の flake.nix で特定バージョンを指定する:
+#   pkgs.flutter329  # Flutter 3.29.x
+#   pkgs.flutter327  # Flutter 3.27.x
+#   利用可能なバージョン: https://search.nixos.org/packages?query=flutter
+# direnv (nix-direnv) と組み合わせることで cd 時に自動切り替えが可能。
 { config, lib, pkgs, ... }:
 let cfg = config.myConfig.flutter; in {
   options.myConfig.flutter.enable = lib.mkEnableOption "Flutter SDK and JDK17";

@@ -50,6 +50,7 @@
     ../modules/common/flutter.nix
     ../modules/common/android-tools.nix
     ../modules/darwin/android-studio.nix
+    ../modules/darwin/xcode-tools.nix
   ];
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
@@ -146,6 +147,7 @@
   myConfig.flutter.enable           = true;
   myConfig.androidTools.enable      = true;
   myConfig.darwin.androidStudio.enable = true;
+  myConfig.darwin.xcodeTools.enable    = true;
   # ── Home Manager user facts ───────────────────────────────────────────────────
   home-manager.users.${config.myConfig.primaryUser} = {
     home.username      = config.myConfig.primaryUser;
