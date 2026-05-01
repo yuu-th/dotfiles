@@ -25,6 +25,11 @@
       inputs.home-manager.follows = "home-manager";
     };
 
+    firefox-addons = {
+      url = "gitlab:rycee/nur-expressions?dir=pkgs/firefox-addons";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # GitHub Copilot CLI - updated 4x/day by numtide bot
     llm-agents.url = "github:numtide/llm-agents.nix";
 
