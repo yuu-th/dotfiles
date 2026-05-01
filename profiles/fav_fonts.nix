@@ -5,9 +5,9 @@
 # fontFamily を参照するモジュール（ghostty 等）はここで上書きする。
 { pkgs, ... }: {
   fonts.packages = with pkgs; [
-    udev-gothic-nf
+    hackgen-nf-font
   ];
 
   # Ghostty が参照するプライマリフォント（fonts.packages と同期を保つ）
-  myConfig.darwin.ghostty.fontFamily = "UDEV Gothic NF";
+  myConfig.darwin.ghostty.fontFamily = "HackGen Console NF";
 }
