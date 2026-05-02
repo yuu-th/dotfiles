@@ -72,7 +72,10 @@
   { binding = "Option+.";       id = "cycleColumnWidthForward"; }
   { binding = "Option+T";       id = "toggleColumnTabbed"; }
   { binding = "Option+Shift+F"; id = "toggleColumnFullWidth"; }
-  { binding = "Option+Shift+B"; id = "balanceSizes"; }
+  # balanceSizes: 全 column の幅を均等化。
+  # 旧 canonical デフォルトは Option+Shift+B だが、Karabiner の alt-shift-b
+  # (move window to WS B) と衝突するため、Option+= に移設（"=" = balance のニーモニック）。
+  { binding = "Option+=";       id = "balanceSizes"; }
   { binding = "Option+/";       id = "toggleWorkspaceLayout"; }   # niri ⇄ dwindle
 
   # ── フルスクリーン・floating ─────────────────────────────────────────
@@ -86,7 +89,10 @@
   { binding = "Option+Shift+O";       id = "toggleOverview"; }            # 全 WS 俯瞰
   { binding = "Option+Shift+R";       id = "raiseAllFloatingWindows"; }
   { binding = "Control+Option+Space"; id = "openCommandPalette"; }        # 全コマンド検索
-  { binding = "Control+Option+M";     id = "openMenuAnywhere"; }          # context menu 召喚
+  # openMenuAnywhere: canonical デフォルトは Control+Option+M だが、Karabiner の
+  # alt-ctrl-m (setup-media) と衝突する。明示的に Unassigned にして Command Palette
+  # から呼び出す運用とする（"open menu anywhere" を検索）。
+  { binding = "Unassigned";           id = "openMenuAnywhere"; }
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ────────────────────────
   { binding = "Option+`"; id = "toggleQuakeTerminal"; }

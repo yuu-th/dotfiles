@@ -108,7 +108,7 @@ nix ビルド時には不明なので、以下の二段構えで対処：
 | `Option+,` / `Option+.` | column 幅プリセットを巡回（戻り/進み） |
 | `Option+T` | column 内のウィンドウをタブ表示にトグル（旧 accordion 相当） |
 | `Option+Shift+F` | column を全幅化 |
-| `Option+Shift+B` | 全 column の幅を均等化 |
+| `Option+=` | 全 column の幅を均等化（balanceSizes、"=" は均等のニーモニック） |
 
 #### レイアウト
 | キー | 操作 |
@@ -123,7 +123,6 @@ nix ビルド時には不明なので、以下の二段構えで対処：
 | `Option+Shift+O` | Overview（全 WS 俯瞰） |
 | `Option+Shift+R` | floating ウィンドウを全部最前面に |
 | `Control+Option+Space` | Command Palette（全コマンド検索） |
-| `Control+Option+M` | Open Menu Anywhere |
 | ``Option+` `` | Quake terminal（OmniWM 内蔵 libghostty） |
 | `Control+Option+Shift+R` | rescueOffscreenWindows（画面外ウィンドウ呼び戻し） |
 
