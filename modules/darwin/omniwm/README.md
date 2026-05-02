@@ -222,6 +222,40 @@ profile 層の assertion で同時 enable は禁止されている。
 2. Karabiner-Elements GUI で OmniWM 関連ルールが ON になっているか確認
 3. `omniwmctl command focus left` 等で IPC 経由の動作確認
 4. `omniwmctl query commands` でホットキー登録状態を確認
+5. `Option+L` を押すと `¬` が出る → OmniWM がクラッシュしてホットキーが OS に流れている。
+   `pgrep -lx OmniWM` で確認、無ければ `launchctl kickstart -k gui/$UID/org.nixos.omniwm`
+
+### Floating ウィンドウが見えない / 行方不明
+OmniWM が floating ウィンドウを画面外や別 WS に置いてしまった場合：
+- **`Option+Shift+R`** → raiseAllFloatingWindows（全 floating を最前面に）
+- **`Control+Option+Shift+R`** → rescueOffscreenWindows（画面外のウィンドウを呼び戻す）
+- **`Option+Shift+O`** → Overview（全 WS を俯瞰、視覚的に探す）
+- それでも見つからない → `omniwmctl query windows --floating --format json` で位置確認
+
+App rules で float に指定したアプリ（Finder, System Settings, 1Password 等）が
+タイル化されてしまう場合：
+- `omniwmctl query focused-window-decision` でルール適用状態を確認
+- 該当アプリを再起動（appRules は新しいウィンドウにのみ適用）
+
+### モニタプロファイルの切替
+出張先で外部モニタが違う等の場合：
+1. `monitor-profiles/<新しい名前>.nix` を作成（既存を参考に）
+2. `profiles/darwin.nix` で `myConfig.darwin.omniwm.monitorProfile = "<新しい名前>";`
+3. `git add` → `sudo darwin-rebuild switch --flake .#yuta`
+
+プロファイルが現状のモニタと完全には一致しなくても、`deploy.sh` が
+matched しないモニタは `secondary` にフォールバックするため crash しない。
+
+### Display 名の確認方法
+```bash
+# OmniWM 起動中
+omniwmctl query displays --format json | jq -r '.result.payload.displays[].name'
+# OmniWM 起動前
+system_profiler SPDisplaysDataType -json | jq -r '.SPDisplaysDataType[].spdisplays_ndrvs[]?._name'
+```
+注意: macOS の Built-in は system_profiler では "Color LCD"、OmniWM IPC では
+"Built-in Retina Display" と異なる名前で見える。プロファイルでは **`main`** を
+使うのが確実（macOS が primary display として resolve）。
 
 ### omniwmctl: Connection refused
 1. `general.ipcEnabled = true` が settings.toml にあるか

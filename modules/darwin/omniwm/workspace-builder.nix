@@ -1,25 +1,21 @@
-# ── ワークスペース構築ヘルパ ────────────────────────────────────────────────
-# 各モニタプロファイルから monitor map（"WS名" → assignment）を受け取り、
-# OmniWM が要求する完全な [[workspaces]] リストを生成する。
+# ── ワークスペース構築ヘルパ（v3: プロファイル + runtime 解決対応）──────────
 #
-# UUID は固定（Nix で再生成しても変わらない）にすることで、OmniWM 側が
-# 永続化するランタイム状態（最後に開いていた WS など）と整合を保つ。
+# OmniWM v0.4.8 の monitorAssignment は decoder 不安定性のため、堅牢に動かすには
+# specificDisplay に **実 displayId** を必ず含める必要がある。displayId は
+# ハードウェア依存で nix ビルド時には不明なので、deploy.sh が runtime に
+# system_profiler から解決して TOML を書き換える設計。
 #
-# NOTE: OmniWM v0.4.8 時点では `specificDisplay` 形式の monitorAssignment を
-# TOML から decode するパスに不具合があり、設定全体が corrupt 扱いになる
-# （roundtrip 単体テストは通るが本番ロードで失敗する）。
-# ここでは `main` / `secondary` のみを使い、特定モニタへの固定割当が必要な
-# 場合は OmniWM GUI（Workspaces 設定タブ）で個別に設定する運用とする。
+# プロファイルファイル（monitor-profiles/*.nix）が `display "X"` や
+# `unnamedDisplay` を使うと、TOML に placeholder が出力される：
+#   displayId = 0 + name = "X"          ← deploy.sh が name で resolve
+#   displayId = 0 + name = ""           ← deploy.sh が unnamed として resolve
+#
+# 解決失敗（モニタ未接続等）時は deploy.sh が monitorAssignment を main/secondary
+# にフォールバック書き換えするため、プロファイルが現状と合わなくても crash しない。
 { ... }:
 {
-  # ── monitorMap のキーは外部からの「論理名」(1〜9, M, B, E) を維持。
-  # 内部的には OmniWM の rawID は数値のみ受理されるため、M/B/E は数値 rawID
-  # (10, 11, 12) に変換し、displayName で人間可読ラベルを保つ。
-  #
-  # layoutMap は省略可能（デフォルト全 niri）。WS 単位に niri / dwindle を選べる。
   mkWorkspaces = { monitorMap, layoutMap ? { } }:
     let
-      # 論理名 → (rawName, displayName) マッピング
       rawNames = {
         "1" = { rawName = "1";  displayName = null; };
         "2" = { rawName = "2";  displayName = null; };
@@ -35,10 +31,8 @@
         "E" = { rawName = "12"; displayName = "E"; };
       };
 
-      # ── 永続 WS の順序（AeroSpace の persistent-workspaces と同じ） ──
       order = [ "1" "2" "3" "4" "5" "6" "7" "8" "9" "M" "B" "E" ];
 
-      # ── 固定 UUID テーブル ────────────────────────────────────────────────
       uuids = {
         "1" = "a0000001-0000-4000-8000-000000000001";
         "2" = "a0000002-0000-4000-8000-000000000002";
@@ -69,31 +63,27 @@
     in
       map mk order;
 
-  # ── monitorAssignment 構築ヘルパ ─────────────────────────────────────────
+  # ── monitorAssignment ヘルパ ────────────────────────────────────────────
+  # main / secondary は OmniWM ネイティブ、常に堅牢。
   main      = { type = "main"; };
   secondary = { type = "secondary"; };
 
-  # specificDisplay: 名前付きモニタへの厳密ピン留め。
-  # displayId は hardware 依存で nix ビルド時不明 → switch-profile.sh が runtime に
-  # name を `omniwmctl query displays` で解決して 0 を実値に書き換える。
+  # 名前付きモニタへ厳密ピン留め。deploy.sh が runtime に displayId を解決。
+  # 解決失敗時は secondary にフォールバック。
   display = displayName: {
     type = "specificDisplay";
     output = {
       name = displayName;
-      displayId = 0;             # placeholder (runtime に switch-profile が patch)
+      displayId = 0;             # placeholder, deploy.sh が解決
     };
   };
 
-  # 名前なしモニタ（macOS が EDID name を持たないモニタ）
-  # 名前一致では識別できないため displayId のみで紐づける。
-  # 999000 は switch-profile.sh が runtime に実 displayId に置換するマーカー。
-  # 負値は OmniWM をクラッシュさせる、0 は noRuntimeDisplayId 扱いになり
-  # 解決失敗するので、安全な大きな正の整数を使う。
+  # 名前なしモニタ（macOS が EDID name を持たないモニタ）。deploy.sh が解決。
   unnamedDisplay = {
     type = "specificDisplay";
     output = {
       name = "";
-      displayId = 999000;        # placeholder, replaced by switch-profile.sh
+      displayId = 0;             # placeholder
     };
   };
 }

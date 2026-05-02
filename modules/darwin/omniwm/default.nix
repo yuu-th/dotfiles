@@ -2,58 +2,47 @@
 let
   cfg = config.myConfig.darwin.omniwm;
 
-  # ── 共通設定 + プロファイル別 monitorAssignment をマージ ─────────────────
-  common  = import ./common.nix     { inherit pkgs; };
-  hotkeys = import ./hotkeys.nix    { inherit pkgs; };
-  appRules = import ./app-rules.nix { inherit pkgs; };
+  # ── 設定ソース ───────────────────────────────────────────────────────────
+  common   = import ./common.nix     { inherit pkgs; };
+  hotkeys  = import ./hotkeys.nix    { inherit pkgs; };
+  appRules = import ./app-rules.nix  { inherit pkgs; };
+  helpers  = import ./workspace-builder.nix { inherit pkgs; };
 
-  helpers = import ./workspace-builder.nix { inherit pkgs; };
-  oneProfile    = import ./profiles/one-monitor.nix    { inherit helpers; };
-  twoProfile    = import ./profiles/two-monitor.nix    { inherit helpers; };
-  tripleProfile = import ./profiles/triple-monitor.nix { inherit helpers; };
-  quadProfile   = import ./profiles/quad-monitor.nix   { inherit helpers; };
+  # ── 選択中のモニタプロファイルを import ─────────────────────────────────
+  profilePath = ./monitor-profiles + "/${cfg.monitorProfile}.nix";
+  monitorProfile = import profilePath { inherit helpers; };
 
   tomlFormat = pkgs.formats.toml { };
 
-  mkConfig = profile:
-    tomlFormat.generate "omniwm-settings.toml" (lib.recursiveUpdate common (profile // {
+  settingsToml = tomlFormat.generate "omniwm-settings.toml"
+    (lib.recursiveUpdate common (monitorProfile // {
       inherit hotkeys appRules;
     }));
 
-  oneConfig    = mkConfig oneProfile;
-  twoConfig    = mkConfig twoProfile;
-  tripleConfig = mkConfig tripleProfile;
-  quadConfig   = mkConfig quadProfile;
-
-  # ── OmniWM バイナリ・ctl のパス ──────────────────────────────────────────
+  # ── パス定義 ─────────────────────────────────────────────────────────────
   omniwmApp    = "/Applications/OmniWM.app/Contents/MacOS/OmniWM";
   omniwmctl    = "/opt/homebrew/bin/omniwmctl";
   launchdLabel = "org.nixos.omniwm";
 
-  # ── Script ラッパ：環境変数を埋め込んで writeShellScriptBin ──────────────
+  # ── Script ラッパ ────────────────────────────────────────────────────────
   mkScript = name: src: env:
     let
       envBlock = lib.concatStringsSep "\n"
         (lib.mapAttrsToList (k: v: ''export ${k}="${toString v}"'') env);
-      bin = pkgs.writeShellScriptBin name ''
-        ${envBlock}
-        ${builtins.readFile src}
-      '';
-    in bin;
+    in pkgs.writeShellScriptBin name ''
+      ${envBlock}
+      ${builtins.readFile src}
+    '';
 
   baseEnv = {
     OMNIWMCTL = omniwmctl;
     JQ        = "${pkgs.jq}/bin/jq";
   };
 
-  switchProfile = mkScript "omniwm-switch-profile" ./scripts/switch-profile.sh
-    (baseEnv // {
-      ONE_TOML      = oneConfig;
-      TWO_TOML      = twoConfig;
-      TRIPLE_TOML   = tripleConfig;
-      QUAD_TOML     = quadConfig;
-      LAUNCHD_LABEL = launchdLabel;
-    });
+  deploy = mkScript "omniwm-deploy" ./scripts/deploy.sh (baseEnv // {
+    SETTINGS_TOML = settingsToml;
+    LAUNCHD_LABEL = launchdLabel;
+  });
 
   focusMonitorDir = mkScript "omniwm-focus-monitor-dir"
     ./scripts/focus-monitor-dir.sh baseEnv;
@@ -66,18 +55,29 @@ let
   moveWindowToNamedWS = mkScript "omniwm-move-window-to-named-ws"
     ./scripts/move-window-to-named-ws.sh baseEnv;
 
-  # ── Karabiner ルール（OmniWM enable 時にだけ注入） ──────────────────────
   karabinerRules = import ./karabiner-rules.nix {
     inherit wsLaunch moveWindowToNamedWS setupMedia focusMonitorDir omniwmctl;
   };
 in {
   imports = [ ../homebrew.nix ];
 
-  options.myConfig.darwin.omniwm.enable =
-    lib.mkEnableOption "OmniWM scrollable tiling window manager";
+  options.myConfig.darwin.omniwm = {
+    enable = lib.mkEnableOption "OmniWM scrollable tiling window manager";
+
+    monitorProfile = lib.mkOption {
+      type = lib.types.str;
+      default = "default";
+      description = ''
+        Active monitor profile name.
+        Looks up modules/darwin/omniwm/monitor-profiles/<name>.nix.
+        新しいプロファイルを足す場合は monitor-profiles/ に <name>.nix を作成して
+        この値を切り替えるだけ。default は main/secondary だけのフォールバック。
+      '';
+      example = "office-3mon";
+    };
+  };
 
   config = lib.mkIf cfg.enable {
-    # ── 排他制御: AeroSpace と同時 enable は禁止 ─────────────────────────
     assertions = [
       {
         assertion = !config.myConfig.darwin.aerospace.enable;
@@ -86,15 +86,21 @@ in {
           profiles/darwin.nix で どちらか一方だけ enable = true にしてください。
         '';
       }
+      {
+        assertion = builtins.pathExists profilePath;
+        message = ''
+          monitorProfile = "${cfg.monitorProfile}" のファイルが存在しません。
+          modules/darwin/omniwm/monitor-profiles/${cfg.monitorProfile}.nix を作成するか、
+          別の既存プロファイル名を指定してください。既存: default, office-3mon
+        '';
+      }
     ];
 
-    # ── Homebrew からのインストール（OmniWM 公式 tap） ─────────────────────
     homebrew.taps  = [ "BarutSRB/tap" ];
     homebrew.casks = [ "omniwm" ];
 
-    # ── ユーザの PATH に置くスクリプト群 ─────────────────────────────────
     environment.systemPackages = [
-      switchProfile
+      deploy
       focusMonitorDir
       setupMedia
       wsLaunch
@@ -102,45 +108,33 @@ in {
       pkgs.jq
     ];
 
-    # ── OmniWM 本体: 起動前にプロファイル選択 → exec ──────────────────────
+    # ── OmniWM 本体: launchd で起動・KeepAlive・runtime deploy ─────────────
     launchd.user.agents.omniwm = {
       serviceConfig = {
         ProgramArguments = [
           "/bin/sh" "-c"
-          ''/bin/wait4path /nix/store && ${switchProfile}/bin/omniwm-switch-profile; exec ${omniwmApp}''
+          ''/bin/wait4path /nix/store && ${deploy}/bin/omniwm-deploy; exec ${omniwmApp}''
         ];
         KeepAlive = true;
         RunAtLoad = true;
+        ThrottleInterval = 10;
       };
     };
 
-    # ── プロファイル自動切替デーモン（10秒ポーリング、変化時のみ作動） ─────
-    # イベント駆動 watcher が落ちた時のセーフティネット。
-    launchd.user.agents.omniwm-profile-switcher = {
-      serviceConfig = {
-        ProgramArguments = [ "${switchProfile}/bin/omniwm-switch-profile" ];
-        StartInterval = 10;
-        RunAtLoad = true;
-      };
-    };
-
-    # ── イベント駆動 display-changed watcher ──────────────────────────────
-    # OmniWM IPC の display-changed チャネルを subscribe し、モニタ抜き差しを
-    # リアルタイム検出して switch-profile を実行する。10 秒ポーリングより応答性高い。
-    # OmniWM が落ちると IPC が切れて watcher も終了 → KeepAlive で自動再起動。
+    # ── イベント駆動 watcher（モニタ抜き差し検知） ──────────────────────
+    # --no-send-initial で起動時の暴発を防ぐ。deploy.sh は idempotent。
     launchd.user.agents.omniwm-display-watcher = {
       serviceConfig = {
         ProgramArguments = [
           "/bin/sh" "-c"
-          ''/bin/wait4path /nix/store && exec ${omniwmctl} watch display-changed --exec ${switchProfile}/bin/omniwm-switch-profile''
+          ''/bin/wait4path /nix/store && exec ${omniwmctl} watch display-changed --no-send-initial --exec ${deploy}/bin/omniwm-deploy''
         ];
         KeepAlive = true;
         RunAtLoad = true;
-        ThrottleInterval = 5;   # OmniWM 起動前に終了したら 5 秒待ってから再試行
+        ThrottleInterval = 10;
       };
     };
 
-    # ── Karabiner レイヤに OmniWM 用ルールを注入 ────────────────────────
     myConfig.darwin.karabiner.rules = karabinerRules;
   };
 }
