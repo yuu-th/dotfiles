@@ -31,16 +31,25 @@
   };
 
   # ── Niri (scrolling columns) レイアウト既定値 ────────────────────────────
-  # フォーカス column を常に画面中央、column 幅 preset を細かめに、
-  # 同時可視 column を 3 つに（広めの画面で見渡しやすい）
+  # フォーカス column を常に画面中央、column 幅は広めをデフォルトに。
+  #
+  # 各設定の意味:
+  #   defaultColumnWidth       : 新規ウィンドウが開く時の column 幅（画面幅に対する比）
+  #   columnWidthPresets       : Option+, / Option+. で巡回する preset リスト
+  #   singleWindowAspectRatio  : 1 column = 1 window の時の最大アスペクト比
+  #     "16:10" にして横長を許容（旧 "4:3" だとワイドモニタで狭く見える）
+  #   alwaysCenterSingleColumn : 1 column 時は中央に配置
+  #   centerFocusedColumn      : 常にフォーカス column を画面中央
+  #   maxVisibleColumns        : 同時表示する column 数（広いモニタで増やすと見渡しやすい）
   niri = {
     alwaysCenterSingleColumn = true;
     centerFocusedColumn = "always";
-    columnWidthPresets = [ 0.25 0.3333 0.5 0.6666 0.8 ];
+    columnWidthPresets = [ 0.4 0.5 0.66 0.8 0.95 ];   # 狭→広、デフォルトより 1 段大きめ
+    defaultColumnWidth = 0.66;                         # 新規ウィンドウは画面幅の 2/3
     infiniteLoop = false;
     maxVisibleColumns = 3;
     maxWindowsPerColumn = 4;
-    singleWindowAspectRatio = "4:3";
+    singleWindowAspectRatio = "16:10";                 # ワイドモニタで広めに
   };
 
   # ── Dwindle (BSP) — Option+/ で WS 単位に切替えて使う ───────────────────
