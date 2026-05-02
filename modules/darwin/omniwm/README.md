@@ -205,8 +205,13 @@ profile 層の assertion で同時 enable は禁止されている。
 4. **クラッシュ多発時**：`displayId = -1` 等の不正値が settings.toml に残ってる可能性 → corrupt 退避済の可能性が高い
 
 ### モニタ抜き差し後にレイアウトが崩れる
-- profile-switcher が 10 秒ポーリング → 自動で TOML 差替 + 再起動
-- 即座に切替したい場合：`omniwm-switch-profile` を直接実行
+- 二段構えで自動検知される：
+  - **イベント駆動**: `omniwm-display-watcher` (launchd) が `omniwmctl watch display-changed` で
+    モニタ変化を即座に subscribe → switch-profile を発火
+  - **10 秒ポーリング (fallback)**: `omniwm-profile-switcher` (launchd) が定期監視。
+    watcher が落ちた場合のセーフティネット
+- 即座に手動切替したい場合：`omniwm-switch-profile` を直接実行
+- 動作ログ：`~/.local/share/omniwm/switch-profile.log`
 
 ### 名前なしモニタ（display:N で name=""）の挙動
 - `switch-profile.sh` が `system_profiler` から実 displayId を取得し placeholder を置換

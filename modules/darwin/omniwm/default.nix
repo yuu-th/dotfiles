@@ -115,11 +115,28 @@ in {
     };
 
     # ── プロファイル自動切替デーモン（10秒ポーリング、変化時のみ作動） ─────
+    # イベント駆動 watcher が落ちた時のセーフティネット。
     launchd.user.agents.omniwm-profile-switcher = {
       serviceConfig = {
         ProgramArguments = [ "${switchProfile}/bin/omniwm-switch-profile" ];
         StartInterval = 10;
         RunAtLoad = true;
+      };
+    };
+
+    # ── イベント駆動 display-changed watcher ──────────────────────────────
+    # OmniWM IPC の display-changed チャネルを subscribe し、モニタ抜き差しを
+    # リアルタイム検出して switch-profile を実行する。10 秒ポーリングより応答性高い。
+    # OmniWM が落ちると IPC が切れて watcher も終了 → KeepAlive で自動再起動。
+    launchd.user.agents.omniwm-display-watcher = {
+      serviceConfig = {
+        ProgramArguments = [
+          "/bin/sh" "-c"
+          ''/bin/wait4path /nix/store && exec ${omniwmctl} watch display-changed --exec ${switchProfile}/bin/omniwm-switch-profile''
+        ];
+        KeepAlive = true;
+        RunAtLoad = true;
+        ThrottleInterval = 5;   # OmniWM 起動前に終了したら 5 秒待ってから再試行
       };
     };
 
