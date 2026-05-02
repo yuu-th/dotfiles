@@ -38,11 +38,14 @@ case "$COUNT" in
 esac
 
 mkdir -p "$(dirname "$STATE")" "$HOME/.config/omniwm"
+LOG="$HOME/.local/share/omniwm/switch-profile.log"
 
 # ── 名前なしモニタの displayId placeholder (999000) を実値に置換 ──────────
 # OmniWM の specificDisplay は実 displayId が必要だが、Nix ビルド時には不明なため
 # system_profiler から runtime に取得して sed で書き換える。
 DISPLAYS_JSON=$(/usr/sbin/system_profiler SPDisplaysDataType -json 2>/dev/null || echo '{}')
+
+# まず名前なしモニタを探す（macOS 内部名 "spdisplays_display" = EDID name 無し）
 UNNAMED_ID=$(echo "$DISPLAYS_JSON" | "$JQ" -r '
   [.SPDisplaysDataType[]?.spdisplays_ndrvs[]?
    | select(._name == "spdisplays_display")
@@ -51,8 +54,11 @@ UNNAMED_ID=$(echo "$DISPLAYS_JSON" | "$JQ" -r '
   | .[0] // empty
 ' 2>/dev/null || true)
 
+UNNAMED_SOURCE="real"
 if [ -z "$UNNAMED_ID" ]; then
-  # 名前なしモニタが存在しない構成 → main display の ID にフォールバック
+  # 名前なしモニタ不在 → main display の ID にフォールバック
+  # （unnamedDisplay 指定の WS が main に集約される。triple/quad プロファイルが
+  #  選ばれたが実は全モニタ named な構成、というエッジケース対応）
   UNNAMED_ID=$(echo "$DISPLAYS_JSON" | "$JQ" -r '
     [.SPDisplaysDataType[]?.spdisplays_ndrvs[]?
      | select(.spdisplays_main == "spdisplays_yes")
@@ -60,12 +66,18 @@ if [ -z "$UNNAMED_ID" ]; then
      | tonumber]
     | .[0] // 1
   ' 2>/dev/null || echo "1")
+  UNNAMED_SOURCE="fallback-main"
 fi
 
 # placeholder を実値に置換しながら deploy
 /usr/bin/sed "s/displayId = 999000/displayId = $UNNAMED_ID/g" "$PROFILE" \
   > "$HOME/.config/omniwm/settings.toml"
 echo "$COUNT" > "$STATE"
+
+# ログ出力（debug 用、ファイル肥大化を避けるため最新だけ残す）
+{
+  echo "$(date '+%Y-%m-%d %H:%M:%S') count=$COUNT profile=$PROFILE unnamed_id=$UNNAMED_ID source=$UNNAMED_SOURCE"
+} > "$LOG" 2>/dev/null || true
 
 # OmniWM は設定ホットリロード未対応 → プロセス再起動が必要
 if pgrep -x OmniWM > /dev/null 2>&1; then
