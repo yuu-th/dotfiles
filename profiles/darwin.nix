@@ -21,6 +21,7 @@
     ../modules/darwin/ghostty.nix
     ../modules/darwin/cmux.nix
     ../modules/darwin/zed.nix
+    ../modules/darwin/projwm
     ../modules/darwin/parsec.nix
     # sub-profiles（常時ON設定を関心ごとに分割）
     ./fav_fonts.nix
@@ -124,6 +125,7 @@
   myConfig.darwin.ghostty.enable        = true;
   myConfig.darwin.cmux.enable           = true;
   myConfig.darwin.zed.enable            = true;
+  myConfig.darwin.projwm.enable         = true;
   myConfig.darwin.parsec.enable         = true;
 
   # ── Common modules ────────────────────────────────────────────────────────────
