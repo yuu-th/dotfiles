@@ -1,18 +1,14 @@
-# ── キーバインド（AeroSpace の main.binding を OmniWM action ID にマップ） ──
-# OmniWM ホットキーは「事前定義 action ID にバインド文字列を割当てる」モデル。
-# OmniWM がネイティブ対応する操作はここで TOML に直接書く。
-# OmniWM が action として持っていない/シェル実行/モーダル/名前指定 WS 切替等は
-# Karabiner レイヤ（karabiner-rules.nix）で実装する。
+# ── キーバインド（niri 流に最適化） ────────────────────────────────────────
+# OmniWM の canonical デフォルトを尊重しつつ、ユーザの哲学（多数 WS、アプリ別
+# ショートカット）は維持。AeroSpace 由来の擬似機能は削除済み。
 #
-# AeroSpace では割当ていたが OmniWM で「action 不在 / 命名なし」のため
-# Karabiner 側に逃がしているもの:
-#   - alt-s / alt-c / alt-a / alt-ctrl-m  (シェル実行マクロ)
-#   - alt-m / alt-b / alt-e               (名前指定 WS 切替 → workspace focus-name)
-#   - alt-shift-m / b / e                 (名前指定 WS への移動)
-#   - alt-ctrl-h/j/k/l                    (方向ベース focus-monitor)
-#   - alt-r                               (resize モード入口、set_variable)
-#   - alt-shift-semicolon                 (service モード — 廃止)
-#   - cmd-h / cmd-alt-h                   (macOS Hide ブロック)
+# Karabiner レイヤ（karabiner-rules.nix）で実装するもの:
+#   - alt-s / alt-c / alt-a       (シェル実行マクロ: WS M + アプリ起動)
+#   - alt-ctrl-m                  (setup-media-workspace)
+#   - alt-m / alt-b / alt-e       (名前指定 WS 切替: omniwmctl workspace focus-name)
+#   - alt-shift-m / b / e         (名前指定 WS への送り)
+#   - alt-ctrl-h/j/k/l            (方向ベース focus-monitor)
+#   - cmd-h                       (macOS Hide ブロック)
 { ... }:
 [
   # ── 数字 WS 切替 (alt-1〜9) ─────────────────────────────────────────────
@@ -37,96 +33,61 @@
   { binding = "Option+Shift+8"; id = "moveToWorkspace.7"; }
   { binding = "Option+Shift+9"; id = "moveToWorkspace.8"; }
 
-  # ── フォーカス移動 h/j/k/l (alt-h/j/k/l) ────────────────────────────────
+  # ── フォーカス h/j/k/l (alt-h/j/k/l) ──────────────────────────────────
   { binding = "Option+H"; id = "focus.left"; }
   { binding = "Option+J"; id = "focus.down"; }
   { binding = "Option+K"; id = "focus.up"; }
   { binding = "Option+L"; id = "focus.right"; }
+  # 直前のフォーカスウィンドウに戻る（Option+Tab の WS 版とは別、ウィンドウ単位）
+  { binding = "Option+P"; id = "focusPrevious"; }
 
   # ── ウィンドウ移動 (alt-shift-h/j/k/l) ───────────────────────────────────
-  # OmniWM の move.left/right は隣 column への consume 効果も持つため
-  # AeroSpace の "join-with" に相当する操作（alt-ctrl-shift-h/j/k/l）と統合される。
+  # 左右 move は隣 column への consume 効果も持つ（旧 join-with 相当）
   { binding = "Option+Shift+H"; id = "move.left"; }
   { binding = "Option+Shift+J"; id = "move.down"; }
   { binding = "Option+Shift+K"; id = "move.up"; }
   { binding = "Option+Shift+L"; id = "move.right"; }
 
-  # ── レイアウト切替 ───────────────────────────────────────────────────────
-  # AeroSpace alt-slash    = "layout tiles ..."     → toggleWorkspaceLayout (niri⇄dwindle)
-  # AeroSpace alt-comma    = "layout accordion ..." → toggleColumnTabbed (column 内タブ表示)
-  # NOTE: OmniWM の KeySymbolMapper は記号キーを "/", ",", "-", "=", "[", "]" 等
-  # の生記号で認識する。"Slash"/"Hyphen"/"Equal" のような名前は受け付けず
-  # KeyBinding decode が失敗 → 設定ファイル全体が corrupt 扱いになる。
-  { binding = "Option+/"; id = "toggleWorkspaceLayout"; }
-  { binding = "Option+,"; id = "toggleColumnTabbed"; }
+  # ── Column 直接フォーカス（niri 流の超強力ナビ）────────────────────────
+  # 現在の WS 内で N 番目の column に一発ジャンプ
+  { binding = "Control+Option+1"; id = "focusColumn.0"; }
+  { binding = "Control+Option+2"; id = "focusColumn.1"; }
+  { binding = "Control+Option+3"; id = "focusColumn.2"; }
+  { binding = "Control+Option+4"; id = "focusColumn.3"; }
+  { binding = "Control+Option+5"; id = "focusColumn.4"; }
+  { binding = "Control+Option+6"; id = "focusColumn.5"; }
+  { binding = "Control+Option+7"; id = "focusColumn.6"; }
+  { binding = "Control+Option+8"; id = "focusColumn.7"; }
+  { binding = "Control+Option+9"; id = "focusColumn.8"; }
+  { binding = "Option+Home";      id = "focusColumnFirst"; }
+  { binding = "Option+End";       id = "focusColumnLast"; }
 
-  # ── フルスクリーン (alt-enter) ───────────────────────────────────────────
-  { binding = "Option+Return"; id = "toggleFullscreen"; }
+  # ── Column 単位の移動（ウィンドウじゃなく column ごと動かす）──────────
+  { binding = "Control+Option+Shift+H"; id = "moveColumn.left"; }
+  { binding = "Control+Option+Shift+L"; id = "moveColumn.right"; }
 
-  # ── floating⇔tiling (alt-shift-space) ─────────────────────────────────
-  { binding = "Option+Shift+Space"; id = "toggleFocusedWindowFloating"; }
+  # ── レイアウト切替・サイズ調整 ────────────────────────────────────────
+  # canonical 準拠: , / . で column width 巡回、T で tabbed 切替
+  { binding = "Option+,";       id = "cycleColumnWidthBackward"; }
+  { binding = "Option+.";       id = "cycleColumnWidthForward"; }
+  { binding = "Option+T";       id = "toggleColumnTabbed"; }
+  { binding = "Option+Shift+F"; id = "toggleColumnFullWidth"; }
+  { binding = "Option+Shift+B"; id = "balanceSizes"; }
+  { binding = "Option+/";       id = "toggleWorkspaceLayout"; }   # niri ⇄ dwindle
 
-  # ── リサイズ簡易 (alt-minus / alt-equal) ─────────────────────────────────
-  # AeroSpace の "resize smart ±50" は OmniWM の column width preset 巡回で代替
-  # 記号は生キー記号で指定（KeySymbolMapper の制約）
-  { binding = "Option+-"; id = "cycleColumnWidthBackward"; }
-  { binding = "Option+="; id = "cycleColumnWidthForward"; }
+  # ── フルスクリーン・floating ─────────────────────────────────────────
+  { binding = "Option+Return";       id = "toggleFullscreen"; }
+  { binding = "Option+Shift+Space";  id = "toggleFocusedWindowFloating"; }
 
-  # ── WS 行き来 (alt-tab) ──────────────────────────────────────────────────
+  # ── WS 行き来 ────────────────────────────────────────────────────────
   { binding = "Option+Tab"; id = "workspaceBackAndForth"; }
 
-  # ── サービスモード相当の単発ショートカット ───────────────────────────────
-  # AeroSpace では mode service 内で `alt-shift-d = enable toggle` 等を使っていた
-  # OmniWM でモード概念がないため、よく使うものを直接バインドにフォールバック
-  { binding = "Option+Shift+R"; id = "raiseAllFloatingWindows"; }
-  { binding = "Option+Shift+B"; id = "balanceSizes"; }
-  { binding = "Option+Shift+F"; id = "toggleColumnFullWidth"; }
-  { binding = "Option+Shift+O"; id = "toggleOverview"; }
+  # ── UI / discoverability ────────────────────────────────────────────
+  { binding = "Option+Shift+O";       id = "toggleOverview"; }            # 全 WS 俯瞰
+  { binding = "Option+Shift+R";       id = "raiseAllFloatingWindows"; }
+  { binding = "Control+Option+Space"; id = "openCommandPalette"; }        # 全コマンド検索
+  { binding = "Control+Option+M";     id = "openMenuAnywhere"; }          # context menu 召喚
 
-  # ── command palette / overview ──────────────────────────────────────────
-  { binding = "Control+Option+Space"; id = "openCommandPalette"; }
-  { binding = "Control+Option+M";     id = "openMenuAnywhere"; }
-
-  # ── Quake terminal — 無効化（既存 Ghostty 運用と独立） ──────────────────
-  { binding = "Unassigned"; id = "toggleQuakeTerminal"; }
-
-  # ── 残りの action は明示的に Unassigned にして TOML 全網羅 ───────────────
-  { binding = "Unassigned"; id = "switchWorkspace.next"; }
-  { binding = "Unassigned"; id = "switchWorkspace.previous"; }
-  { binding = "Unassigned"; id = "focusPrevious"; }
-  { binding = "Unassigned"; id = "toggleNativeFullscreen"; }
-  { binding = "Unassigned"; id = "moveToRoot"; }
-  { binding = "Unassigned"; id = "toggleSplit"; }
-  { binding = "Unassigned"; id = "swapSplit"; }
-  { binding = "Unassigned"; id = "resizeGrow.left"; }
-  { binding = "Unassigned"; id = "resizeGrow.right"; }
-  { binding = "Unassigned"; id = "resizeGrow.up"; }
-  { binding = "Unassigned"; id = "resizeGrow.down"; }
-  { binding = "Unassigned"; id = "resizeShrink.left"; }
-  { binding = "Unassigned"; id = "resizeShrink.right"; }
-  { binding = "Unassigned"; id = "resizeShrink.up"; }
-  { binding = "Unassigned"; id = "resizeShrink.down"; }
-  { binding = "Unassigned"; id = "preselect.left"; }
-  { binding = "Unassigned"; id = "preselect.right"; }
-  { binding = "Unassigned"; id = "preselect.up"; }
-  { binding = "Unassigned"; id = "preselect.down"; }
-  { binding = "Unassigned"; id = "preselectClear"; }
-  { binding = "Unassigned"; id = "rescueOffscreenWindows"; }
-  { binding = "Unassigned"; id = "assignFocusedWindowToScratchpad"; }
-  { binding = "Unassigned"; id = "toggleScratchpadWindow"; }
-  { binding = "Unassigned"; id = "toggleWorkspaceBarVisibility"; }
-  { binding = "Unassigned"; id = "toggleHiddenBar"; }
-  { binding = "Unassigned"; id = "moveColumn.left"; }
-  { binding = "Unassigned"; id = "moveColumn.right"; }
-  { binding = "Unassigned"; id = "focusColumnFirst"; }
-  { binding = "Unassigned"; id = "focusColumnLast"; }
-  { binding = "Unassigned"; id = "focusColumn.0"; }
-  { binding = "Unassigned"; id = "focusColumn.1"; }
-  { binding = "Unassigned"; id = "focusColumn.2"; }
-  { binding = "Unassigned"; id = "focusColumn.3"; }
-  { binding = "Unassigned"; id = "focusColumn.4"; }
-  { binding = "Unassigned"; id = "focusColumn.5"; }
-  { binding = "Unassigned"; id = "focusColumn.6"; }
-  { binding = "Unassigned"; id = "focusColumn.7"; }
-  { binding = "Unassigned"; id = "focusColumn.8"; }
+  # ── Quake terminal（OmniWM 内蔵 libghostty） ────────────────────────
+  { binding = "Option+`"; id = "toggleQuakeTerminal"; }
 ]

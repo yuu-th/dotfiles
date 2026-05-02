@@ -31,9 +31,10 @@
   };
 
   # ── Niri (scrolling columns) レイアウト既定値 ────────────────────────────
+  # niri 流: フォーカス column を常に画面中央に置く。横スクロール WM の真価
   niri = {
     alwaysCenterSingleColumn = true;
-    centerFocusedColumn = "never";
+    centerFocusedColumn = "always";
     columnWidthPresets = [ 0.3333 0.5 0.66 ];
     infiniteLoop = false;
     maxVisibleColumns = 2;
@@ -51,13 +52,13 @@
     useGlobalGaps = true;
   };
 
-  # ── フォーカス挙動（AeroSpace の on-focused-monitor-changed / on-focus-changed 相当）─
-  # AeroSpace では「マウスがそのウィンドウ/モニタ上に無ければ中央に移動」
-  # OmniWM では moveMouseToFocusedWindow=true でほぼ同等の追従
+  # ── フォーカス挙動 ────────────────────────────────────────────────────────
+  # niri 流: マウス hover でフォーカスが追ってくる。column スクロール WM では
+  # キーボードとマウスの境目を曖昧にした方が体験が滑らかになる。
   focus = {
-    followsMouse = false;                # alt+drag 等で誤動作を避けるため OFF
-    followsWindowToMonitor = true;       # ウィンドウフォーカスがモニタ跨ぐ時マウスも移動
-    moveMouseToFocusedWindow = true;     # フォーカス変更時マウス追従（lazy 中央への近似）
+    followsMouse = true;
+    followsWindowToMonitor = true;
+    moveMouseToFocusedWindow = true;
   };
 
   # ── Gaps ──────────────────────────────────────────────────────────────────
@@ -98,11 +99,12 @@
     monitorOrder = [ ];
   };
 
-  # ── Quake terminal（任意機能、無効化）──────────────────────────────────
+  # ── Quake terminal（OmniWM 内蔵 libghostty） ───────────────────────────
+  # `Option+\`` でフォーカス中のモニタにスライド表示される。既存 Ghostty.app と併存可能。
   quakeTerminal = {
     animationDuration = 0.2;
     autoHide = false;
-    enabled = false;                     # Ghostty を別運用しているため OFF
+    enabled = true;
     heightPercent = 50.0;
     monitorMode = "focusedWindow";
     opacity = 1.0;

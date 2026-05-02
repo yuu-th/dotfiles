@@ -44,33 +44,53 @@ OmniWM の workspace `name` (rawID) は数値のみ受理されるため：
 - **設定のホットリロード無し**：`switch-profile.sh` がモニタ枚数変化を検知して TOML を差替え、`launchctl kickstart -k gui/$UID/org.nixos.omniwm` で OmniWM をプロセス再起動する。一瞬のチラつきあり。
 - **focus-monitor の3 モニタ以上での挙動**：`focus-monitor prev/next` は活性 workspace のないモニタを跨げない。実用上は 2 枚モニタ運用で問題なし。
 
-## キーバインド一覧（AeroSpace 互換）
+## キーバインド一覧（niri 流に最適化）
 
 ### OmniWM ネイティブ（hotkeys.nix）
+
+#### ワークスペース
 - `Option+1〜9`：WS 1〜9 切替
 - `Option+Shift+1〜9`：ウィンドウを WS 1〜9 へ送る
+- `Option+Tab`：直前 WS に戻る
+
+#### ウィンドウフォーカス・移動
 - `Option+H/J/K/L`：フォーカス移動（左/下/上/右）
 - `Option+Shift+H/J/K/L`：ウィンドウ移動（左/右で隣 column への consume 含む）
-- `Option+/`：レイアウト切替（niri ⇄ dwindle）
-- `Option+,`：column 内タブ表示切替（accordion 相当）
-- `Option+Return`：フルスクリーン
+- `Option+P`：直前のフォーカスウィンドウに戻る
+
+#### Column 操作（niri 流）
+- `Control+Option+1〜9`：現 WS の N 番目の column に直接ジャンプ
+- `Option+Home` / `Option+End`：WS の最初/最後の column へ
+- `Control+Option+Shift+H/L`：column 単位で左右に動かす
+- `Option+,` / `Option+.`：column 幅プリセットを巡回（戻り/進み）
+- `Option+T`：column 内のウィンドウをタブ表示にトグル（旧 accordion 相当）
+- `Option+Shift+F`：column を全幅化（一時的に集中表示）
+- `Option+Shift+B`：全 column の幅を均等化
+
+#### レイアウト・モード
+- `Option+/`：WS のレイアウトを niri ⇄ dwindle で切替
+- `Option+Return`：OmniWM 管理のフルスクリーン
 - `Option+Shift+Space`：floating ⇄ tiling
-- `Option+-` / `Option+=`：column 幅プリセット巡回（resize 簡易）
-- `Option+Tab`：直前 WS に戻る
-- `Option+Shift+R/B/F/O`：raise floating / balance sizes / full width / overview
-- `Control+Option+Space/M`：command palette / menu
+
+#### UI / Discoverability
+- `Option+Shift+O`：Overview（全 WS 俯瞰）
+- `Option+Shift+R`：floating ウィンドウを全部最前面に
+- `Control+Option+Space`：Command Palette（全コマンド検索）
+- `Control+Option+M`：Open Menu Anywhere（フォーカスウィンドウのメニュー召喚）
+- ``Option+` ``：Quake terminal（OmniWM 内蔵 libghostty）
 
 ### Karabiner 補助レイヤ（karabiner-rules.nix）
+
+OmniWM ネイティブで実装できないものだけ補完。
+
 - `Option+M/B/E`：WS M/B/E（名前指定）切替
 - `Option+Shift+M/B/E`：ウィンドウを WS M/B/E へ送る
 - `Option+S`：WS M に行って Spotify 起動
 - `Option+C`：WS M に行って Discord 起動
 - `Option+A`：WS M に行って Calendar 起動
-- `Option+Control+M`：メディアレイアウト自動構築（setup-media-workspace）
-- `Option+Control+H/J/K/L`：方向ベース focus-monitor
-- `Option+R`：resize モード入口（h/j/k/l で resize、esc/return で抜ける）
-- `Option+Shift+D`：toggle floating
-- `Cmd+H` / `Cmd+Option+H`：macOS Hide ブロック
+- `Option+Control+M`：メディアアプリ一括起動（setup-media-workspace、簡略化版）
+- `Option+Control+H/J/K/L`：方向ベース focus-monitor（OmniWM の prev/next を補強）
+- `Cmd+H` / `Cmd+Option+H`：macOS Hide ブロック（tile WM を保護）
 
 ## 切替手順（AeroSpace ↔ OmniWM）
 
