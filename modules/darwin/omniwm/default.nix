@@ -8,16 +8,42 @@ let
   appRules = import ./app-rules.nix  { inherit pkgs; };
   helpers  = import ./workspace-builder.nix { inherit pkgs; };
 
-  # ── 選択中のモニタプロファイルを import ─────────────────────────────────
-  profilePath = ./monitor-profiles + "/${cfg.monitorProfile}.nix";
-  monitorProfile = import profilePath { inherit helpers; };
+  # ── 全プロファイルを自動 discover & ビルド ───────────────────────────────
+  profileDir = ./monitor-profiles;
+  profileFiles =
+    let entries = builtins.readDir profileDir;
+    in lib.filter (n: lib.hasSuffix ".nix" n)
+      (builtins.attrNames entries);
+  profileNames = map (f: lib.removeSuffix ".nix" f) profileFiles;
+
+  loadProfile = name:
+    import (profileDir + "/${name}.nix") { inherit helpers; };
+
+  profiles = lib.listToAttrs (map (n: {
+    name = n;
+    value = loadProfile n;
+  }) profileNames);
 
   tomlFormat = pkgs.formats.toml { };
 
-  settingsToml = tomlFormat.generate "omniwm-settings.toml"
-    (lib.recursiveUpdate common (monitorProfile // {
-      inherit hotkeys appRules;
-    }));
+  mkSettingsToml = profile:
+    tomlFormat.generate "omniwm-settings.toml"
+      (lib.recursiveUpdate common ({
+        inherit hotkeys appRules;
+        workspaces = profile.workspaces;
+      }));
+
+  # 各プロファイルの TOML パスを作成
+  profileTomls = lib.mapAttrs (_: p: mkSettingsToml p) profiles;
+
+  # マニフェスト：deploy.sh が読み込む。プロファイル名 → toml パス + match
+  manifest = lib.mapAttrsToList (name: profile: {
+    inherit name;
+    toml = profileTomls.${name};
+    match = profile.match or { };
+  }) profiles;
+
+  manifestJson = builtins.toJSON manifest;
 
   # ── パス定義 ─────────────────────────────────────────────────────────────
   omniwmApp    = "/Applications/OmniWM.app/Contents/MacOS/OmniWM";
@@ -28,7 +54,7 @@ let
   mkScript = name: src: env:
     let
       envBlock = lib.concatStringsSep "\n"
-        (lib.mapAttrsToList (k: v: ''export ${k}="${toString v}"'') env);
+        (lib.mapAttrsToList (k: v: ''export ${k}=${lib.escapeShellArg (toString v)}'') env);
     in pkgs.writeShellScriptBin name ''
       ${envBlock}
       ${builtins.readFile src}
@@ -40,8 +66,9 @@ let
   };
 
   deploy = mkScript "omniwm-deploy" ./scripts/deploy.sh (baseEnv // {
-    SETTINGS_TOML = settingsToml;
-    LAUNCHD_LABEL = launchdLabel;
+    PROFILE_MANIFEST = manifestJson;
+    SELECTED_PROFILE = cfg.monitorProfile;
+    LAUNCHD_LABEL    = launchdLabel;
   });
 
   focusMonitorDir = mkScript "omniwm-focus-monitor-dir"
@@ -66,12 +93,12 @@ in {
 
     monitorProfile = lib.mkOption {
       type = lib.types.str;
-      default = "default";
+      default = "auto";
       description = ''
-        Active monitor profile name.
-        Looks up modules/darwin/omniwm/monitor-profiles/<name>.nix.
-        新しいプロファイルを足す場合は monitor-profiles/ に <name>.nix を作成して
-        この値を切り替えるだけ。default は main/secondary だけのフォールバック。
+        Active monitor profile.
+          "auto"           = 接続中モニタから自動検出（match 条件で選択）
+          "<name>"         = monitor-profiles/<name>.nix を強制使用
+        match を持つプロファイルが優先、無ければ default に fallback。
       '';
       example = "office-3mon";
     };
@@ -87,11 +114,20 @@ in {
         '';
       }
       {
-        assertion = builtins.pathExists profilePath;
+        assertion = cfg.monitorProfile == "auto"
+          || builtins.elem cfg.monitorProfile profileNames;
         message = ''
-          monitorProfile = "${cfg.monitorProfile}" のファイルが存在しません。
-          modules/darwin/omniwm/monitor-profiles/${cfg.monitorProfile}.nix を作成するか、
-          別の既存プロファイル名を指定してください。既存: default, office-3mon
+          monitorProfile = "${cfg.monitorProfile}" は存在しません。
+          利用可能: "auto", ${
+            lib.concatMapStringsSep ", " (n: "\"${n}\"") profileNames
+          }
+          新規プロファイルを足す場合は monitor-profiles/<name>.nix を作成してください。
+        '';
+      }
+      {
+        assertion = builtins.elem "default" profileNames;
+        message = ''
+          monitor-profiles/default.nix が必要です（auto 検出の最終 fallback）。
         '';
       }
     ];
@@ -108,7 +144,6 @@ in {
       pkgs.jq
     ];
 
-    # ── OmniWM 本体: launchd で起動・KeepAlive・runtime deploy ─────────────
     launchd.user.agents.omniwm = {
       serviceConfig = {
         ProgramArguments = [
@@ -121,8 +156,6 @@ in {
       };
     };
 
-    # ── イベント駆動 watcher（モニタ抜き差し検知） ──────────────────────
-    # --no-send-initial で起動時の暴発を防ぐ。deploy.sh は idempotent。
     launchd.user.agents.omniwm-display-watcher = {
       serviceConfig = {
         ProgramArguments = [

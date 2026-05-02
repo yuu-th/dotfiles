@@ -114,7 +114,7 @@
   myConfig.darwin.dia.enable            = true;
   myConfig.darwin.aerospace.enable      = false;  # OmniWM 移行作業中（一時停止）
   myConfig.darwin.omniwm.enable         = true;
-  myConfig.darwin.omniwm.monitorProfile = "office-3mon";  # monitor-profiles/<name>.nix を選ぶ（既存: default, office-3mon）
+  myConfig.darwin.omniwm.monitorProfile = "auto";  # "auto" = 接続中モニタから自動選択。"<name>" で強制指定可
   myConfig.darwin.karabiner.enable      = true;
   myConfig.darwin.linearmouse.enable    = true;
   myConfig.darwin.pake.enable           = true;

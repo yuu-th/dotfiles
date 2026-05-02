@@ -1,29 +1,27 @@
-# ── 例: オフィス 3 モニタ構成 ────────────────────────────────────────────
+# ── オフィス 3 モニタ構成 ────────────────────────────────────────────────────
 # Built-in (main) + HP V27ie G5 + 名前なしモニタ
 #
-# このプロファイルを使うには profiles/darwin.nix で:
-#   myConfig.darwin.omniwm.monitorProfile = "office-3mon";
+# match の条件すべて成立する時に auto-select される：
+#   - HP V27ie G5 が接続されている
+#   - 名前なしモニタが接続されている
 #
-# 解決失敗時の挙動:
-#   - "HP V27ie G5" が接続されていない → そのワークスペースは secondary に
-#     フォールバック（deploy.sh が runtime にチェック）
-#   - 名前なしモニタが無い → 同様に secondary フォールバック
-#   → どんなモニタ構成でも crash せず動く
+# 手動で選びたい場合は profiles/darwin.nix で:
+#   myConfig.darwin.omniwm.monitorProfile = "office-3mon";
 { helpers }:
 let inherit (helpers) mkWorkspaces main display unnamedDisplay;
 in {
+  match = {
+    requiredDisplays = [ "HP V27ie G5" ];
+    requireUnnamed = true;
+  };
+
   workspaces = mkWorkspaces {
     monitorMap = {
-      # MacBook Built-in: Calendar / 常駐
       "M" = main;
-
-      # 名前なしモニタ (左下): Browser / Editor / Agent
       "B" = unnamedDisplay;
       "E" = unnamedDisplay;
       "1" = unnamedDisplay;
       "2" = unnamedDisplay;
-
-      # HP V27ie G5: catch-all / その他
       "3" = display "HP V27ie G5";
       "4" = display "HP V27ie G5";
       "5" = display "HP V27ie G5";
