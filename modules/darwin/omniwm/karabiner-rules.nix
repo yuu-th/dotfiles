@@ -73,6 +73,13 @@ in
     (basicShell "l" [ "left_option" "left_control" ]
       "${focusMonitorDir}/bin/omniwm-focus-monitor-dir right"))
 
+  # ── Option+Space → OmniWM 内蔵 Quake terminal ───────────────────────────
+  # OmniWM のホットキーは IPC 越しに発火する設計のため、Karabiner で受けて
+  # omniwmctl を直接呼ぶ。Cmd+Space → opt+space (synthetic) は Raycast が拾うが
+  # Karabiner の `to` は他ルールに再 hook されないので、Cmd+Space 動作と両立する。
+  (rules1 "OmniWM: opt+space = toggle Quake terminal"
+    (basicShell "spacebar" [ "left_option" ] (ctl "command toggle-quake-terminal")))
+
   # ── macOS Hide ブロック ────────────────────────────────────────────────
   (rules1 "OmniWM: block cmd-h (Hide)"
     {
