@@ -20,6 +20,11 @@
   { bundleId = "com.microsoft.VSCodeInsiders"; assignToWorkspace = "12"; }
   { bundleId = "com.microsoft.VSCode";         assignToWorkspace = "12"; }
   { bundleId = "dev.zed.Zed";                  assignToWorkspace = "12"; }
+  { bundleId = "com.todesktop.230313mzl4w4u92"; assignToWorkspace = "12"; minWidth = 800.0; minHeight = 500.0; } # Cursor
+  { bundleId = "com.jetbrains.intellij";       assignToWorkspace = "12"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.jetbrains.pycharm";        assignToWorkspace = "12"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.jetbrains.WebStorm";       assignToWorkspace = "12"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.jetbrains.goland";         assignToWorkspace = "12"; minWidth = 800.0; minHeight = 500.0; }
 
   # ── AI / Agent → WS 1 ────────────────────────────────────────────────────
   { bundleId = "com.google.antigravity";       assignToWorkspace = "1"; }
@@ -33,14 +38,41 @@
   { bundleId = "com.googlecode.iterm2";        assignToWorkspace = "3"; }
   { bundleId = "com.apple.Terminal";           assignToWorkspace = "3"; }
 
+  # ── Chat / Communication → WS 4 ──────────────────────────────────────────
+  { bundleId = "com.tinyspeck.slackmacgap";    assignToWorkspace = "4"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.microsoft.teams2";         assignToWorkspace = "4"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.microsoft.teams";          assignToWorkspace = "4"; minWidth = 800.0; minHeight = 500.0; }
+
+  # ── Notes / Reference → WS 5 ─────────────────────────────────────────────
+  { bundleId = "notion.id";                    assignToWorkspace = "5"; minWidth = 700.0; minHeight = 500.0; }
+  { bundleId = "md.obsidian";                  assignToWorkspace = "5"; minWidth = 700.0; minHeight = 500.0; }
+
+  # ── Music （Spotify と並べる）──────────────────────────────────────────
+  { bundleId = "com.apple.Music";              assignToWorkspace = "10"; minWidth = 600.0; minHeight = 400.0; }
+
   # ── Floating（ダイアログ系・現 WS に留まる）────────────────────────────
-  # AeroSpace は app-name-regex で複数指定だったが OmniWM は substring/regex 別立て
-  # → bundleId で個別指定（regex 不可なので確実な ID 指定に振る）
+  # OmniWM は appNameSubstring/titleRegex 個別フィールドで regex を扱う。
+  # AeroSpace の `app-name-regex` 一括指定は使えないので bundleId で個別に指定。
   { bundleId = "com.apple.finder";             layout = "float"; }
   { bundleId = "com.apple.systempreferences";  layout = "float"; }
   { bundleId = "com.apple.calculator";         layout = "float"; }
   { bundleId = "com.apple.Dictionary";         layout = "float"; }
+  { bundleId = "com.apple.ActivityMonitor";    layout = "float"; }
+  { bundleId = "com.apple.Console";            layout = "float"; }
+  { bundleId = "com.apple.QuickTimePlayerX";   layout = "float"; }
+  { bundleId = "com.apple.PhotoBooth";         layout = "float"; }
+  { bundleId = "com.apple.iWork.Keynote";      layout = "float"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.apple.iWork.Pages";        layout = "float"; minWidth = 800.0; minHeight = 500.0; }
+  { bundleId = "com.apple.iWork.Numbers";      layout = "float"; minWidth = 800.0; minHeight = 500.0; }
   { bundleId = "com.mojang.minecraftlauncher"; layout = "float"; }
+  { bundleId = "com.raycast.macos";            layout = "float"; }
+  { bundleId = "com.knollsoft.Hookshot";       layout = "float"; }
+  # 1Password など modal 性質のアプリ
+  { bundleId = "com.1password.1password";      layout = "float"; }
+  { bundleId = "com.agilebits.onepassword7";   layout = "float"; }
+  # 設定系・ユーティリティ
+  { bundleId = "com.apple.MobileSMS";          layout = "float"; minWidth = 600.0; minHeight = 500.0; }
+  { bundleId = "com.tinkoffsystems.utm";       layout = "float"; }
 
   # ── Ghostty ────────────────────────────────────────────────────────────
   # AeroSpace では on-window-detected で自動移動しないルールだったので OmniWM でも

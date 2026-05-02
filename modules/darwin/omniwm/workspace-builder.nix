@@ -15,7 +15,9 @@
   # ── monitorMap のキーは外部からの「論理名」(1〜9, M, B, E) を維持。
   # 内部的には OmniWM の rawID は数値のみ受理されるため、M/B/E は数値 rawID
   # (10, 11, 12) に変換し、displayName で人間可読ラベルを保つ。
-  mkWorkspaces = monitorMap:
+  #
+  # layoutMap は省略可能（デフォルト全 niri）。WS 単位に niri / dwindle を選べる。
+  mkWorkspaces = { monitorMap, layoutMap ? { } }:
     let
       # 論理名 → (rawName, displayName) マッピング
       rawNames = {
@@ -53,11 +55,14 @@
       };
 
       mk = key:
-        let r = rawNames.${key}; in
+        let
+          r = rawNames.${key};
+          layout = layoutMap.${key} or "niri";
+        in
         {
           id = uuids.${key};
           name = r.rawName;
-          layoutType = "niri";
+          layoutType = layout;
           monitorAssignment = monitorMap.${key};
         }
         // (if r.displayName != null then { inherit (r) displayName; } else { });
@@ -67,4 +72,28 @@
   # ── monitorAssignment 構築ヘルパ ─────────────────────────────────────────
   main      = { type = "main"; };
   secondary = { type = "secondary"; };
+
+  # specificDisplay: 名前付きモニタへの厳密ピン留め。
+  # displayId は hardware 依存で nix ビルド時不明 → switch-profile.sh が runtime に
+  # name を `omniwmctl query displays` で解決して 0 を実値に書き換える。
+  display = displayName: {
+    type = "specificDisplay";
+    output = {
+      name = displayName;
+      displayId = 0;             # placeholder (runtime に switch-profile が patch)
+    };
+  };
+
+  # 名前なしモニタ（macOS が EDID name を持たないモニタ）
+  # 名前一致では識別できないため displayId のみで紐づける。
+  # 999000 は switch-profile.sh が runtime に実 displayId に置換するマーカー。
+  # 負値は OmniWM をクラッシュさせる、0 は noRuntimeDisplayId 扱いになり
+  # 解決失敗するので、安全な大きな正の整数を使う。
+  unnamedDisplay = {
+    type = "specificDisplay";
+    output = {
+      name = "";
+      displayId = 999000;        # placeholder, replaced by switch-profile.sh
+    };
+  };
 }

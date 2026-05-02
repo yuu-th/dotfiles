@@ -8,6 +8,7 @@ let
   appRules = import ./app-rules.nix { inherit pkgs; };
 
   helpers = import ./workspace-builder.nix { inherit pkgs; };
+  oneProfile    = import ./profiles/one-monitor.nix    { inherit helpers; };
   twoProfile    = import ./profiles/two-monitor.nix    { inherit helpers; };
   tripleProfile = import ./profiles/triple-monitor.nix { inherit helpers; };
   quadProfile   = import ./profiles/quad-monitor.nix   { inherit helpers; };
@@ -19,6 +20,7 @@ let
       inherit hotkeys appRules;
     }));
 
+  oneConfig    = mkConfig oneProfile;
   twoConfig    = mkConfig twoProfile;
   tripleConfig = mkConfig tripleProfile;
   quadConfig   = mkConfig quadProfile;
@@ -46,6 +48,7 @@ let
 
   switchProfile = mkScript "omniwm-switch-profile" ./scripts/switch-profile.sh
     (baseEnv // {
+      ONE_TOML      = oneConfig;
       TWO_TOML      = twoConfig;
       TRIPLE_TOML   = tripleConfig;
       QUAD_TOML     = quadConfig;

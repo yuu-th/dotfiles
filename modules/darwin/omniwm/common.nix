@@ -31,23 +31,25 @@
   };
 
   # ── Niri (scrolling columns) レイアウト既定値 ────────────────────────────
-  # niri 流: フォーカス column を常に画面中央に置く。横スクロール WM の真価
+  # フォーカス column を常に画面中央、column 幅 preset を細かめに、
+  # 同時可視 column を 3 つに（広めの画面で見渡しやすい）
   niri = {
     alwaysCenterSingleColumn = true;
     centerFocusedColumn = "always";
-    columnWidthPresets = [ 0.3333 0.5 0.66 ];
+    columnWidthPresets = [ 0.25 0.3333 0.5 0.6666 0.8 ];
     infiniteLoop = false;
-    maxVisibleColumns = 2;
-    maxWindowsPerColumn = 3;
+    maxVisibleColumns = 3;
+    maxWindowsPerColumn = 4;
     singleWindowAspectRatio = "4:3";
   };
 
-  # ── Dwindle (BSP) — フォールバック用、デフォルトでは使わない ─────────────
+  # ── Dwindle (BSP) — Option+/ で WS 単位に切替えて使う ───────────────────
+  # smartSplit ON で長辺方向に自動分割（タイル比率が崩れにくい）
   dwindle = {
     defaultSplitRatio = 1.0;
     moveToRootStable = true;
     singleWindowAspectRatio = "4:3";
-    smartSplit = false;
+    smartSplit = true;
     splitWidthMultiplier = 1.0;
     useGlobalGaps = true;
   };
@@ -114,24 +116,26 @@
   };
 
   # ── ステータスバー ────────────────────────────────────────────────────────
+  # アプリ名表示で「今何が立ってるか」を一目で把握、WS 名 (M/B/E) も見えるように
   statusBar = {
-    showAppNames = false;
-    showWorkspaceName = false;
+    showAppNames = true;
+    showWorkspaceName = true;
     useWorkspaceId = false;
   };
 
   # ── ワークスペースバー ────────────────────────────────────────────────────
+  # floating ウィンドウもバーに表示、空 WS は隠して整理
   workspaceBar = {
     backgroundOpacity = 0.1;
     deduplicateAppIcons = false;
     enabled = true;
     height = 24.0;
-    hideEmptyWorkspaces = false;
+    hideEmptyWorkspaces = true;
     labelFontSize = 12.0;
     notchAware = true;
     position = "overlappingMenuBar";
     reserveLayoutSpace = false;
-    showFloatingWindows = false;
+    showFloatingWindows = true;
     showLabels = true;
     windowLevel = "popup";
     xOffset = 0.0;

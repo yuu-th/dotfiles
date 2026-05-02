@@ -90,4 +90,13 @@
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ────────────────────────
   { binding = "Option+`"; id = "toggleQuakeTerminal"; }
+
+  # ── 安全装置 / レアな救済 action ────────────────────────────────────────
+  # 画面外に流れたウィンドウを呼び戻す（外部モニタを抜いた後など）
+  { binding = "Control+Option+Shift+R"; id = "rescueOffscreenWindows"; }
+
+  # ── スクラッチパッド（任意ウィンドウを「隠し領域」に投げて呼び戻す） ──────
+  # AeroSpace には無かった機能。バインドは未割当だが Command Palette で召喚可能：
+  # Control+Option+Space → "scratchpad" を検索
+  # 必要に応じてここにキーを足してください（例: "Option+\\"）
 ]

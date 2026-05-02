@@ -1,38 +1,40 @@
 # ── 4枚モニタプロファイル ──────────────────────────────────────────────────
-# DIOS-MF241X + L2235HW + 名前なし + Built-in Retina Display (main)
+# DIOS-MF241X (左上) + L2235HW (右上) + 名前なし (左下) + Built-in Retina Display (右下)
 #
-# 物理配置:
 #   ┌──────────────────┐  ┌──────────────┐
 #   │ DIOS-MF241X      │  │   L2235HW    │
 #   │ Editor+柔軟      │  │ デフォルト柔軟 │
-#   │ (secondary)      │  │ (secondary)   │
+#   │ (E, 1, 2)        │  │ (3〜9)        │
 #   └──────────────────┘  └──────────────┘
 #   ┌──────────────────┐  ┌──────────────────────────┐
 #   │ (名前なし)       │  │ Built-in Retina Display  │
-#   │ ブラウザ専用     │  │ Spotify/Chat (main)      │
-#   │ (secondary)      │  │                           │
+#   │ ブラウザ専用     │  │ Spotify/Chat (M)         │
+#   │ (B)              │  │                           │
 #   └──────────────────┘  └──────────────────────────┘
-#
-# NOTE: 4 枚モニタでは `secondary` だけだと特定モニタへの固定割当ができない。
-# 必要なら OmniWM GUI から個別に specificDisplay を設定する運用とする。
 { helpers }:
-let inherit (helpers) mkWorkspaces main secondary;
+let
+  inherit (helpers) mkWorkspaces display unnamedDisplay;
+  mac   = display "Built-in Retina Display";
+  dios  = display "DIOS-MF241X";
+  l2235 = display "L2235HW";
 in {
   workspaces = mkWorkspaces {
-    # Built-in (main) — 常駐
-    "M" = main;
-
-    # それ以外 (secondary) — 全部 secondary
-    "B" = secondary;
-    "E" = secondary;
-    "1" = secondary;
-    "2" = secondary;
-    "3" = secondary;
-    "4" = secondary;
-    "5" = secondary;
-    "6" = secondary;
-    "7" = secondary;
-    "8" = secondary;
-    "9" = secondary;
+    monitorMap = {
+      "M" = mac;
+      "B" = unnamedDisplay;
+      "E" = dios;
+      "1" = dios;
+      "2" = dios;
+      "3" = l2235;
+      "4" = l2235;
+      "5" = l2235;
+      "6" = l2235;
+      "7" = l2235;
+      "8" = l2235;
+      "9" = l2235;
+    };
+    layoutMap = {
+      "E" = "dwindle";
+    };
   };
 }

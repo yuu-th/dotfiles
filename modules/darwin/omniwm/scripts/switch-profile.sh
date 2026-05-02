@@ -25,14 +25,46 @@ PREV=$(cat "$STATE" 2>/dev/null || echo "")
 [ "$COUNT" = "$PREV" ] && exit 0
 
 case "$COUNT" in
+  1) PROFILE="$ONE_TOML" ;;
   2) PROFILE="$TWO_TOML" ;;
   3) PROFILE="$TRIPLE_TOML" ;;
   4) PROFILE="$QUAD_TOML" ;;
-  *) exit 0 ;;
+  # 5枚以上: 4枚プロファイルにフォールバック（main + secondary 配分）
+  [5-9]) PROFILE="$QUAD_TOML" ;;
+  *)
+    # 0 or detection failure: 何もしない
+    exit 0
+    ;;
 esac
 
 mkdir -p "$(dirname "$STATE")" "$HOME/.config/omniwm"
-cp "$PROFILE" "$HOME/.config/omniwm/settings.toml"
+
+# ── 名前なしモニタの displayId placeholder (999000) を実値に置換 ──────────
+# OmniWM の specificDisplay は実 displayId が必要だが、Nix ビルド時には不明なため
+# system_profiler から runtime に取得して sed で書き換える。
+DISPLAYS_JSON=$(/usr/sbin/system_profiler SPDisplaysDataType -json 2>/dev/null || echo '{}')
+UNNAMED_ID=$(echo "$DISPLAYS_JSON" | "$JQ" -r '
+  [.SPDisplaysDataType[]?.spdisplays_ndrvs[]?
+   | select(._name == "spdisplays_display")
+   | ._spdisplays_displayID
+   | tonumber]
+  | .[0] // empty
+' 2>/dev/null || true)
+
+if [ -z "$UNNAMED_ID" ]; then
+  # 名前なしモニタが存在しない構成 → main display の ID にフォールバック
+  UNNAMED_ID=$(echo "$DISPLAYS_JSON" | "$JQ" -r '
+    [.SPDisplaysDataType[]?.spdisplays_ndrvs[]?
+     | select(.spdisplays_main == "spdisplays_yes")
+     | ._spdisplays_displayID
+     | tonumber]
+    | .[0] // 1
+  ' 2>/dev/null || echo "1")
+fi
+
+# placeholder を実値に置換しながら deploy
+/usr/bin/sed "s/displayId = 999000/displayId = $UNNAMED_ID/g" "$PROFILE" \
+  > "$HOME/.config/omniwm/settings.toml"
 echo "$COUNT" > "$STATE"
 
 # OmniWM は設定ホットリロード未対応 → プロセス再起動が必要
