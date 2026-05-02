@@ -18,9 +18,12 @@
   "app.zen-browser.zen"    = "11";
 
   # ── Editors → WS E (12) ────────────────────────────────────────────────
+  # ⚠️ projwm 導入後、Zed は projwm が per-project に slot 配置するため
+  # startup-sort の Zed → 12 ルールは削除する（queue/projwm-design.md FR-24 / 決定 42）。
+  # OmniWM 起動時に Zed が走っていれば projwm reconcile が改めて正しい slot に
+  # 戻すので、ここで一律 12 に集めない方が望ましい。
   "com.microsoft.VSCodeInsiders"  = "12";
   "com.microsoft.VSCode"          = "12";
-  "dev.zed.Zed"                   = "12";
   "com.todesktop.230313mzl4w4u92" = "12";  # Cursor
   "com.jetbrains.intellij"        = "12";
   "com.jetbrains.pycharm"         = "12";

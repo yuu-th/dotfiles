@@ -69,13 +69,47 @@ in
   # optional=any 許容なので、上で specific match されなかった時に発火する
   # ──────────────────────────────────────────────────────────────────────────
 
-  # ── アプリ起動マクロ (alt-s/c/a) ─────────────────────────────────────────
+  # ── アプリ起動マクロ (alt-s/c) ───────────────────────────────────────────
+  # ※ alt-a は projwm (queue/projwm-design.md §8.1) で AI Viewer (WS A) jump に
+  # 振替。Calendar は手動 / Spotlight / Dock 起動を使う運用に変更。
   (rules1 "OmniWM: alt-s = WS M + Spotify"
     (basicShell "s" [ "option" ] "${wsLaunch}/bin/omniwm-ws-launch M Spotify"))
   (rules1 "OmniWM: alt-c = WS M + Discord"
     (basicShell "c" [ "option" ] "${wsLaunch}/bin/omniwm-ws-launch M Discord"))
-  (rules1 "OmniWM: alt-a = WS M + Calendar"
-    (basicShell "a" [ "option" ] "${wsLaunch}/bin/omniwm-ws-launch M Calendar"))
+
+  # ── projwm: alt-shift-letter で slot へ送る（specific 順序、alt-letter より先）─
+  # AI viewer (A) と AI project slots Q/W/R/T/Y/U/I/O/P。E は既存の alt-shift-e
+  # が同じ動作（move to WS E）なので兼用、新規追加は不要。
+  (rules1 "projwm: alt-shift-a = move window to WS A (viewer)"
+    (basicShell "a" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws A"))
+  (rules1 "projwm: alt-shift-q = move window to WS Q"
+    (basicShell "q" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws Q"))
+  (rules1 "projwm: alt-shift-w = move window to WS W"
+    (basicShell "w" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws W"))
+  (rules1 "projwm: alt-shift-r = move window to WS R"
+    (basicShell "r" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws R"))
+  (rules1 "projwm: alt-shift-t = move window to WS T"
+    (basicShell "t" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws T"))
+  (rules1 "projwm: alt-shift-y = move window to WS Y"
+    (basicShell "y" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws Y"))
+  (rules1 "projwm: alt-shift-u = move window to WS U"
+    (basicShell "u" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws U"))
+  (rules1 "projwm: alt-shift-i = move window to WS I"
+    (basicShell "i" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws I"))
+  (rules1 "projwm: alt-shift-o = move window to WS O"
+    (basicShell "o" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws O"))
+  (rules1 "projwm: alt-shift-p = move window to WS P"
+    (basicShell "p" [ "option" "shift" ]
+      "${moveWindowToNamedWS}/bin/omniwm-move-window-to-named-ws P"))
 
   # ── 名前指定 WS 切替 (alt-m/b/e) ─────────────────────────────────────────
   (rules1 "OmniWM: alt-m = workspace M"
@@ -84,6 +118,29 @@ in
     (basicShell "b" [ "option" ] (ctl "workspace focus-name B")))
   (rules1 "OmniWM: alt-e = workspace E"
     (basicShell "e" [ "option" ] (ctl "workspace focus-name E")))
+
+  # ── projwm: alt-letter で slot に jump（A + Q/W/R/T/Y/U/I/O/P）─────────
+  # E は既に alt-e で focus-name E が貼られているので兼用。
+  (rules1 "projwm: alt-a = workspace A (viewer)"
+    (basicShell "a" [ "option" ] (ctl "workspace focus-name A")))
+  (rules1 "projwm: alt-q = workspace Q"
+    (basicShell "q" [ "option" ] (ctl "workspace focus-name Q")))
+  (rules1 "projwm: alt-w = workspace W"
+    (basicShell "w" [ "option" ] (ctl "workspace focus-name W")))
+  (rules1 "projwm: alt-r = workspace R"
+    (basicShell "r" [ "option" ] (ctl "workspace focus-name R")))
+  (rules1 "projwm: alt-t = workspace T"
+    (basicShell "t" [ "option" ] (ctl "workspace focus-name T")))
+  (rules1 "projwm: alt-y = workspace Y"
+    (basicShell "y" [ "option" ] (ctl "workspace focus-name Y")))
+  (rules1 "projwm: alt-u = workspace U"
+    (basicShell "u" [ "option" ] (ctl "workspace focus-name U")))
+  (rules1 "projwm: alt-i = workspace I"
+    (basicShell "i" [ "option" ] (ctl "workspace focus-name I")))
+  (rules1 "projwm: alt-o = workspace O"
+    (basicShell "o" [ "option" ] (ctl "workspace focus-name O")))
+  (rules1 "projwm: alt-p = workspace P"
+    (basicShell "p" [ "option" ] (ctl "workspace focus-name P")))
 
   # ── Option+Space → OmniWM 内蔵 Quake terminal ───────────────────────────
   (rules1 "OmniWM: opt+space = toggle Quake terminal"

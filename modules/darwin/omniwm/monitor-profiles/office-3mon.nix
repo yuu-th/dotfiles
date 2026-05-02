@@ -29,9 +29,20 @@ in {
       "7" = display "HP V27ie G5";
       "8" = display "HP V27ie G5";
       "9" = display "HP V27ie G5";
+      # ── projwm slots: 全て unnamedDisplay に集約（main を埋めない方針）─
+      "A" = unnamedDisplay;
+      "Q" = unnamedDisplay;
+      "W" = unnamedDisplay;
+      "R" = unnamedDisplay;
+      "T" = unnamedDisplay;
+      "Y" = unnamedDisplay;
+      "U" = unnamedDisplay;
+      "I" = unnamedDisplay;
+      "O" = unnamedDisplay;
+      "P" = unnamedDisplay;
     };
     layoutMap = {
-      "E" = "dwindle";
+      # projwm では E は niri、旧 Editor の dwindle 設定は不要
     };
   };
 }
