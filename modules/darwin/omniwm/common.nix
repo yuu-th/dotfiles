@@ -95,8 +95,11 @@
   };
 
   # ── マウス warp（モニタ間） ──────────────────────────────────────────────
+  # axis を vertical にすると上下並びのモニタでもカーソルが滑らかに渡る。
+  # axis を omit / null にすると（TOML では None 相当）、OmniWM が自動判定する。
+  # L 字配置等で困る場合は "auto" に変えるか axis 自体を削除する。
   mouseWarp = {
-    axis = "horizontal";
+    axis = "vertical";        # 縦並び要素があるレイアウトに合わせる（要なら "horizontal" に戻す）
     margin = 1;
     monitorOrder = [ ];
   };
