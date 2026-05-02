@@ -20,6 +20,7 @@
     ../modules/darwin/google-calendar.nix
     ../modules/darwin/ghostty.nix
     ../modules/darwin/cmux.nix
+    ../modules/darwin/zed.nix
     ../modules/darwin/parsec.nix
     # sub-profiles（常時ON設定を関心ごとに分割）
     ./fav_fonts.nix
@@ -40,6 +41,7 @@
     ../modules/common/github-copilot-cli.nix
     ../modules/common/fish.nix
     ../modules/common/zellij.nix
+    ../modules/common/tmux.nix
     ../modules/common/neovim.nix
     ../modules/common/teams.nix
     ../modules/common/zen-browser.nix
@@ -121,6 +123,7 @@
   myConfig.darwin.googleCalendar.enable = true;
   myConfig.darwin.ghostty.enable        = true;
   myConfig.darwin.cmux.enable           = true;
+  myConfig.darwin.zed.enable            = true;
   myConfig.darwin.parsec.enable         = true;
 
   # ── Common modules ────────────────────────────────────────────────────────────
@@ -139,6 +142,7 @@
   myConfig.githubCopilotCli.enable = true;
   myConfig.fish.enable             = true;
   myConfig.zellij.enable           = true;
+  myConfig.tmux.enable             = true;
   myConfig.neovim.enable           = true;
   myConfig.teams.enable            = true;
   myConfig.zenBrowser.enable       = true;
