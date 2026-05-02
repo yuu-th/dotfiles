@@ -3,10 +3,11 @@ let
   cfg = config.myConfig.darwin.omniwm;
 
   # ── 設定ソース ───────────────────────────────────────────────────────────
-  common   = import ./common.nix     { inherit pkgs; };
-  hotkeys  = import ./hotkeys.nix    { inherit pkgs; };
-  appRules = import ./app-rules.nix  { inherit pkgs; };
-  helpers  = import ./workspace-builder.nix { inherit pkgs; };
+  common       = import ./common.nix     { inherit pkgs; };
+  hotkeys      = import ./hotkeys.nix    { inherit pkgs; };
+  appRules     = import ./app-rules.nix  { inherit pkgs; };
+  helpers      = import ./workspace-builder.nix { inherit pkgs; };
+  wsAssignment = import ./workspace-assignment.nix;
 
   # ── 全プロファイルを自動 discover & ビルド ───────────────────────────────
   profileDir = ./monitor-profiles;
@@ -82,6 +83,9 @@ let
   moveWindowToNamedWS = mkScript "omniwm-move-window-to-named-ws"
     ./scripts/move-window-to-named-ws.sh baseEnv;
 
+  startupSort = mkScript "omniwm-startup-sort" ./scripts/startup-sort.sh
+    (baseEnv // { WS_MAP_JSON = builtins.toJSON wsAssignment; });
+
   karabinerRules = import ./karabiner-rules.nix {
     inherit wsLaunch moveWindowToNamedWS setupMedia focusMonitorDir omniwmctl;
   };
@@ -141,6 +145,7 @@ in {
       setupMedia
       wsLaunch
       moveWindowToNamedWS
+      startupSort
       pkgs.jq
     ];
 
@@ -148,7 +153,15 @@ in {
       serviceConfig = {
         ProgramArguments = [
           "/bin/sh" "-c"
-          ''/bin/wait4path /nix/store && ${deploy}/bin/omniwm-deploy; exec ${omniwmApp}''
+          ''
+            /bin/wait4path /nix/store
+            ${deploy}/bin/omniwm-deploy
+            ${omniwmApp} &
+            OMNIWM_PID=$!
+            # OmniWM IPC が立ち上がったら startup-sort を 1 回だけ走らせる
+            ( ${startupSort}/bin/omniwm-startup-sort ) &
+            wait $OMNIWM_PID
+          ''
         ];
         KeepAlive = true;
         RunAtLoad = true;

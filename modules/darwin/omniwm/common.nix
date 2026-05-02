@@ -106,16 +106,20 @@
 
   # ── マウス warp（モニタ間） ──────────────────────────────────────────────
   # OmniWM の mouseWarp は「画面端でカーソルを別モニタに飛ばす」拡張機能。
-  # axis = "horizontal" / "vertical" の単一軸でしか動かないため、L 字型配置などの
-  # 複雑なモニタ配置には対応できない（横方向 or 縦方向のどちらかしか面倒見ない）。
+  # axis = "horizontal" or "vertical" の単一軸でしか機能しないため、3 モニタ
+  # L 字配置には根本的に対応できない（公式 disable 設定も無し）。
   #
-  # 対処: margin = 0 で warp トリガを無効化 → macOS のネイティブ挙動が前面に出て、
-  # System Settings の配置通りにカーソルが移動するようになる。
-  # 要 warp が必要になったら margin を 1+ に戻し axis を変える。
+  # 暫定対応: macOS Settings 上で 3 モニタを「縦一列」に並べ、上から
+  # HP V27ie G5 → 名前なしモニタ → Built-in の順に配置する前提で
+  # axis = "vertical" + 明示 monitorOrder で warp 順序を固定。
+  #
+  # 監視リリース: BarutSRB/OmniWM の commit 1dd47e2 (2026-05-02) で
+  # anti-warp clamp が main に削除済み。次タグ (v0.4.8.1 / v0.4.9) で
+  # 引き戻し問題は解消見込み。それまでは縦並び運用で凌ぐ。
   mouseWarp = {
-    axis = "horizontal";   # OmniWM が String? を要求するため値は維持（margin = 0 で無効化されるので影響なし）
-    margin = 0;            # 0 で OmniWM 拡張 warp を無効化、macOS native に任せる
-    monitorOrder = [ ];
+    axis = "vertical";     # 縦並び前提（macOS Settings 側もそう設定すること）
+    margin = 5;            # 既定値相当
+    monitorOrder = [ ];    # 空 → axis でソート（macOS 配置を縦並びにすれば順序は自動）
   };
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ───────────────────────────
