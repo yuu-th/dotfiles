@@ -31,6 +31,15 @@ func Execute(version string) error {
 	root.AddCommand(newArchiveCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newStatusCmd())
+	root.AddCommand(newReconcileCmd())
+	root.AddCommand(newUpCmd())
+	root.AddCommand(newJumpCmd())
+	root.AddCommand(newAddAICmd())
+	root.AddCommand(newAddShellCmd())
+	root.AddCommand(newAddEditorCmd())
+	root.AddCommand(newRemoveCmd())
+	root.AddCommand(newArchiveTopCmd())
+	root.AddCommand(newUnarchiveTopCmd())
 
 	return root.Execute()
 }
