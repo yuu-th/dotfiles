@@ -43,13 +43,14 @@
   #   maxVisibleColumns        : 同時表示する column 数（広いモニタで増やすと見渡しやすい）
   niri = {
     alwaysCenterSingleColumn = true;
-    centerFocusedColumn = "always";
-    columnWidthPresets = [ 0.4 0.5 0.66 0.8 0.95 ];   # 狭→広、デフォルトより 1 段大きめ
-    defaultColumnWidth = 0.66;                         # 新規ウィンドウは画面幅の 2/3
+    centerFocusedColumn = "on-overflow";  # 通常は左端 packing、画面に収まらない時のみ中央寄せ
+                                          # ("always" だとフォーカス左の column が画面外に押し出される)
+    columnWidthPresets = [ 0.4 0.5 0.66 0.8 0.95 ];
+    defaultColumnWidth = 0.66;
     infiniteLoop = false;
     maxVisibleColumns = 3;
     maxWindowsPerColumn = 4;
-    singleWindowAspectRatio = "16:10";                 # ワイドモニタで広めに
+    singleWindowAspectRatio = "16:10";
   };
 
   # ── Dwindle (BSP) — Option+/ で WS 単位に切替えて使う ───────────────────
