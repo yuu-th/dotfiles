@@ -13,6 +13,7 @@
     ../modules/darwin/obsidian.nix
     ../modules/darwin/dia.nix
     ../modules/darwin/aerospace
+    ../modules/darwin/omniwm
     ../modules/darwin/karabiner
     ../modules/darwin/linearmouse
     ../modules/darwin/pake-webapps
@@ -103,7 +104,7 @@
   myConfig.darwin.homebrew.enable       = true;
   myConfig.darwin.box.enable            = true;
   myConfig.darwin.orbstack.enable       = true;
-  myConfig.darwin.borders.enable        = true;
+  myConfig.darwin.borders.enable        = config.myConfig.darwin.aerospace.enable;  # OmniWM 時は内蔵で代替
   myConfig.darwin.raycast.enable        = true;
   myConfig.darwin.ice.enable            = true;
   myConfig.darwin.altTab.enable         = true;
@@ -111,7 +112,8 @@
   myConfig.darwin.spotify.enable        = true;
   myConfig.darwin.obsidian.enable       = true;
   myConfig.darwin.dia.enable            = true;
-  myConfig.darwin.aerospace.enable      = true;
+  myConfig.darwin.aerospace.enable      = false;  # OmniWM 移行作業中（一時停止）
+  myConfig.darwin.omniwm.enable         = true;
   myConfig.darwin.karabiner.enable      = true;
   myConfig.darwin.linearmouse.enable    = true;
   myConfig.darwin.pake.enable           = true;

@@ -1,0 +1,146 @@
+# ── OmniWM 共通設定 ────────────────────────────────────────────────────────
+# モニタ構成に依存しないベース設定。プロファイルとマージされる。
+#
+# canonical-settings.toml のスキーマに従い、各セクションを attrset として返す。
+# default.nix から import → recursiveUpdate でモニタ別プロファイルとマージ。
+{ ... }:
+{
+  # ── スキーマバージョン ────────────────────────────────────────────────────
+  version = 5;
+
+  # ── モニタ別オーバーライド（未使用、空リストで明示） ──────────────────────
+  monitorBarOverrides = [ ];
+  monitorDwindleOverrides = [ ];
+  monitorNiriOverrides = [ ];
+  monitorOrientationOverrides = [ ];
+
+  # ── 外観 ──────────────────────────────────────────────────────────────────
+  appearance = { mode = "dark"; };
+
+  # ── 内蔵ボーダー（JankyBorders を置換）──────────────────────────────────
+  # AeroSpace 時の borders 設定: active=0xFFE8D44D (#E8D44D), inactive=0xFF3C3C3C, width=3
+  borders = {
+    enabled = true;
+    width = 3.0;
+    color = {
+      red = 0.91;
+      green = 0.83;
+      blue = 0.30;
+      alpha = 1.0;
+    };
+  };
+
+  # ── Niri (scrolling columns) レイアウト既定値 ────────────────────────────
+  niri = {
+    alwaysCenterSingleColumn = true;
+    centerFocusedColumn = "never";
+    columnWidthPresets = [ 0.3333 0.5 0.66 ];
+    infiniteLoop = false;
+    maxVisibleColumns = 2;
+    maxWindowsPerColumn = 3;
+    singleWindowAspectRatio = "4:3";
+  };
+
+  # ── Dwindle (BSP) — フォールバック用、デフォルトでは使わない ─────────────
+  dwindle = {
+    defaultSplitRatio = 1.0;
+    moveToRootStable = true;
+    singleWindowAspectRatio = "4:3";
+    smartSplit = false;
+    splitWidthMultiplier = 1.0;
+    useGlobalGaps = true;
+  };
+
+  # ── フォーカス挙動（AeroSpace の on-focused-monitor-changed / on-focus-changed 相当）─
+  # AeroSpace では「マウスがそのウィンドウ/モニタ上に無ければ中央に移動」
+  # OmniWM では moveMouseToFocusedWindow=true でほぼ同等の追従
+  focus = {
+    followsMouse = false;                # alt+drag 等で誤動作を避けるため OFF
+    followsWindowToMonitor = true;       # ウィンドウフォーカスがモニタ跨ぐ時マウスも移動
+    moveMouseToFocusedWindow = true;     # フォーカス変更時マウス追従（lazy 中央への近似）
+  };
+
+  # ── Gaps ──────────────────────────────────────────────────────────────────
+  # AeroSpace: inner=8, outer={left=8,right=8,top=8,bottom=8}
+  gaps = {
+    size = 8.0;
+    outer = {
+      bottom = 8.0;
+      left = 8.0;
+      right = 8.0;
+      top = 8.0;
+    };
+  };
+
+  # ── 一般設定 ─────────────────────────────────────────────────────────────
+  general = {
+    animationsEnabled = true;
+    defaultLayoutType = "niri";
+    hotkeysEnabled = true;
+    ipcEnabled = true;                   # omniwmctl の操作を許可
+    preventSleepEnabled = false;
+    updateChecksEnabled = true;
+  };
+
+  # ── トラックパッドジェスチャ ─────────────────────────────────────────────
+  gestures = {
+    fingerCount = 3;
+    invertDirection = true;
+    scrollEnabled = true;
+    scrollModifierKey = "optionShift";
+    scrollSensitivity = 5.0;
+  };
+
+  # ── マウス warp（モニタ間） ──────────────────────────────────────────────
+  mouseWarp = {
+    axis = "horizontal";
+    margin = 1;
+    monitorOrder = [ ];
+  };
+
+  # ── Quake terminal（任意機能、無効化）──────────────────────────────────
+  quakeTerminal = {
+    animationDuration = 0.2;
+    autoHide = false;
+    enabled = false;                     # Ghostty を別運用しているため OFF
+    heightPercent = 50.0;
+    monitorMode = "focusedWindow";
+    opacity = 1.0;
+    position = "center";
+    useCustomFrame = false;
+    widthPercent = 50.0;
+  };
+
+  # ── ステータスバー ────────────────────────────────────────────────────────
+  statusBar = {
+    showAppNames = false;
+    showWorkspaceName = false;
+    useWorkspaceId = false;
+  };
+
+  # ── ワークスペースバー ────────────────────────────────────────────────────
+  workspaceBar = {
+    backgroundOpacity = 0.1;
+    deduplicateAppIcons = false;
+    enabled = true;
+    height = 24.0;
+    hideEmptyWorkspaces = false;
+    labelFontSize = 12.0;
+    notchAware = true;
+    position = "overlappingMenuBar";
+    reserveLayoutSpace = false;
+    showFloatingWindows = false;
+    showLabels = true;
+    windowLevel = "popup";
+    xOffset = 0.0;
+    yOffset = 0.0;
+    accentColor = { red = -1.0; green = -1.0; blue = -1.0; alpha = 1.0; };
+    textColor   = { red = -1.0; green = -1.0; blue = -1.0; alpha = 1.0; };
+  };
+
+  # ── state（ランタイム保持、固定値で初期化） ──────────────────────────────
+  state = {
+    commandPaletteLastMode = "windows";
+    hiddenBarIsCollapsed = true;
+  };
+}
