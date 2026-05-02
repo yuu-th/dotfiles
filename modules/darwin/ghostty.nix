@@ -67,29 +67,9 @@ let cfg = config.myConfig.darwin.ghostty; in {
 
         # ── キーバインド ─────────────────────────────────────────────────
         # アクション一覧: https://ghostty.org/docs/config/keybind/reference
-        keybind = global:f13=toggle_quick_terminal
-        quick-terminal-position = bottom
-        quick-terminal-screen = main
-        quick-terminal-animation-duration = 0.2
+        # NOTE: Quake terminal は OmniWM 内蔵 (Option+`) に一本化したため、
+        #       ここで Ghostty.app の quick_terminal は設定しない。
       '';
     };
-
-    # Karabiner: opt+space → F13 (Ghostty Quick Terminal)
-    # Raycast が opt+space を使用しているため、Karabiner 経由で F13 に変換する
-    myConfig.darwin.karabiner.rules = [
-      {
-        description = "opt+space → F13 (Ghostty Quick Terminal)";
-        manipulators = [
-          {
-            type = "basic";
-            from = {
-              key_code = "spacebar";
-              modifiers.mandatory = [ "option" ];
-            };
-            to = [ { key_code = "f13"; } ];
-          }
-        ];
-      }
-    ];
   };
 }

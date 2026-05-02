@@ -55,12 +55,12 @@
   };
 
   # ── フォーカス挙動 ────────────────────────────────────────────────────────
-  # niri 流: マウス hover でフォーカスが追ってくる。column スクロール WM では
-  # キーボードとマウスの境目を曖昧にした方が体験が滑らかになる。
+  # followsMouse = true は niri 流だがマウス操作中にチラつき/誤動作が出やすい。
+  # キーボード主体の運用に戻す（フォーカス変更時にだけマウスが追ってくる）。
   focus = {
-    followsMouse = true;
-    followsWindowToMonitor = true;
-    moveMouseToFocusedWindow = true;
+    followsMouse = false;
+    followsWindowToMonitor = true;     # キーで WS を跨ぐとマウスも一緒に動く
+    moveMouseToFocusedWindow = true;   # キーでフォーカス変えるとマウスが追従
   };
 
   # ── Gaps ──────────────────────────────────────────────────────────────────
