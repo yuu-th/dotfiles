@@ -105,12 +105,16 @@
   };
 
   # ── マウス warp（モニタ間） ──────────────────────────────────────────────
-  # axis を vertical にすると上下並びのモニタでもカーソルが滑らかに渡る。
-  # axis を omit / null にすると（TOML では None 相当）、OmniWM が自動判定する。
-  # L 字配置等で困る場合は "auto" に変えるか axis 自体を削除する。
+  # OmniWM の mouseWarp は「画面端でカーソルを別モニタに飛ばす」拡張機能。
+  # axis = "horizontal" / "vertical" の単一軸でしか動かないため、L 字型配置などの
+  # 複雑なモニタ配置には対応できない（横方向 or 縦方向のどちらかしか面倒見ない）。
+  #
+  # 対処: margin = 0 で warp トリガを無効化 → macOS のネイティブ挙動が前面に出て、
+  # System Settings の配置通りにカーソルが移動するようになる。
+  # 要 warp が必要になったら margin を 1+ に戻し axis を変える。
   mouseWarp = {
-    axis = "vertical";        # 縦並び要素があるレイアウトに合わせる（要なら "horizontal" に戻す）
-    margin = 1;
+    axis = "horizontal";   # OmniWM が String? を要求するため値は維持（margin = 0 で無効化されるので影響なし）
+    margin = 0;            # 0 で OmniWM 拡張 warp を無効化、macOS native に任せる
     monitorOrder = [ ];
   };
 
