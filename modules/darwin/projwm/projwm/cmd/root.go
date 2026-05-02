@@ -40,6 +40,7 @@ func Execute(version string) error {
 	root.AddCommand(newRemoveCmd())
 	root.AddCommand(newArchiveTopCmd())
 	root.AddCommand(newUnarchiveTopCmd())
+	root.AddCommand(newTUICmd())
 
 	return root.Execute()
 }

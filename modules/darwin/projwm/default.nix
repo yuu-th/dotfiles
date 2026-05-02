@@ -17,7 +17,7 @@ let
     pname = "projwm";
     version = "0.1.0-dev";
     src = ./projwm;
-    vendorHash = "sha256-N1XhOg3KUpWjUuuCNVKFvXXdqGgLgEYvMhNVkJGbi7Y=";
+    vendorHash = "sha256-J4sCq4f9jDU81WTGtX0jZcmPQrE7sJWvOiyBwJpfvWg=";
     proxyVendor = true;
     subPackages = [ "." ];
     ldflags = [ "-s" "-w" "-X" "main.version=0.1.0-dev" ];
