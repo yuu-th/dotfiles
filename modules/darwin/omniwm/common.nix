@@ -43,10 +43,16 @@
   #   maxVisibleColumns        : 同時表示する column 数（広いモニタで増やすと見渡しやすい）
   niri = {
     alwaysCenterSingleColumn = true;
-    centerFocusedColumn = "on-overflow";  # 通常は左端 packing、画面に収まらない時のみ中央寄せ
-                                          # ("always" だとフォーカス左の column が画面外に押し出される)
+    # user 議論結果: 常に中央 ("always") は欲しい時と欲しくない時の trade-off が
+    # ある。 viewport-only "半分 scroll" cmd は OmniWM API に存在しないため、
+    # 中央寄せをユーザの判断で得る代替案も組めない。 普段は左寄り packing が
+    # 自然なので "never" を採用 (user 提案)。
+    centerFocusedColumn = "never";
+    # 全新規 window の default 幅 = 画面幅の 50%。 OmniWM の rule schema に
+    # app 別 / workspace 別の default width field は無いため、 全 niri 共通で
+    # 50% にする。 user は option+, / option+. で cycle して他幅に resize 可。
     columnWidthPresets = [ 0.4 0.5 0.66 0.8 0.95 ];
-    defaultColumnWidth = 0.66;
+    defaultColumnWidth = 0.5;
     infiniteLoop = false;
     maxVisibleColumns = 3;
     maxWindowsPerColumn = 4;
