@@ -146,10 +146,15 @@ basename uniqueness を validate（衝突時は --as <内部名> で内部名を
 					return err
 				}
 				fmt.Printf("up: registered %s, %d reconcile action(s)\n", projName, len(acts))
+				errCount := 0
 				for _, a := range acts {
 					if a.OnError != nil {
+						errCount++
 						fmt.Fprintf(os.Stderr, "  ERROR %s %s: %v\n", a.Op, a.Target, a.OnError)
 					}
+				}
+				if errCount > 0 {
+					return fmt.Errorf("%d action(s) failed during reconcile (see ERROR lines above)", errCount)
 				}
 			} else {
 				fmt.Printf("up: registered %s (reconcile skipped)\n", projName)
@@ -164,6 +169,20 @@ basename uniqueness を validate（衝突時は --as <内部名> で内部名を
 	c.Flags().String("as", "", "internal project name (default: basename of cwd)")
 	c.Flags().Bool("no-editor", false, "skip Zed editor spawn")
 	return c
+}
+
+// slotFlagOrFirstAssigned は project の active profile での slot 名を返す（情報メッセージ用）。
+func slotFlagOrFirstAssigned(projName string) string {
+	_, st, err := loadStore()
+	if err != nil || st.ActiveProfile == "" {
+		return "?"
+	}
+	for slot, name := range st.Profiles[st.ActiveProfile].Assignments {
+		if name == projName {
+			return slot
+		}
+	}
+	return "?"
 }
 
 func hasWindow(p state.Project, kind naming.Kind, id int) bool {

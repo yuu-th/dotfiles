@@ -24,9 +24,9 @@ func (s CmdSpawner) Spawn(ctx context.Context, cwd string) error {
 		bin = "zed"
 	}
 	cmd := exec.CommandContext(ctx, bin, "-n", cwd)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("spawn zed: %w", err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("spawn zed: %w (output: %s)", err, string(out))
 	}
-	go cmd.Wait()
 	return nil
 }

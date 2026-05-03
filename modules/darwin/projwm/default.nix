@@ -13,6 +13,8 @@
 let
   cfg = config.myConfig.darwin.projwm;
 
+  # ── 開発・運用用 sudo nopass は ./sudoers.nix を import ─────────────────
+
   projwm = pkgs.buildGoModule {
     pname = "projwm";
     version = "0.1.0-dev";
@@ -27,6 +29,11 @@ let
       platforms = platforms.darwin;
     };
   };
+
+  # kitty.app をユーザ空間にコピーして OmniWM 互換にする setup スクリプト。
+  # 詳細はスクリプトのコメント参照（queue/projwm-design.md v11.3）。
+  setupKittyProjwm = pkgs.writeShellScriptBin "projwm-setup-kitty"
+    (builtins.readFile ./scripts/setup-kitty-projwm.sh);
 
   # 500ms debounce ラッパ。omniwmctl watch から大量に発火する
   # windows-changed イベントを 1 つの reconcile に集約する。
@@ -50,11 +57,13 @@ let
     '
   '';
 in {
+  imports = [ ./sudoers.nix ];
+
   options.myConfig.darwin.projwm.enable = lib.mkEnableOption "projwm AI workspace manager";
 
   config = lib.mkIf cfg.enable {
-    home-manager.users.${config.myConfig.primaryUser} = {
-      home.packages = [ projwm reconcileDebounced ];
+    home-manager.users.${config.myConfig.primaryUser} = { lib, ... }: {
+      home.packages = [ projwm reconcileDebounced setupKittyProjwm ];
 
       # config.toml は projwm が無くてもデフォルトで動くため Nix で固定する必要は無いが、
       # ベースラインとして配置（手動編集も可、§6.2.1 fallback）
@@ -62,7 +71,16 @@ in {
         # projwm config (managed by Nix; safe to edit, projwm will pick up changes on restart)
         viewer_workspace = "A"
         slot_names = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]
+        # terminal driver: kitty を ~/Applications/kitty-projwm.app に user-space copy
+        # して NSPrincipalClass 注入で OmniWM 互換にする (v11.3、setup-kitty-projwm.sh)
+        terminal_app_path = "~/Applications/kitty-projwm.app"
+        terminal_bundle_id = "net.kovidgoyal.kitty.projwm"
       '';
+
+      # 注: home.activation 経由の setup は macOS のセキュリティ制約 (codesign が
+      # builderEnv で動かないケース) で壊れた bundle を生成する。代わりに projwm Go
+      # 自身が reconcile 開始時に setup-kitty-projwm を呼ぶ方式に切替（v11.3 以降）。
+      # ユーザは何もしなくて良い、最初の `projwm up` 実行時に自動構築される。
     };
 
     # ── launchd: 自動 reconcile 2 系統 (projwm-design.md §7.4) ────────────

@@ -17,13 +17,20 @@ import (
 type Config struct {
 	ViewerWorkspace string   `toml:"viewer_workspace"`
 	SlotNames       []string `toml:"slot_names"`
+	// TerminalAppPath は projwm が ai/shell window として spawn する terminal の
+	// .app path（home-manager の activation script で配置）。`~` 展開を sequence で行う。
+	// v11.3: ghostty が OmniWM と非互換のため kitty を user-space copy して使う。
+	TerminalAppPath string `toml:"terminal_app_path"`
+	TerminalBundleID string `toml:"terminal_bundle_id"`
 }
 
 // Default は config.toml が無い時のデフォルト値（projwm-design.md §6.2）。
 func Default() Config {
 	return Config{
-		ViewerWorkspace: "A",
-		SlotNames:       []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
+		ViewerWorkspace:  "A",
+		SlotNames:        []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
+		TerminalAppPath:  "~/Applications/kitty-projwm.app",
+		TerminalBundleID: "net.kovidgoyal.kitty.projwm",
 	}
 }
 

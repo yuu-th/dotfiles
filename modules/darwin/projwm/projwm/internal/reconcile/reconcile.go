@@ -17,6 +17,7 @@ import (
 	"github.com/yuu-th/projwm/internal/naming"
 	"github.com/yuu-th/projwm/internal/omniwm"
 	"github.com/yuu-th/projwm/internal/state"
+	"github.com/yuu-th/projwm/internal/terminalsetup"
 	"github.com/yuu-th/projwm/internal/tmuxwrap"
 	"github.com/yuu-th/projwm/internal/zedwrap"
 )
@@ -44,7 +45,7 @@ func New(cfg config.Config) *Reconciler {
 		Cfg:     cfg,
 		OmniWM:  omniwm.New(nil),
 		Tmux:    tmuxwrap.New(nil),
-		Ghostty: ghosttywrap.CmdSpawner{},
+		Ghostty: ghosttywrap.CmdSpawner{AppPath: cfg.TerminalAppPath},
 		Zed:     zedwrap.CmdSpawner{},
 	}
 }
@@ -64,6 +65,14 @@ func (r *Reconciler) Run(ctx context.Context, st *state.State, opts Options) ([]
 	}
 	r.logf(opts, "reconcile start: active=%q archived=%d projects=%d",
 		st.ActiveProfile, countArchived(st), len(st.Projects))
+
+	// terminal driver (kitty-projwm.app) の整合性を確保（冪等、最新なら no-op）。
+	// home.activation 経由だと codesign が失敗するため Go 側で実行する (v11.3)。
+	if !opts.DryRun {
+		if err := terminalsetup.EnsureKittyProjwm(opts.Logger); err != nil {
+			r.logf(opts, "WARN: terminalsetup: %v", err)
+		}
+	}
 
 	var actions []Action
 
@@ -151,53 +160,98 @@ func (r *Reconciler) ensureProjectInSlot(ctx context.Context, projName string, p
 	return acts
 }
 
-// ensureGhosttyWindow は title 一致の ghostty window を slot に揃える（tmux も整える）。
+// ensureGhosttyWindow は title 一致の terminal window を slot に揃える（tmux も整える）。
+//
+// v11.3 で kitty driver に切替後の標準実装。kitty (NSPrincipalClass 注入済 user-space copy)
+// は OmniWM に見える。
+//
+// 重複 spawn 防止: tmux session が既存ならば「直前の reconcile pass で spawn 済み
+// だが OmniWM の認識がまだ追いついていない」可能性が高い → 短時間 polling
+// (3 秒) で出現を待ってから判定。それでも出なければ 1 回だけ再 spawn。
 func (r *Reconciler) ensureGhosttyWindow(ctx context.Context, title, session, cwd, wsName string, opts Options) []Action {
 	var acts []Action
-	// 1) tmux session 確保
-	if has, err := r.Tmux.HasSession(ctx, session); err == nil && !has {
+	hasTmux, _ := r.Tmux.HasSession(ctx, session)
+
+	// 1) tmux session が無ければ作成
+	if !hasTmux {
 		acts = append(acts, Action{Op: "new-tmux", Target: session})
 		if !opts.DryRun {
 			if err := r.Tmux.NewSessionDetached(ctx, session, cwd); err != nil {
 				acts[len(acts)-1].OnError = err
+				return acts
 			}
 		}
 	}
-	// 2) ghostty window 確保 + 配置
-	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.GhosttyBundleID)
+
+	// 2) OmniWM が terminal window を見えるか query
+	match, err := r.findWindowByTitle(ctx, title)
 	if err != nil {
 		r.logf(opts, "WARN: query windows: %v", err)
 		return acts
 	}
-	var match *omniwm.Window
-	for i := range wins {
-		if wins[i].Title == title {
-			match = &wins[i]
-			break
-		}
+
+	// 3) tmux 既存 + OmniWM 未認識 → 短時間 polling 待ち（直前 spawn の認識遅延対応）
+	if match == nil && hasTmux && !opts.DryRun {
+		match = r.waitForWindow(ctx, title, 3*time.Second)
 	}
-	if match == nil {
-		acts = append(acts, Action{Op: "spawn-ghostty", Target: title, Detail: "ws=" + wsName})
-		if !opts.DryRun {
-			if err := r.Ghostty.Spawn(ctx, title, cwd, session); err != nil {
-				acts[len(acts)-1].OnError = err
-			} else {
-				// spawn 後の WS 配置は polling で window が出現するのを待ってから
-				go r.placeAfterSpawn(ctx, title, wsName)
+
+	// 4) OmniWM 視点で window 存在 + 別 WS → 移動
+	if match != nil {
+		if match.Workspace.RawName != wsName && match.Workspace.DisplayName != wsName {
+			acts = append(acts, Action{Op: "move-to-ws", Target: match.ID, Detail: "→" + wsName})
+			if !opts.DryRun {
+				if err := r.OmniWM.MoveWindowToWorkspaceByName(ctx, match.ID, wsName); err != nil {
+					acts[len(acts)-1].OnError = err
+				}
 			}
 		}
 		return acts
 	}
-	// すでに存在 → 別 WS に居れば移動
-	if match.Workspace.RawName != wsName && match.Workspace.DisplayName != wsName {
-		acts = append(acts, Action{Op: "move-to-ws", Target: match.ID, Detail: "→" + wsName})
-		if !opts.DryRun {
-			if err := r.OmniWM.MoveWindowToWorkspaceByName(ctx, match.ID, wsName); err != nil {
-				acts[len(acts)-1].OnError = err
-			}
+
+	// 5) 完全に無い → 新規 spawn
+	acts = append(acts, Action{Op: "spawn-ghostty", Target: title, Detail: "ws=" + wsName})
+	if !opts.DryRun {
+		if err := r.Ghostty.Spawn(ctx, title, cwd, session); err != nil {
+			acts[len(acts)-1].OnError = err
+		} else {
+			// spawn 後、OmniWM が認識した直後に WS 配置する
+			go r.placeAfterSpawn(ctx, title, wsName)
 		}
 	}
 	return acts
+}
+
+// findWindowByTitle は title 一致の terminal window を返す（無ければ nil）。
+func (r *Reconciler) findWindowByTitle(ctx context.Context, title string) (*omniwm.Window, error) {
+	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.TerminalBundleID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range wins {
+		if wins[i].Title == title {
+			return &wins[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// waitForWindow は title の window が OmniWM に出現するまで polling 待ち。
+func (r *Reconciler) waitForWindow(parentCtx context.Context, title string, timeout time.Duration) *omniwm.Window {
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
+	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		if w, err := r.findWindowByTitle(ctx, title); err == nil && w != nil {
+			return w
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil
 }
 
 // placeAfterSpawn は spawn 直後の window を polling で見つけて WS に配置する。
@@ -211,7 +265,7 @@ func (r *Reconciler) placeAfterSpawn(parentCtx context.Context, title, wsName st
 			return
 		default:
 		}
-		wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.GhosttyBundleID)
+		wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.TerminalBundleID)
 		if err == nil {
 			for _, w := range wins {
 				if w.Title == title {
@@ -371,7 +425,7 @@ func (r *Reconciler) closeWindow(ctx context.Context, w omniwm.Window, opts Opti
 
 // gcViewerOrphans は WS A の規約 title だが期待にない viewer 窓を close。
 func (r *Reconciler) gcViewerOrphans(ctx context.Context, expected map[string]bool, opts Options) []Action {
-	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.GhosttyBundleID, "--workspace", r.Cfg.ViewerWorkspace)
+	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.TerminalBundleID, "--workspace", r.Cfg.ViewerWorkspace)
 	if err != nil {
 		r.logf(opts, "WARN: query viewer ws: %v", err)
 		return nil
@@ -398,7 +452,7 @@ func (r *Reconciler) gcOrphans(ctx context.Context, st *state.State, opts Option
 		}
 	}
 	var acts []Action
-	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.GhosttyBundleID)
+	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.TerminalBundleID)
 	if err != nil {
 		return nil
 	}
@@ -424,7 +478,7 @@ func looksLikeProjwmTitle(t string) bool {
 }
 
 func (r *Reconciler) queryAllProjwmWindows(ctx context.Context) ([]omniwm.Window, error) {
-	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.GhosttyBundleID)
+	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.TerminalBundleID)
 	if err != nil {
 		return nil, err
 	}

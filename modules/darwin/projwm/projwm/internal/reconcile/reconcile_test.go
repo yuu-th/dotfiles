@@ -178,7 +178,7 @@ func TestReconcileSpawnsMissingWindowsForActive(t *testing.T) {
 		t.Fatal("expected actions, got 0")
 	}
 
-	// AI(1) + AI viewer(1) + shell(1) + editor(1) ぶんの spawn が出るはず
+	// AI(1) + AI viewer(1) + shell(1) + editor(1) の 4 spawn が出る (v11.3 kitty driver)
 	spawnCount := 0
 	for _, a := range acts {
 		if a.Op == "spawn-ghostty" || a.Op == "spawn-zed" {
@@ -200,9 +200,9 @@ func TestReconcileSpawnsMissingWindowsForActive(t *testing.T) {
 		t.Error("expected viewer grouped session ai-1/dotfiles_v created")
 	}
 
-	// ghostty が呼ばれた
-	if len(fGhostty.spawns) < 3 { // ai + ai_view + shell
-		t.Errorf("expected >=3 ghostty spawns, got %d: %+v", len(fGhostty.spawns), fGhostty.spawns)
+	// terminal が呼ばれた (ai + ai_viewer + shell = 3 つ)
+	if len(fGhostty.spawns) < 3 {
+		t.Errorf("expected >=3 terminal spawns, got %d: %+v", len(fGhostty.spawns), fGhostty.spawns)
 	}
 	// zed が呼ばれた
 	if len(fZed.spawns) != 1 || fZed.spawns[0] != "/Users/yuta/dev/dotfiles" {

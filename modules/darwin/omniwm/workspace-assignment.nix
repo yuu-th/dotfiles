@@ -8,7 +8,9 @@
 # - 手動で WS を跨いで動かしても **絶対に戻されない**
 #
 # rawID:
-#   1〜9 = 数値 WS / 10 = M (Media) / 11 = B (Browser) / 12 = E (Editor)
+#   1〜9 = 数値 WS / 10 = M (Media) / 11 = B (Browser)
+#   12 = E (旧 Editor、projwm では AI slot 3 として再利用)
+#   13 = A (projwm AI Viewer) / 14-22 = projwm AI slots Q/W/R/T/Y/U/I/O/P
 {
   # ── Browsers → WS B (11) ───────────────────────────────────────────────
   "com.google.Chrome"      = "11";
@@ -17,18 +19,17 @@
   "company.thebrowser.dia" = "11";
   "app.zen-browser.zen"    = "11";
 
-  # ── Editors → WS E (12) ────────────────────────────────────────────────
-  # ⚠️ projwm 導入後、Zed は projwm が per-project に slot 配置するため
-  # startup-sort の Zed → 12 ルールは削除する（queue/projwm-design.md FR-24 / 決定 42）。
-  # OmniWM 起動時に Zed が走っていれば projwm reconcile が改めて正しい slot に
-  # 戻すので、ここで一律 12 に集めない方が望ましい。
-  "com.microsoft.VSCodeInsiders"  = "12";
-  "com.microsoft.VSCode"          = "12";
-  "com.todesktop.230313mzl4w4u92" = "12";  # Cursor
-  "com.jetbrains.intellij"        = "12";
-  "com.jetbrains.pycharm"         = "12";
-  "com.jetbrains.WebStorm"        = "12";
-  "com.jetbrains.goland"          = "12";
+  # ── Editors → 起動時 WS 固定は廃止（projwm 導入に伴う、queue/projwm-design.md §4.3 / FR-24） ─
+  # WS E は projwm の AI slot 3 として再利用されるため、editor を一律 WS 12 (E) に
+  # 集めると AI ワークスペースに editor が混ざってしまう。
+  # 代替運用:
+  #   - Zed: projwm が per-project に slot 配置（projwm reconcile で動的）
+  #   - VSCode/Cursor/JetBrains: ad-hoc 起動なので開いた WS に留める。
+  #     必要なら手動で `alt+shift+<letter>` で送る（NR-01「動的 appRule で固定しない」）
+  # 削除前: "com.microsoft.VSCodeInsiders" = "12"; "com.microsoft.VSCode" = "12";
+  #         "com.todesktop.230313mzl4w4u92" = "12"; (Cursor)
+  #         "com.jetbrains.intellij" = "12"; .pycharm / .WebStorm / .goland 等
+  # （いずれも v11.3 で削除）
 
   # ── AI / Agent → WS 1 ──────────────────────────────────────────────────
   "com.google.antigravity" = "1";

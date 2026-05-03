@@ -90,5 +90,6 @@ func ZedTitle(cwd string) string {
 // ZedBundleID は Zed の macOS bundleId（不変）。
 const ZedBundleID = "dev.zed.Zed"
 
-// GhosttyBundleID は Ghostty の macOS bundleId（不変）。
-const GhosttyBundleID = "com.mitchellh.ghostty"
+// TerminalBundleID は projwm の terminal driver (kitty user-space copy) の bundleId。
+// v11.3 で ghostty (com.mitchellh.ghostty) から切替。詳細は queue/projwm-design.md。
+const TerminalBundleID = "net.kovidgoyal.kitty.projwm"
