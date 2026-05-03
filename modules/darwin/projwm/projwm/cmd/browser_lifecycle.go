@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/yuu-th/projwm/internal/config"
@@ -37,6 +38,37 @@ import (
 type slotProjectPair struct {
 	Slot    string
 	Project string
+}
+
+// notifyFocusBusy は focus 操作の冒頭で system sound + macOS notification を出す
+// (projwm が focus を使って作業中であることを user に伝える)。
+//
+// non-blocking: sound と notification は background で走らせる、 spawn 開始を遅延させない。
+//
+// reason は notification body に表示 (例: "profile switch", "spawn browser")。
+func notifyFocusBusy(reason string) {
+	// system sound (Tink: 短い ack 音)
+	go func() {
+		_ = exec.Command("afplay", "/System/Library/Sounds/Tink.aiff").Run()
+	}()
+	// macOS notification (右上 banner)
+	go func() {
+		title := "projwm: rearranging windows"
+		body := reason
+		if body == "" {
+			body = "destructive operation in progress"
+		}
+		script := fmt.Sprintf(`display notification %q with title %q sound name "default"`,
+			body, title)
+		_ = exec.Command("osascript", "-e", script).Run()
+	}()
+}
+
+// notifyFocusDone は完了通知 (短い ack 音のみ)。
+func notifyFocusDone() {
+	go func() {
+		_ = exec.Command("afplay", "/System/Library/Sounds/Pop.aiff").Run()
+	}()
 }
 
 // findSlotInProfile は profile の Assignments から project の slot を返す (canonical 順)。
@@ -77,6 +109,14 @@ func withFocusBatch(ctx context.Context, oc *omniwm.Client, items []slotProjectP
 		}
 		return firstErr
 	}
+	// UX: focus 切替の前に user に通知 (音 + banner)。 user が他作業中なら一瞬手を
+	// 止めるサイン。 non-blocking なので spawn 開始は遅延しない。
+	slots := []string{}
+	for _, it := range items {
+		slots = append(slots, it.Slot)
+	}
+	notifyFocusBusy(fmt.Sprintf("focus → slots %v (rearranging projwm windows)", slots))
+	defer notifyFocusDone()
 	var origWS string
 	if w, e := oc.ActiveWorkspaceName(ctx); e == nil {
 		origWS = w
