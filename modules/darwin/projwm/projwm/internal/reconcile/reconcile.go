@@ -304,40 +304,101 @@ func (r *Reconciler) placeAfterSpawn(parentCtx context.Context, title, wsName st
 }
 
 // ensureZedWindow は basename 一致の Zed window を slot に揃える。
+//
+// 重要: Zed は `-n` で起動するたびに新 workspace を追加するため、reconcile が
+// 「window 見えない → 再 spawn」を繰り返すと **無限に Zed window が生える**
+// バグになる。対策:
+//   1) 見つからない時は短時間 polling 待ち（既存 Zed が render 中の可能性）
+//   2) flock ベースの spawn lock（複数 reconcile プロセスの並走対策）
+//   3) Zed.app process がそもそも未起動の時のみ初回 spawn を許可
 func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName string, opts Options) []Action {
 	var acts []Action
-	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.ZedBundleID)
+
+	match, err := r.findZedByTitle(ctx, title)
 	if err != nil {
 		r.logf(opts, "WARN: query Zed windows: %v", err)
 		return acts
 	}
-	var match *omniwm.Window
-	for i := range wins {
-		if wins[i].Title == title {
-			match = &wins[i]
-			break
-		}
+
+	// 1) 見つからない → 短時間 polling 待ち（直前 spawn の認識遅延対応）
+	if match == nil && !opts.DryRun {
+		match = r.waitForZedWindow(ctx, title, 4*time.Second)
 	}
-	if match == nil {
-		acts = append(acts, Action{Op: "spawn-zed", Target: title, Detail: cwd})
-		if !opts.DryRun {
-			if err := r.Zed.Spawn(ctx, cwd); err != nil {
-				acts[len(acts)-1].OnError = err
-			} else {
-				go r.placeZedAfterSpawn(ctx, title, wsName)
+
+	// 2) 見つかった → 別 WS なら移動
+	if match != nil {
+		if match.Workspace.RawName != wsName && match.Workspace.DisplayName != wsName {
+			acts = append(acts, Action{Op: "move-to-ws", Target: match.ID, Detail: "Zed→" + wsName})
+			if !opts.DryRun {
+				if err := r.OmniWM.MoveWindowToWorkspaceByName(ctx, match.ID, wsName); err != nil {
+					acts[len(acts)-1].OnError = err
+				}
 			}
 		}
 		return acts
 	}
-	if match.Workspace.RawName != wsName && match.Workspace.DisplayName != wsName {
-		acts = append(acts, Action{Op: "move-to-ws", Target: match.ID, Detail: "Zed→" + wsName})
-		if !opts.DryRun {
-			if err := r.OmniWM.MoveWindowToWorkspaceByName(ctx, match.ID, wsName); err != nil {
-				acts[len(acts)-1].OnError = err
-			}
+
+	// 3) 完全に不在 → 新規 spawn だが flock で並走 reconcile からの重複 spawn を防ぐ
+	if !opts.DryRun {
+		if !acquireZedSpawnLock(title, 6*time.Second) {
+			// 直前で別 reconcile が spawn 中、skip
+			acts = append(acts, Action{
+				Op:     "skip-zed-spawn",
+				Target: title,
+				Detail: "another reconcile is spawning",
+			})
+			return acts
+		}
+		defer releaseZedSpawnLock(title)
+	}
+
+	acts = append(acts, Action{Op: "spawn-zed", Target: title, Detail: cwd})
+	if !opts.DryRun {
+		if err := r.Zed.Spawn(ctx, cwd); err != nil {
+			acts[len(acts)-1].OnError = err
+		} else {
+			// spawn 後 polling で配置 + lock を保持して重複防止
+			go func() {
+				r.placeZedAfterSpawn(ctx, title, wsName)
+				// lock は defer で解放されるが、placeZedAfterSpawn が長いので
+				// その間に並走 reconcile が来ても skip される
+			}()
 		}
 	}
 	return acts
+}
+
+// findZedByTitle は title 一致の Zed window を返す（無ければ nil）。
+func (r *Reconciler) findZedByTitle(ctx context.Context, title string) (*omniwm.Window, error) {
+	wins, err := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.ZedBundleID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range wins {
+		if wins[i].Title == title {
+			return &wins[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// waitForZedWindow は title 一致の Zed window が出現するまで polling 待ち。
+func (r *Reconciler) waitForZedWindow(parentCtx context.Context, title string, timeout time.Duration) *omniwm.Window {
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
+	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		if w, err := r.findZedByTitle(ctx, title); err == nil && w != nil {
+			return w
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return nil
 }
 
 func (r *Reconciler) placeZedAfterSpawn(parentCtx context.Context, title, wsName string) {
