@@ -124,16 +124,20 @@
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ───────────────────────────
   # `Option+\`` でフォーカス中のモニタにスライド表示される。既存 Ghostty.app と併存可能。
+  #
+  # 以前 50%/50%/center だったが画面外に上端がはみ出すバグ確認 (user report)。
+  # widthPercent/heightPercent を実用範囲（90%）に拡大して中央配置を maintain。
+  # 上下に余白を残すことで menubar / statusBar / dock と重ならない。
   quakeTerminal = {
     animationDuration = 0.2;
     autoHide = false;
     enabled = true;
-    heightPercent = 50.0;
+    heightPercent = 85.0;
     monitorMode = "focusedWindow";
     opacity = 1.0;
     position = "center";
     useCustomFrame = false;
-    widthPercent = 50.0;
+    widthPercent = 90.0;
   };
 
   # ── ステータスバー ────────────────────────────────────────────────────────

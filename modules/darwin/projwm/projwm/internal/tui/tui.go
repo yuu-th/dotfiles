@@ -96,9 +96,10 @@ const (
 )
 
 type promptState struct {
-	purpose  string // "new-project", "archive", "unarchive", "down", "move"
+	purpose  string // 例: "new-project", "assign-slot", "unarchive-to-active", "move-project", "add-ai-<proj>", ...
 	question string
 	value    string
+	aux1     string // purpose に応じた追加引数 (例: assign 対象 project / move 対象 project)
 	hidden   bool
 }
 
@@ -386,16 +387,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ents := m.filtered()
+	var cur entry
+	if m.cursor < len(ents) {
+		cur = ents[m.cursor]
+	}
 	switch msg.String() {
-	case "ctrl+c", "esc", "q":
-		if msg.String() == "q" && m.filter != "" {
-			// filter 入力中なら q は文字、それ以外は終了
-		} else {
-			return m, tea.Quit
+	case "ctrl+c", "esc":
+		return m, tea.Quit
+	case "q":
+		if m.filter != "" {
+			m.filter += msg.String()
+			m.cursor = 0
+			return m, nil
 		}
+		return m, tea.Quit
 	case "enter":
 		if m.cursor < len(ents) {
-			return m, m.activate(ents[m.cursor])
+			return m.activate(cur)
 		}
 	case "up", "ctrl+k":
 		if m.cursor > 0 {
@@ -407,31 +415,70 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "tab":
 		return m, m.cycleProfile()
+	// ── 既存操作 ─────────────────────────────────────────────────────
 	case "n":
 		if m.filter == "" {
 			return m.startPrompt("new-project", "new project name (cwd basename, ~/dev で探す):")
 		}
 	case "a":
-		if m.filter == "" && m.cursor < len(ents) && ents[m.cursor].project != "" {
-			return m, m.archiveCurrent(ents[m.cursor].project)
+		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
+			return m, m.archiveCurrent(cur.project)
 		}
 	case "u":
-		if m.filter == "" && m.cursor < len(ents) && ents[m.cursor].kind == entryArchived {
-			return m, m.unarchiveCurrent(ents[m.cursor].project)
+		if m.filter == "" && cur.kind == entryArchived {
+			return m.startPrompt("unarchive-to-active",
+				fmt.Sprintf("unarchive %s — slot to assign (active profile %q, blank=parked):", cur.project, m.st.ActiveProfile))
 		}
 	case "d":
-		if m.filter == "" && m.cursor < len(ents) && ents[m.cursor].kind == entrySlot {
-			return m, m.unassignCurrent(ents[m.cursor].slot)
+		if m.filter == "" && cur.kind == entrySlot {
+			return m, m.unassignCurrent(cur.slot)
 		}
 	case "r":
 		if m.filter == "" {
-			m.lastInfo = "(reconcile triggered externally; relaunch projwm reconcile in shell)"
-			return m, nil
+			return m, m.runReconcileCmd()
 		}
-		fallthrough
+	// ── 新規: assign / move / window 操作 ────────────────────────────
+	case "m":
+		if m.filter == "" && (cur.kind == entrySlot || cur.kind == entryParked) {
+			return m.startPrompt("move-project",
+				fmt.Sprintf("move %s — target slot (Q,W,E,R,T,Y,U,I,O,P):", cur.project))
+		}
+	case "A":
+		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
+			return m.startPrompt("add-ai-"+cur.project, "add-ai claude|copilot:")
+		}
+	case "S":
+		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
+			return m, m.execProjwm("add-shell", "--project="+cur.project)
+		}
+	case "E":
+		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
+			return m, m.execProjwm("add-editor", "--project="+cur.project)
+		}
+	case "B":
+		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
+			return m.startPrompt("add-browser-"+cur.project, "add-browser <profile> [url1 url2 ...]:")
+		}
+	case "X":
+		if m.filter == "" && cur.project != "" {
+			return m.startPrompt("remove-window-"+cur.project, "remove window (e.g. ai-2 / shell-1 / editor-1 / browser-1):")
+		}
+	// ── profile management ──────────────────────────────────────────
+	case "P":
+		if m.filter == "" {
+			return m.startPrompt("profile-create", "new profile name:")
+		}
+	case "!":
+		if m.filter == "" && cur.kind == entryProfile {
+			return m, m.execProjwm("profile", "delete", cur.profile)
+		}
+	case "ctrl+r":
+		if m.filter == "" && cur.kind == entryProfile {
+			return m.startPrompt("profile-rename-"+cur.profile, "rename profile "+cur.profile+" → ?:")
+		}
 	case "?":
 		if m.filter == "" {
-			m.lastInfo = "n=new  d=down(unassign)  a=archive  u=unarchive  r=reconcile  tab=cycle profile  enter=jump"
+			m.lastInfo = "enter=activate  n=new-project  a=archive  u=unarchive  d=unassign  m=move  r=reconcile  A/S/E/B=add ai/shell/editor/browser  X=remove-window  P=new-profile  !=delete-profile  ctrl+r=rename-profile  tab=cycle-profile  esc=quit"
 			return m, nil
 		}
 		fallthrough
@@ -455,6 +502,12 @@ func (m *Model) startPrompt(purpose, question string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) startPromptWithAux(purpose, question, aux1 string) (tea.Model, tea.Cmd) {
+	m.mode = modePrompt
+	m.prompt = promptState{purpose: purpose, question: question, aux1: aux1}
+	return m, nil
+}
+
 func (m *Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc":
@@ -465,9 +518,71 @@ func (m *Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		purpose := m.prompt.purpose
 		m.mode = modeNormal
 		m.prompt = promptState{}
-		switch purpose {
-		case "new-project":
+		switch {
+		case purpose == "new-project":
 			return m, m.createProject(v)
+		case purpose == "assign-slot":
+			// value = project name, slot は purpose に詰めない → 別 field
+			return m, m.execProjwm("profile", "assign", m.prompt.aux1, v)
+		case purpose == "assign-parked":
+			// value = slot, project は aux1
+			if v == "" {
+				return m, infoCmd("assign cancelled (empty slot)")
+			}
+			return m, m.execProjwm("profile", "assign", v, m.prompt.aux1)
+		case purpose == "unarchive-to-active":
+			// value = slot ("" なら parked)
+			project := m.prompt.aux1
+			if v == "" {
+				return m, m.execProjwm("unarchive", project)
+			}
+			return m, m.execProjwm("unarchive", project, "--profile="+m.st.ActiveProfile, "--slot="+v)
+		case purpose == "move-project":
+			// value = target slot, project は aux1
+			project := m.prompt.aux1
+			if v == "" {
+				return m, infoCmd("move cancelled")
+			}
+			// move = unassign 元 slot + assign 新 slot。簡略: unassign by project name then assign。
+			return m, tea.Sequence(
+				m.execProjwm("profile", "unassign", project),
+				m.execProjwm("profile", "assign", v, project),
+			)
+		case strings.HasPrefix(purpose, "add-ai-"):
+			project := strings.TrimPrefix(purpose, "add-ai-")
+			ai := v
+			if ai == "" {
+				ai = "claude"
+			}
+			return m, m.execProjwm("add-ai", "--project="+project, "--ai="+ai)
+		case strings.HasPrefix(purpose, "add-browser-"):
+			project := strings.TrimPrefix(purpose, "add-browser-")
+			fields := strings.Fields(v)
+			if len(fields) == 0 {
+				return m, infoCmd("add-browser cancelled (need profile)")
+			}
+			args := []string{"add-browser", "--project=" + project, "--profile=" + fields[0]}
+			for _, u := range fields[1:] {
+				args = append(args, "--url="+u)
+			}
+			return m, m.execProjwm(args...)
+		case strings.HasPrefix(purpose, "remove-window-"):
+			project := strings.TrimPrefix(purpose, "remove-window-")
+			if v == "" {
+				return m, infoCmd("remove cancelled")
+			}
+			return m, m.execProjwm("remove", "--project="+project, "--window="+v)
+		case purpose == "profile-create":
+			if v == "" {
+				return m, infoCmd("profile-create cancelled")
+			}
+			return m, m.execProjwm("profile", "create", v)
+		case strings.HasPrefix(purpose, "profile-rename-"):
+			old := strings.TrimPrefix(purpose, "profile-rename-")
+			if v == "" {
+				return m, infoCmd("rename cancelled")
+			}
+			return m, m.execProjwm("profile", "rename", old, v)
 		}
 	case "backspace":
 		if len(m.prompt.value) > 0 {
@@ -481,63 +596,91 @@ func (m *Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) activate(e entry) tea.Cmd {
+// execProjwm は外部 projwm cmd を spawn して結果を info msg として返す tea.Cmd。
+// paradigm C ライフサイクル hook (cmd 層) を一元的に呼ぶ。
+func (m *Model) execProjwm(args ...string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		switch e.kind {
-		case entrySlot:
-			if err := m.cli.FocusWorkspaceByName(ctx, e.slot); err != nil {
-				return infoMsg("ERROR: " + err.Error())
-			}
-			return infoMsg(fmt.Sprintf("→ %s [%s]", e.project, e.slot))
-		case entryEmptySlot:
-			if err := m.cli.FocusWorkspaceByName(ctx, e.slot); err != nil {
-				return infoMsg("ERROR: " + err.Error())
-			}
-			return infoMsg(fmt.Sprintf("→ empty slot [%s]", e.slot))
-		case entryProfile:
-			err := m.store.Mutate(func(st *state.State) error {
-				st.ActiveProfile = e.profile
-				return nil
-			})
-			if err != nil {
-				return infoMsg("ERROR: " + err.Error())
-			}
-			m.refresh()
-			return infoMsg("active profile: " + e.profile)
-		case entryParked:
-			return infoMsg(fmt.Sprintf("parked: %s — assign to slot via `projwm profile assign <slot> %s`", e.project, e.project))
-		case entryArchived:
-			return infoMsg(fmt.Sprintf("archived: %s — press u to unarchive", e.project))
+		out, err := exec.Command("projwm", args...).CombinedOutput()
+		s := strings.TrimSpace(string(out))
+		if err != nil {
+			return infoMsg("ERROR " + strings.Join(args, " ") + ": " + s)
 		}
-		return nil
+		// 短く表示するため改行を ` | ` に圧縮
+		s = strings.ReplaceAll(s, "\n", " | ")
+		if len(s) > 200 {
+			s = s[:200] + "…"
+		}
+		// state 再読み込みのため refresh を呼ぶ（次回 fsnotify でも反映されるが即時のため）
+		m.refresh()
+		if s == "" {
+			return infoMsg(strings.Join(args, " ") + ": ok")
+		}
+		return infoMsg(strings.Join(args, " ") + ": " + s)
 	}
 }
 
-func (m *Model) cycleProfile() tea.Cmd {
-	return func() tea.Msg {
-		names := []string{}
-		for n := range m.st.Profiles {
-			names = append(names, n)
+// runReconcileCmd は projwm reconcile を外部 spawn (focus を奪わず情報だけ更新)。
+func (m *Model) runReconcileCmd() tea.Cmd {
+	return m.execProjwm("reconcile")
+}
+
+func infoCmd(s string) tea.Cmd {
+	return func() tea.Msg { return infoMsg(s) }
+}
+
+// activate は entry の種類に応じた既定アクションを実行する (enter キー)。
+//
+// paradigm C 対応:
+//   - entrySlot: workspace に jump (focus)
+//   - entryEmptySlot: prompt で project 名 → assign（assign cmd は paradigm C を通す）
+//   - entryProfile: 外部 cmd で profile switch（paradigm C 通す）
+//   - entryParked: prompt で slot → assign
+//   - entryArchived: prompt で slot → unarchive --profile=active --slot=X
+func (m *Model) activate(e entry) (tea.Model, tea.Cmd) {
+	switch e.kind {
+	case entrySlot:
+		ctx := context.Background()
+		if err := m.cli.FocusWorkspaceByName(ctx, e.slot); err != nil {
+			return m, infoCmd("ERROR: " + err.Error())
 		}
-		sort.Strings(names)
-		if len(names) == 0 {
-			return infoMsg("(no profiles)")
-		}
-		next := names[0]
-		for i, n := range names {
-			if n == m.st.ActiveProfile {
-				next = names[(i+1)%len(names)]
-				break
-			}
-		}
-		_ = m.store.Mutate(func(st *state.State) error {
-			st.ActiveProfile = next
-			return nil
-		})
-		m.refresh()
-		return infoMsg("profile → " + next)
+		return m, infoCmd(fmt.Sprintf("→ %s [%s]", e.project, e.slot))
+	case entryEmptySlot:
+		return m.startPromptWithAux("assign-slot",
+			fmt.Sprintf("assign project to slot [%s] — project name:", e.slot), e.slot)
+	case entryProfile:
+		return m, m.execProjwm("profile", "switch", e.profile)
+	case entryParked:
+		return m.startPromptWithAux("assign-parked",
+			fmt.Sprintf("assign %s — slot (Q,W,E,R,T,Y,U,I,O,P):", e.project), e.project)
+	case entryArchived:
+		return m.startPromptWithAux("unarchive-to-active",
+			fmt.Sprintf("unarchive %s — slot (active profile %q, blank=parked):", e.project, m.st.ActiveProfile), e.project)
 	}
+	return m, nil
+}
+
+// cycleProfile は次の profile に switch する。paradigm C 対応のため外部
+// `projwm profile switch` 経由で呼ぶ（state mutate のみだと browser が close されない）。
+func (m *Model) cycleProfile() tea.Cmd {
+	names := []string{}
+	for n := range m.st.Profiles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return infoCmd("(no profiles)")
+	}
+	next := names[0]
+	for i, n := range names {
+		if n == m.st.ActiveProfile {
+			next = names[(i+1)%len(names)]
+			break
+		}
+	}
+	if next == m.st.ActiveProfile {
+		return infoCmd("(only one profile)")
+	}
+	return m.execProjwm("profile", "switch", next)
 }
 
 func (m *Model) archiveCurrent(name string) tea.Cmd {
@@ -554,16 +697,7 @@ func (m *Model) archiveCurrent(name string) tea.Cmd {
 	}
 }
 
-func (m *Model) unarchiveCurrent(name string) tea.Cmd {
-	return func() tea.Msg {
-		out, err := exec.Command("projwm", "unarchive", name).CombinedOutput()
-		if err != nil {
-			return infoMsg("ERROR unarchive: " + strings.TrimSpace(string(out)))
-		}
-		m.refresh()
-		return infoMsg("unarchived: " + name + " (parked; assign to a slot)")
-	}
-}
+// (unarchiveCurrent removed; u 直接呼び出しは廃止、unarchive prompt 経由に統合)
 
 func (m *Model) unassignCurrent(slot string) tea.Cmd {
 	return func() tea.Msg {
@@ -716,12 +850,22 @@ func (m *Model) View() string {
 	// ── 操作ヘルプ ──
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(
-		keyStyle.Render("↵") + " jump  " +
-			keyStyle.Render("tab") + " profile  " +
+		keyStyle.Render("↵") + " activate  " +
+			keyStyle.Render("tab") + " cycle-prof  " +
 			keyStyle.Render("n") + " new  " +
-			keyStyle.Render("d") + " unassign  " +
 			keyStyle.Render("a") + " archive  " +
-			keyStyle.Render("u") + " unarchive  " +
+			keyStyle.Render("u") + " unarch  " +
+			keyStyle.Render("d") + " unassign  " +
+			keyStyle.Render("m") + " move  " +
+			keyStyle.Render("r") + " reconcile",
+	))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render(
+		keyStyle.Render("A/S/E/B") + " add ai/shell/editor/browser  " +
+			keyStyle.Render("X") + " rm-window  " +
+			keyStyle.Render("P") + " new-prof  " +
+			keyStyle.Render("ctrl+r") + " ren-prof  " +
+			keyStyle.Render("!") + " del-prof  " +
 			keyStyle.Render("?") + " help  " +
 			keyStyle.Render("esc") + " quit",
 	))
