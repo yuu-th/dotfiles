@@ -3,42 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/yuu-th/projwm/internal/state"
 )
-
-// pickBrowserProject は指定 profile の Assignments を slot 標準順で探索し、
-// browser_workspace を持つ最初の project とその BrowserWorkspace を返す。
-//
-// 標準順 Q,W,E,R,T,Y,U,I,O,P (projwm-spec.md §4.2)。
-func pickBrowserProject(profileName string) (string, *state.BrowserWorkspace) {
-	_, st, err := loadStore()
-	if err != nil {
-		return "", nil
-	}
-	prof, ok := st.Profiles[profileName]
-	if !ok {
-		return "", nil
-	}
-	slotOrder := []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"}
-	for _, slot := range slotOrder {
-		projName, ok := prof.Assignments[slot]
-		if !ok {
-			continue
-		}
-		p, ok := st.Projects[projName]
-		if !ok || p.Archived {
-			continue
-		}
-		if p.BrowserWorkspace != nil && p.BrowserWorkspace.Name != "" {
-			return projName, p.BrowserWorkspace
-		}
-	}
-	return "", nil
-}
 
 func newProfileCmd() *cobra.Command {
 	c := &cobra.Command{Use: "profile", Short: "Manage profiles"}
@@ -178,19 +147,9 @@ func newProfileCmd() *cobra.Command {
 			}
 			// 切替後に reconcile を呼んで windows 操作を実行する
 			// (旧 profile の windows close + 新 profile の windows spawn)
+			// v12 で browser windows もこの reconcile 経路で spawn/close される。
 			if !rootNoReconcile {
-				if err := runReconcileOnce(); err != nil {
-					return err
-				}
-			}
-			// browser workspace 統合 (v12, projwm-roadmap.md):
-			// active profile の中で browser_workspace を持つ最初の project (slot 標準
-			// 順 Q,W,E,R,T,Y,U,I,O,P) を選び、その browser を切り替える。
-			// 失敗は warn して reconcile 結果は損なわない。
-			if proj, bw := pickBrowserProject(args[0]); bw != nil {
-				if err := switchBrowserWorkspace(bw); err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: browser switch (%s -> %s:%s) failed: %v\n", proj, bw.Browser, bw.Name, err)
-				}
+				return runReconcileOnce()
 			}
 			return nil
 		},

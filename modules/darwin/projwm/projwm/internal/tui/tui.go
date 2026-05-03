@@ -302,14 +302,21 @@ func (m *Model) windowSubLines(projName string, p state.Project) []string {
 			line.WriteString("  editor  ")
 			line.WriteString("            ")
 			line.WriteString(m.statusFor("", zedTitle, true))
+		case naming.KindBrowser:
+			label := fmt.Sprintf("browser-%d", w.ID)
+			line.WriteString("  ")
+			line.WriteString(label)
+			line.WriteString(strings.Repeat(" ", max(0, 8-len(label))))
+			profile := w.BrowserProfile
+			if profile == "" {
+				profile = "(no profile)"
+			}
+			line.WriteString(profile)
 		}
 		lines = append(lines, line.String())
 	}
 	if len(wins) == 0 {
 		lines = append(lines, dimStyle.Render("  (no windows)"))
-	}
-	if p.BrowserWorkspace != nil && p.BrowserWorkspace.Name != "" {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("  browser  %s:%s", p.BrowserWorkspace.Browser, p.BrowserWorkspace.Name)))
 	}
 	return lines
 }

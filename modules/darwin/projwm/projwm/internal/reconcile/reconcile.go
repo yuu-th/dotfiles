@@ -178,6 +178,9 @@ func (r *Reconciler) ensureProjectInSlot(ctx context.Context, projName string, p
 		case naming.KindEditor:
 			zedTitle := naming.ZedTitle(p.CWD)
 			acts = append(acts, r.ensureZedWindow(ctx, zedTitle, p.CWD, slot, opts)...)
+		case naming.KindBrowser:
+			// paradigm C (chrome-cli + Chromium profile) で再実装予定。
+			// 現状は no-op。state に kind=browser があっても何もしない。
 		}
 	}
 	return acts
@@ -448,7 +451,7 @@ func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name strin
 	wins, err := r.queryAllProjwmWindows(ctx)
 	if err != nil {
 		r.logf(opts, "WARN: query: %v", err)
-		return nil
+		return acts
 	}
 	for _, w := range wins {
 		if titles[w.Title] {
@@ -620,3 +623,4 @@ func killPID(pid int) error {
 	}
 	return proc.Kill()
 }
+

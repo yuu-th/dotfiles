@@ -21,27 +21,22 @@ import (
 //
 // title / tmux session 名は **保存しない**。projwm が naming パッケージで
 // (kind, id, project) から決定的に算出する（v11.1 §6.3.2）。
-type Window struct {
-	ID   int        `json:"id"`
-	Kind naming.Kind `json:"kind"`
-	AI   naming.AI  `json:"ai,omitempty"` // kind=="ai" のみ必須
-}
-
-// BrowserWorkspace は project に紐づく browser workspace 参照。
 //
-// 現状は Vivaldi のみサポート（v12, projwm-roadmap.md）。Browser 値が
-// "vivaldi" の場合、Name は Vivaldi の workspace 名（Window メニュー内表示名）。
-type BrowserWorkspace struct {
-	Browser string `json:"browser"` // "vivaldi" のみ（v12）
-	Name    string `json:"name"`
+// kind="browser" の挙動は v12 paradigm C で確定予定（chrome-cli + Chromium profile）。
+// 現状は未実装、reconcile は no-op。
+type Window struct {
+	ID             int         `json:"id"`
+	Kind           naming.Kind `json:"kind"`
+	AI             naming.AI   `json:"ai,omitempty"`              // kind=="ai" のみ必須
+	BrowserProfile string      `json:"browser_profile,omitempty"` // kind=="browser" のみ: Chromium user profile 名
+	SavedURLs      []string    `json:"saved_urls,omitempty"`      // kind=="browser" のみ: project archive 時に snapshot
 }
 
 // Project は 1 つの作業 cwd（典型的には 1 git worktree）。
 type Project struct {
-	CWD              string            `json:"cwd"`
-	Archived         bool              `json:"archived"`
-	Windows          []Window          `json:"windows"`
-	BrowserWorkspace *BrowserWorkspace `json:"browser_workspace,omitempty"`
+	CWD      string   `json:"cwd"`
+	Archived bool     `json:"archived"`
+	Windows  []Window `json:"windows"`
 }
 
 // Profile は slot 割当の名前付きセット。
@@ -257,6 +252,11 @@ func Validate(st *State) error {
 					return fmt.Errorf("project %q: window %s has ai field but kind != ai", name, key)
 				}
 			}
+			if w.Kind != naming.KindBrowser {
+				if w.BrowserProfile != "" || len(w.SavedURLs) > 0 {
+					return fmt.Errorf("project %q: window %s has browser_* field but kind != browser", name, key)
+				}
+			}
 		}
 	}
 	// active な全 project の cwd basename は一意 (NFR-12)
@@ -310,6 +310,8 @@ func kindOrder(k naming.Kind) int {
 		return 1
 	case naming.KindEditor:
 		return 2
+	case naming.KindBrowser:
+		return 3
 	}
 	return 99
 }

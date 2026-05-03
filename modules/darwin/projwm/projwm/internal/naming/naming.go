@@ -13,14 +13,15 @@ import (
 type Kind string
 
 const (
-	KindAI     Kind = "ai"
-	KindShell  Kind = "shell"
-	KindEditor Kind = "editor"
+	KindAI      Kind = "ai"
+	KindShell   Kind = "shell"
+	KindEditor  Kind = "editor"
+	KindBrowser Kind = "browser" // v12: Vivaldi window per project
 )
 
 // IsValidKind は kind が許容値かを返す。
 func IsValidKind(k Kind) bool {
-	return k == KindAI || k == KindShell || k == KindEditor
+	return k == KindAI || k == KindShell || k == KindEditor || k == KindBrowser
 }
 
 // AI は windows[].ai の取り得る値（kind="ai" のみ）。
@@ -106,3 +107,15 @@ const ZedBundleID = "dev.zed.Zed"
 // v11.3 で kitty user-space copy に一旦切替えたが、v11.6 で OmniWM app-rules
 // に titleRegex rule を追加することで純正 Ghostty に戻した。
 const TerminalBundleID = "com.mitchellh.ghostty"
+
+// VivaldiBundleID は browser kind の bundleId（v12）。
+const VivaldiBundleID = "com.vivaldi.Vivaldi"
+
+// BrowserMarkerTitle は browser window の identifying marker tab title を返す。
+// projwm は file:// HTML marker を spawn 直後に navigate して、Window menu の
+// tab list scan で title 一致 → window 識別する（v12, projwm-history.md）。
+//
+//	(1, "dotfiles") → "projwm:dotfiles:1"
+func BrowserMarkerTitle(id int, project string) string {
+	return fmt.Sprintf("projwm:%s:%d", project, id)
+}

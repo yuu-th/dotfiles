@@ -84,6 +84,7 @@ func newAddEditorCmd() *cobra.Command {
 	return c
 }
 
+
 func newRemoveCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove",
