@@ -61,20 +61,24 @@ while IFS=$'\t' read -r BUNDLE WID CUR_WS; do
 
   # focus → 確認 → move (race detection)
   #
-  # `omniwmctl window focus $WID` → `omniwmctl command move-to-workspace $TARGET` の
-  # 2 step の間に focus が変わってしまうと **別 window が move されてしまう** バグ
-  # を防ぐ。 focus 設定後 query focused-window で期待 window が focus されている
-  # か確認、 違えば skip して log。 (user 報告: 「関係 window が違う ws に移動」)
+  # 2 step (`window focus` → `command move-column-to-workspace`) の間に focus が
+  # 変わると **別 window/column が move されてしまう** race を、 focus 確認 step で
+  # 防ぐ。 (user 報告: 「関係 window が違う ws に移動」)
+  #
+  # cmd 選定: niri layout に native な `move-column-to-workspace` (column 単位)。
+  # `move-to-workspace` (window 単位) は niri で column 構造を壊す挙動になるため
+  # 非採用。 stack を意図して作った user use case は「ws sort 対象外の構造」とみなす
+  # (user 議論結果: 違う ws に飛ばす想定の window を stack に混ぜる運用は ありえない)。
   if "$OMNIWMCTL" window focus "$WID" > /dev/null 2>&1; then
     /bin/sleep 0.15
     ACTUAL_FOCUSED=$("$OMNIWMCTL" query focused-window --format json 2>/dev/null \
       | "$JQ" -r '.result.payload.window.id // empty' 2>/dev/null || true)
     if [ "$ACTUAL_FOCUSED" = "$WID" ]; then
-      if "$OMNIWMCTL" command move-to-workspace "$TARGET" > /dev/null 2>&1; then
+      if "$OMNIWMCTL" command move-column-to-workspace "$TARGET" > /dev/null 2>&1; then
         MOVED=$((MOVED + 1))
         log "  moved: $BUNDLE [$WID] $CUR_WS -> $TARGET"
       else
-        log "  ERROR: move-to-workspace failed: $BUNDLE -> $TARGET"
+        log "  ERROR: move-column-to-workspace failed: $BUNDLE -> $TARGET"
       fi
     else
       SKIPPED=$((SKIPPED + 1))
