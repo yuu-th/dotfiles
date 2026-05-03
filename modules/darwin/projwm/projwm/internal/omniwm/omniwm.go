@@ -197,6 +197,24 @@ func (c *Client) FocusWorkspaceByName(ctx context.Context, name string) error {
 	return err
 }
 
+// ActiveWorkspaceName は現在 focused な workspace の rawName (もしくは
+// displayName fallback) を返す。spawn 前後で focus を保存・復帰する用。
+func (c *Client) ActiveWorkspaceName(ctx context.Context) (string, error) {
+	wss, err := c.QueryWorkspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, ws := range wss {
+		if ws.IsFocused {
+			if ws.RawName != "" {
+				return ws.RawName, nil
+			}
+			return ws.DisplayName, nil
+		}
+	}
+	return "", fmt.Errorf("no focused workspace")
+}
+
 // FocusWindow は window focus <id>。
 func (c *Client) FocusWindow(ctx context.Context, windowID string) error {
 	_, err := c.exec.Run(ctx, "window", "focus", windowID)

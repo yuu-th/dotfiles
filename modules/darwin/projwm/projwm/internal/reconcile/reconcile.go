@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yuu-th/projwm/internal/browserwrap/chromium"
@@ -84,15 +85,35 @@ func (r *Reconciler) Run(ctx context.Context, st *state.State, opts Options) ([]
 	var actions []Action
 
 	// 1) active profile の slot 配置
+	//
+	// 高速化戦略 (user 提案): spawn 時に move-to-ws polling するのではなく、
+	// **先に target slot に focus 切替** して、 OmniWM の auto-placement で新 window
+	// が active workspace に自動配置されることに乗る。終了で元 workspace に戻す。
+	// move-to-ws の 6s polling × N が消えるため大幅高速化。
 	if st.ActiveProfile != "" {
 		active := st.Profiles[st.ActiveProfile].Assignments
+		// 現 OmniWM workspace を保存
+		var origWS string
+		if r.OmniWM != nil && !opts.DryRun {
+			if w, e := r.OmniWM.ActiveWorkspaceName(ctx); e == nil {
+				origWS = w
+			}
+		}
+		// 各 project に対して slot 切替 → spawn → 同じ slot にとどめる
 		for slot, projName := range active {
 			p := st.Projects[projName]
 			if p.Archived {
 				r.logf(opts, "WARN: archived project %q is in active assignments (skipped)", projName)
 				continue
 			}
+			if r.OmniWM != nil && !opts.DryRun {
+				_ = r.OmniWM.FocusWorkspaceByName(ctx, slot)
+			}
 			actions = append(actions, r.ensureProjectInSlot(ctx, projName, p, slot, opts)...)
+		}
+		// 元 workspace に戻す (user の見ていた画面に復帰)
+		if r.OmniWM != nil && !opts.DryRun && origWS != "" {
+			_ = r.OmniWM.FocusWorkspaceByName(ctx, origWS)
 		}
 	}
 
@@ -145,54 +166,120 @@ func (r *Reconciler) Run(ctx context.Context, st *state.State, opts Options) ([]
 }
 
 // ensureProjectInSlot は project の windows[] を slot に揃える。
+//
+// 高速化: kind ごとに lane を分けて errgroup で **並列実行** する。
+// ai pair (ai-N + ai-view-N) は **grouped clone の依存** で内部 sequential、
+// shell / editor は完全独立。browser kind は reconcile では触らない (FR-29)。
 func (r *Reconciler) ensureProjectInSlot(ctx context.Context, projName string, p state.Project, slot string, opts Options) []Action {
-	var acts []Action
+	var (
+		acts   []Action
+		actsMu sync.Mutex
+	)
+	var wg sync.WaitGroup
 	for _, w := range p.Windows {
+		w := w
 		switch w.Kind {
-		case naming.KindAI, naming.KindShell:
-			title := naming.GhosttyTitle(w.Kind, w.ID, projName)
-			session := naming.TmuxSession(w.Kind, w.ID, projName)
-
-			// 新規 tmux session 作成 → AI window なら AI コマンドを送る (送る前後で
-			// session 在の状態が変わるので、事前 has-session で「新規だった」を記録)
-			wasMissing := false
-			if hasTmux, _ := r.Tmux.HasSession(ctx, session); !hasTmux {
-				wasMissing = true
-			}
-			acts = append(acts, r.ensureGhosttyWindow(ctx, title, session, p.CWD, slot, opts)...)
-			if wasMissing && w.Kind == naming.KindAI && !opts.DryRun {
-				if cmd := naming.AICommand(w.AI); cmd != "" {
-					// shell prompt が ready になるのを少し待ってから打鍵
-					time.Sleep(300 * time.Millisecond)
-					if err := r.Tmux.SendKeys(ctx, session, cmd, "Enter"); err != nil {
-						r.logf(opts, "WARN: AI command send-keys failed (%s): %v", session, err)
-					} else {
-						acts = append(acts, Action{
-							Op:     "ai-launch",
-							Target: session,
-							Detail: cmd,
-						})
-					}
-				}
-			}
-
-			if w.Kind == naming.KindAI {
-				vSession := naming.ViewerTmuxSession(w.ID, projName)
-				vTitle := naming.ViewerGhosttyTitle(w.ID, projName)
-				acts = append(acts, r.ensureGroupedSession(ctx, session, vSession, opts)...)
-				acts = append(acts, r.ensureGhosttyWindow(ctx, vTitle, vSession, p.CWD, r.Cfg.ViewerWorkspace, opts)...)
-			}
+		case naming.KindAI:
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sub := r.spawnAIPair(ctx, projName, p, w, slot, opts)
+				actsMu.Lock()
+				acts = append(acts, sub...)
+				actsMu.Unlock()
+			}()
+		case naming.KindShell:
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				title := naming.GhosttyTitle(w.Kind, w.ID, projName)
+				session := naming.TmuxSession(w.Kind, w.ID, projName)
+				sub := r.ensureGhosttyWindow(ctx, title, session, p.CWD, slot, opts)
+				actsMu.Lock()
+				acts = append(acts, sub...)
+				actsMu.Unlock()
+			}()
 		case naming.KindEditor:
-			zedTitle := naming.ZedTitle(p.CWD)
-			acts = append(acts, r.ensureZedWindow(ctx, zedTitle, p.CWD, slot, opts)...)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				zedTitle := naming.ZedTitle(p.CWD)
+				sub := r.ensureZedWindow(ctx, zedTitle, p.CWD, slot, opts)
+				actsMu.Lock()
+				acts = append(acts, sub...)
+				actsMu.Unlock()
+			}()
 		case naming.KindBrowser:
-			// **重要**: reconcile は browser に **触らない**（v12 paradigm C 確定）。
-			// browser は user の通常運用 app を兼ねる。closed 状態を尊重し、launchd
-			// の auto-reconcile では絶対に spawn しない。spawn / close は明示
-			// イベント (add-browser / profile switch / archive / unarchive) でのみ
-			// 行う。詳細: queue/projwm-spec.md FR-29, D-50。
+			// reconcile は browser に絶対触らない (paradigm C, FR-29)
 		}
 	}
+	wg.Wait()
+	return acts
+}
+
+// spawnAIPair は ai-N + ai-view-N を依存順で spawn する (grouped clone は親 tmux 必須)。
+// tmux create を先に終わらせて、ghostty spawn と viewer 系を並列で進める。
+func (r *Reconciler) spawnAIPair(ctx context.Context, projName string, p state.Project, w state.Window, slot string, opts Options) []Action {
+	var (
+		acts   []Action
+		actsMu sync.Mutex
+	)
+	title := naming.GhosttyTitle(w.Kind, w.ID, projName)
+	session := naming.TmuxSession(w.Kind, w.ID, projName)
+
+	// 既存 tmux session を check (AI cmd 送信判定用)
+	wasMissing := false
+	if hasTmux, _ := r.Tmux.HasSession(ctx, session); !hasTmux {
+		wasMissing = true
+	}
+
+	// Phase 1: ai-N の Ghostty spawn と AI cmd を並列、 viewer の grouped clone も並列
+	var wg sync.WaitGroup
+	// lane 1: ai-N の ensureGhosttyWindow (内部で tmux create も担う)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sub := r.ensureGhosttyWindow(ctx, title, session, p.CWD, slot, opts)
+		actsMu.Lock()
+		acts = append(acts, sub...)
+		actsMu.Unlock()
+		if wasMissing && !opts.DryRun {
+			if cmd := naming.AICommand(w.AI); cmd != "" {
+				time.Sleep(300 * time.Millisecond)
+				if err := r.Tmux.SendKeys(ctx, session, cmd, "Enter"); err != nil {
+					r.logf(opts, "WARN: AI command send-keys failed (%s): %v", session, err)
+				} else {
+					actsMu.Lock()
+					acts = append(acts, Action{Op: "ai-launch", Target: session, Detail: cmd})
+					actsMu.Unlock()
+				}
+			}
+		}
+	}()
+
+	// lane 2: viewer (ai-view-N) は grouped clone の親 (= ai-N tmux) が要るので、
+	// 短い polling で session 出現を待ってから clone + ghostty を spawn
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		vSession := naming.ViewerTmuxSession(w.ID, projName)
+		vTitle := naming.ViewerGhosttyTitle(w.ID, projName)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if has, _ := r.Tmux.HasSession(ctx, session); has {
+				break
+			}
+			time.Sleep(150 * time.Millisecond)
+		}
+		sub1 := r.ensureGroupedSession(ctx, session, vSession, opts)
+		sub2 := r.ensureGhosttyWindow(ctx, vTitle, vSession, p.CWD, r.Cfg.ViewerWorkspace, opts)
+		actsMu.Lock()
+		acts = append(acts, sub1...)
+		acts = append(acts, sub2...)
+		actsMu.Unlock()
+	}()
+
+	wg.Wait()
 	return acts
 }
 
@@ -667,60 +754,65 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 		return a
 	}
 
-	// spawn 前の OmniWM Vivaldi window 集合
-	preOmniIDs := map[string]bool{}
-	if r.OmniWM != nil {
-		preWins, _ := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.VivaldiBundleID)
-		for _, pw := range preWins {
-			preOmniIDs[pw.ID] = true
-		}
-	}
-
-	wid, err := r.Chromium.SpawnAndRestoreFocus(ctx, w.BrowserProfile, w.SavedURLs)
+	res, err := r.Chromium.SpawnAndRestoreFocus(ctx, w.BrowserProfile, w.SavedURLs)
 	if err != nil {
 		a.OnError = err
 		return a
 	}
-	if perr := persistLiveWindowID(project, w.ID, wid); perr != nil {
+	if perr := persistLiveWindowID(project, w.ID, res.WindowID); perr != nil {
 		a.OnError = perr
 		return a
 	}
-	a.Detail = fmt.Sprintf("profile=%s urls=%d wid=%s", w.BrowserProfile, len(w.SavedURLs), wid)
+	a.Detail = fmt.Sprintf("profile=%s urls=%d wid=%s", w.BrowserProfile, len(w.SavedURLs), res.WindowID)
 
-	// active profile での slot を取得して move-to-ws する
+	// 高速化戦略: reconcile.Run の上層で先に target slot に focus 切替済 (caller 責務)。
+	// OmniWM は新 window を active workspace = slot に自動配置するため、ここでの
+	// move-to-ws は **safety net** として short polling のみ実行 (すでに target slot
+	// にいれば即 return)。
+	//
+	// 識別: spawn 直後 active tab = marker → window title = "<markerTitle> - Vivaldi"。
 	if r.OmniWM != nil {
 		slot := findSlotForProject(project)
 		if slot != "" {
-			// 新 OmniWM-side window を polling で待つ（最大 ~6 秒、focus 奪わない）
-			deadline := time.Now().Add(6 * time.Second)
-			var newOmniID string
+			expectedTitle := res.MarkerTitle + " - Vivaldi"
+			deadline := time.Now().Add(3 * time.Second)
+			var omniID string
+			var currentWS string
 			for time.Now().Before(deadline) {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 				wins, qerr := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.VivaldiBundleID)
 				if qerr != nil {
 					continue
 				}
 				for _, pw := range wins {
-					if !preOmniIDs[pw.ID] {
-						newOmniID = pw.ID
+					if pw.Title == expectedTitle {
+						omniID = pw.ID
+						currentWS = pw.Workspace.RawName
+						if currentWS == "" {
+							currentWS = pw.Workspace.DisplayName
+						}
 						break
 					}
 				}
-				if newOmniID != "" {
+				if omniID != "" {
 					break
 				}
 			}
-			if newOmniID != "" {
-				if mvErr := r.OmniWM.MoveWindowToWorkspaceByName(ctx, newOmniID, slot); mvErr != nil {
-					// move 失敗は warn のみ (spawn は成功してるので)
+			if omniID != "" {
+				if currentWS == slot {
+					a.Detail += " | auto-placed on slot=" + slot
+				} else if mvErr := r.OmniWM.MoveWindowToWorkspaceByName(ctx, omniID, slot); mvErr != nil {
 					a.Detail += " | WARN move-to-ws failed: " + mvErr.Error()
 				} else {
 					a.Detail += " | moved-to-slot=" + slot
 				}
-			} else {
-				a.Detail += " | WARN: omniwm did not see new Vivaldi window within 6s"
 			}
 		}
+	}
+
+	// marker tab を close (active を saved_urls[0] に戻す)
+	if cerr := r.Chromium.CloseMarkerTab(ctx, res.WindowID, res.MarkerTitle); cerr != nil {
+		a.Detail += " | WARN close-marker: " + cerr.Error()
 	}
 	return a
 }
@@ -792,28 +884,58 @@ func (r *Reconciler) SnapshotAndCloseBrowserWindow(ctx context.Context, project 
 	return a
 }
 
-// SpawnAllBrowserWindowsInProject は project の全 kind=browser windows を spawn する。
+// SpawnAllBrowserWindowsInProject は project の全 kind=browser windows を **並列 spawn** する。
+//
+// uuid marker による race-free 識別 (chromium.SpawnProjectWindow) のため、複数
+// browser を同時に open -na しても各 window は固有 marker URL / title で確実に
+// 区別される。OmniWM への move も並列実行可能。
 func (r *Reconciler) SpawnAllBrowserWindowsInProject(ctx context.Context, project string, p state.Project) []Action {
-	var acts []Action
+	var (
+		acts   []Action
+		actsMu sync.Mutex
+	)
+	var wg sync.WaitGroup
 	for _, w := range p.Windows {
 		if w.Kind != naming.KindBrowser {
 			continue
 		}
-		acts = append(acts, r.SpawnBrowserWindow(ctx, project, w))
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a := r.SpawnBrowserWindow(ctx, project, w)
+			actsMu.Lock()
+			acts = append(acts, a)
+			actsMu.Unlock()
+		}()
 	}
+	wg.Wait()
 	return acts
 }
 
 // SnapshotAndCloseAllBrowserWindowsInProject は project の全 kind=browser windows を
-// snapshot + close する。
+// **並列 snapshot + close** する。各 window は LiveWindowID で識別済なので race なし。
 func (r *Reconciler) SnapshotAndCloseAllBrowserWindowsInProject(ctx context.Context, project string, p state.Project) []Action {
-	var acts []Action
+	var (
+		acts   []Action
+		actsMu sync.Mutex
+	)
+	var wg sync.WaitGroup
 	for _, w := range p.Windows {
 		if w.Kind != naming.KindBrowser {
 			continue
 		}
-		acts = append(acts, r.SnapshotAndCloseBrowserWindow(ctx, project, w))
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a := r.SnapshotAndCloseBrowserWindow(ctx, project, w)
+			actsMu.Lock()
+			acts = append(acts, a)
+			actsMu.Unlock()
+		}()
 	}
+	wg.Wait()
 	return acts
 }
 

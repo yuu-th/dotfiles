@@ -17,6 +17,7 @@ package chromium
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -194,53 +195,131 @@ func parseListing(s string) []Window {
 	return out
 }
 
+// SpawnResult は SpawnProjectWindow の戻り値。
+//
+// MarkerTitle は OmniWM 側で window 識別するための文字列 (window title が
+// "<MarkerTitle> - Vivaldi" になる時間がある = spawn 直後 active tab が marker)。
+// 並列 spawn でも同 uuid が他 spawn と衝突しないため race-free。
+type SpawnResult struct {
+	WindowID    string // chrome-cli の window-id
+	MarkerTitle string // 識別用 page title (Vivaldi window title prefix)
+}
+
 // SpawnProjectWindow は new window を作成して指定 profile + URL list を開く。
 //
-// marker tab は使わない。spawn 直前後の window-id 集合 diff で **新規 wid** を
-// 取得して返す（呼び出し側が state.Window.LiveWindowID に保存する）。
+// **完全 race-free 並列識別 (uuid marker 戦略)**:
+//  1. spawn URL list の **先頭** に projwm 専用 uuid marker (file:// HTML) を置く
+//  2. Vivaldi は先頭 URL を active tab にするため、 spawn 直後 window title = "projwm-spawn-<uuid> - Vivaldi"
+//  3. chrome-cli list links で marker URL を含む window を識別 (race-free)
+//  4. 同時に呼び出し側で OmniWM windows query で title 一致 window を識別 (race-free)
+//  5. 識別後 marker tab を close → active が saved_urls[0] に自動 fallback
 //
-// 一瞬 browser に focus が奪われるが、frontmost は事前に保存されており
-// 呼び出し側 (SpawnAndRestoreFocus) で復帰する。
-func (d *Driver) SpawnProjectWindow(ctx context.Context, profile string, urls []string) (string, error) {
-	preWins, _ := d.ListWindows(ctx)
-	preIDs := map[string]bool{}
-	for _, w := range preWins {
-		preIDs[w.ID] = true
+// 並列に 2 windows spawn しても uuid が異なるため互いに区別可能。
+// 一瞬 browser に focus が奪われるが、frontmost は事前保存・後で復帰する。
+func (d *Driver) SpawnProjectWindow(ctx context.Context, profile string, urls []string) (*SpawnResult, error) {
+	markerURL, markerPath, markerTitle, err := writeSpawnMarker()
+	if err != nil {
+		return nil, fmt.Errorf("create spawn marker: %w", err)
 	}
+	// 削除は遅延 goroutine で (defer だと Vivaldi が file を load する前に消えて
+	// <title> が反映されず、識別失敗の致命バグになる)。
+	// 60 秒後に削除すれば、Vivaldi が title を read 済の保証になる。
+	go func() {
+		time.Sleep(60 * time.Second)
+		_ = os.Remove(markerPath)
+	}()
 
 	args := []string{"-na", d.AppPath, "--args"}
 	if profile != "" {
 		args = append(args, "--profile-directory="+profile)
 	}
-	args = append(args, "--new-window")
-	if len(urls) > 0 {
-		args = append(args, urls...)
-	} else {
-		// URL なしだと Vivaldi が welcome / start page を出す。新 window 指示の効果を
-		// 確実にするため about:blank を渡す。
+	args = append(args, "--new-window", markerURL) // 先頭に marker (active tab になる)
+	args = append(args, urls...)
+	if len(urls) == 0 {
+		// saved_urls 0 でも user に見せるための fallback (marker close 後に空 tab 状態)
 		args = append(args, "about:blank")
 	}
 
 	cmd := exec.CommandContext(ctx, "open", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("open -na: %w (out=%s)", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("open -na: %w (out=%s)", err, strings.TrimSpace(string(out)))
 	}
 
-	// 新 window-id を待つ（最大 ~6 秒）
+	// 新 window-id を polling: 全 windows の tab links を見て markerURL を含む
+	// window を採用 (race-free、並列 spawn 安全)。最大 ~6 秒、150ms 間隔。
 	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 		wins, err := d.ListWindows(ctx)
 		if err != nil {
 			continue
 		}
 		for _, w := range wins {
-			if !preIDs[w.ID] {
-				return w.ID, nil
+			links, err := d.ListTabLinksInWindow(ctx, w.ID)
+			if err != nil {
+				continue
+			}
+			for _, u := range links {
+				if u == markerURL {
+					return &SpawnResult{WindowID: w.ID, MarkerTitle: markerTitle}, nil
+				}
 			}
 		}
 	}
-	return "", fmt.Errorf("spawn succeeded but new window-id not detected within 6s")
+	return nil, fmt.Errorf("spawn succeeded but marker-tagged window not detected within 6s")
+}
+
+// CloseMarkerTab は SpawnProjectWindow が active tab に置いた marker を close する。
+// move-to-slot 等の OmniWM 識別作業が終わったタイミングで呼ぶ。
+// 失敗しても致命でない (marker file 自体は短時間で OS 再起動時に消える)。
+func (d *Driver) CloseMarkerTab(ctx context.Context, wid, markerTitle string) error {
+	// markerTitle = "projwm-spawn-<uuid>" (page title 全体)
+	// closeTabByTitle で url 経由じゃなく title 経由で探す方が確実 (URL は file://...)
+	return d.closeTabByTitle(ctx, wid, markerTitle)
+}
+
+func (d *Driver) closeTabByTitle(ctx context.Context, wid, target string) error {
+	tabsOut, err := exec.CommandContext(ctx, d.ChromeCli, "list", "tabs", "-w", wid).Output()
+	if err != nil {
+		return err
+	}
+	tabs := parseListing(string(tabsOut))
+	for _, t := range tabs {
+		// title は marker page の <title>projwm-spawn-uuid</title>
+		if t.Title == target {
+			cmd := exec.CommandContext(ctx, d.ChromeCli, "close", "-t", t.ID)
+			cmd.Env = append(os.Environ(), "CHROME_BUNDLE_IDENTIFIER="+d.BundleID)
+			return cmd.Run()
+		}
+	}
+	return nil
+}
+
+// writeSpawnMarker は uuid 入りの一時 HTML を ~/.cache/projwm/spawn-markers/
+// 配下に書き出して file:// URL と pageTitle を返す。識別終わったら呼び出し側で os.Remove。
+//
+// pageTitle = "projwm-spawn-<uuid>" は OmniWM 側 window title 識別に使う。
+func writeSpawnMarker() (markerURL, path, pageTitle string, err error) {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".cache", "projwm", "spawn-markers")
+	if e := os.MkdirAll(dir, 0o755); e != nil {
+		return "", "", "", e
+	}
+	var b [16]byte
+	if _, e := rand.Read(b[:]); e != nil {
+		return "", "", "", e
+	}
+	uuid := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	pageTitle = "projwm-spawn-" + uuid
+	p := filepath.Join(dir, uuid+".html")
+	html := fmt.Sprintf(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>%s</title></head><body style="background:#fafafa;color:#888;font-family:system-ui;padding:2em">
+<h2>projwm spawn marker</h2><p>This tab is auto-closed by projwm.</p></body></html>`, pageTitle)
+	if e := os.WriteFile(p, []byte(html), 0o644); e != nil {
+		return "", "", "", e
+	}
+	return "file://" + p, p, pageTitle, nil
 }
 
 // SnapshotURLs は指定 window の現在 tab URL 一覧を返す（focus 奪わない）。
@@ -289,14 +368,15 @@ func (d *Driver) WindowExists(ctx context.Context, wid string) bool {
 }
 
 // SpawnAndRestoreFocus は SpawnProjectWindow を frontmost 復帰付きで呼ぶ。
-func (d *Driver) SpawnAndRestoreFocus(ctx context.Context, profile string, urls []string) (string, error) {
-	var wid string
+// 識別用 marker title も返す (呼び出し側が OmniWM 識別に使う)。
+func (d *Driver) SpawnAndRestoreFocus(ctx context.Context, profile string, urls []string) (*SpawnResult, error) {
+	var res *SpawnResult
 	err := d.withFocusRestore(func() error {
-		w, e := d.SpawnProjectWindow(ctx, profile, urls)
-		wid = w
+		r, e := d.SpawnProjectWindow(ctx, profile, urls)
+		res = r
 		return e
 	})
-	return wid, err
+	return res, err
 }
 
 // SnapshotAndCloseAndRestoreFocus は wid の snapshot → close を frontmost 復帰

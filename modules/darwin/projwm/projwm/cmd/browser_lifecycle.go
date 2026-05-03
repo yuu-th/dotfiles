@@ -19,6 +19,9 @@ import (
 
 // spawnBrowserWindowsForProject は project の browser kind windows を全て spawn する。
 // add-browser / profile switch active 復帰 / unarchive 等から呼ぶ。
+//
+// 高速化: 先に target slot に OmniWM focus 切替して、 OmniWM の auto-placement で
+// 新 window が active workspace = slot に自動配置される。終了で元 workspace に戻す。
 func spawnBrowserWindowsForProject(projectName string) error {
 	cfgRes, err := config.LoadFromDefaultPath()
 	if err != nil {
@@ -46,6 +49,28 @@ func spawnBrowserWindowsForProject(projectName string) error {
 	r.Chromium.Logger = os.Stderr
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// 高速化: target slot に focus 切替 (OmniWM auto-placement で new window が
+	// 自動的に slot に並ぶ)。終了で元 workspace に戻す。
+	var origWS string
+	if r.OmniWM != nil {
+		if w, e := r.OmniWM.ActiveWorkspaceName(ctx); e == nil {
+			origWS = w
+		}
+		// active profile 内で project が assigned されている slot を探す
+		for _, slot := range []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"} {
+			if prof, ok := st.Profiles[st.ActiveProfile]; ok && prof.Assignments[slot] == projectName {
+				_ = r.OmniWM.FocusWorkspaceByName(ctx, slot)
+				break
+			}
+		}
+	}
+	defer func() {
+		if origWS != "" && r.OmniWM != nil {
+			_ = r.OmniWM.FocusWorkspaceByName(ctx, origWS)
+		}
+	}()
+
 	acts := r.SpawnAllBrowserWindowsInProject(ctx, projectName, p)
 	errs := 0
 	for _, a := range acts {
