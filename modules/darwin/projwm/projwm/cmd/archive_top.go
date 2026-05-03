@@ -118,8 +118,14 @@ func newUnarchiveTopCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			// active profile に戻ってきたなら browser を spawn (paradigm C)
+			// active profile に戻ってきたなら ai/shell/editor も spawn する必要があるので
+			// reconcile を呼ぶ。 続いて browser を明示 spawn (paradigm C)。
 			if isNowActive {
+				if !rootNoReconcile {
+					if err := runReconcileOnce(); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: reconcile after unarchive: %v\n", err)
+					}
+				}
 				if err := spawnBrowserWindowsForProject(name); err != nil {
 					fmt.Fprintf(os.Stderr, "WARN: spawn browser after unarchive: %v\n", err)
 				}

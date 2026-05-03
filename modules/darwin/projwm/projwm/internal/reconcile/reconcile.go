@@ -427,11 +427,6 @@ func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName str
 	}
 
 	// 3) 完全に不在 → 新規 spawn だが flock で並走 reconcile からの重複 spawn を防ぐ
-	//
-	// **重要 (重複 spawn バグ修正)**: lock の保持期間は **placeZedAfterSpawn 完了まで**。
-	// 旧実装では関数 return 時に defer で release していたため、 spawn 後 Zed が
-	// 完全起動する前に lock 解除 → 別 reconcile が来た時 findZedByTitle で
-	// (まだ window 出てない) 見つからず → 二重 spawn の race が起きていた。
 	if !opts.DryRun {
 		if !acquireZedSpawnLock(title, 6*time.Second) {
 			acts = append(acts, Action{
@@ -442,6 +437,17 @@ func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName str
 			return acts
 		}
 		// release は spawn ブランチの先で、placeZedAfterSpawn の goroutine 内 defer で行う。
+
+		// **Zed session restore 抑制**: spawn 前に sqlite から
+		//   - paths が空の workspace 行
+		//   - paths == cwd の workspace 行 (これも restore で同 cwd の window が
+		//     復元され、 続く `zed -n cwd` の new window と合わせて 2 重になる)
+		// を削除。 user の他 cwd の workspace 行は残すので restore で復元される
+		// (projwm 管理外の影響なし)。 Zed running 中は DB locked で失敗するが
+		// archive で kill 済の経路でのみ実効すれば十分。
+		if err := zedwrap.CleanWorkspaceForPath(cwd); err != nil {
+			r.logf(opts, "WARN: zed sqlite cleanup (cwd=%s): %v", cwd, err)
+		}
 	}
 
 	acts = append(acts, Action{Op: "spawn-zed", Target: title, Detail: cwd})
@@ -451,7 +457,6 @@ func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName str
 			releaseZedSpawnLock(title)
 		} else {
 			// spawn 後 polling で配置 + lock を **goroutine 完了時に** release。
-			// この期間中に別 reconcile が来ても acquireZedSpawnLock が timeout して skip。
 			go func() {
 				defer releaseZedSpawnLock(title)
 				r.placeZedAfterSpawn(ctx, title, wsName)
