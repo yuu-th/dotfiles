@@ -645,12 +645,61 @@ func (r *Reconciler) killTmux(ctx context.Context, session string, opts Options)
 func (r *Reconciler) closeWindow(ctx context.Context, w omniwm.Window, opts Options) Action {
 	a := Action{Op: "close-window", Target: w.ID, Detail: w.Title}
 	if !opts.DryRun {
-		// omniwmctl に close-window は無いので AppleScript / kill PID 経路。最も安全なのは PID kill。
-		if w.PID > 0 {
+		// **重要**: PID kill は app の全 window を巻き込んで殺すため、 user が他に
+		// 開いている関係ない window (例: 別 cwd の Zed、 別 tab の Vivaldi 等) を
+		// 道連れにする (user 報告: profile 切替で関係ない window が巻き込まれる)。
+		// AX 経由で **指定 window のみ close** に変更。
+		// AX close 不可な場合のみ fallback で PID kill。
+		closed := closeWindowByPIDAndTitle(ctx, w.PID, w.Title)
+		if !closed && w.PID > 0 {
 			_ = killPID(w.PID)
 		}
 	}
 	return a
+}
+
+// closeWindowByPIDAndTitle は AX で specific app の specific title の window のみ
+// close する (同 app の他 window は生き残る)。
+// 成功時 true。 AX 不可 / window 不在 / close button なし → false。
+func closeWindowByPIDAndTitle(ctx context.Context, pid int, title string) bool {
+	if pid <= 0 || title == "" {
+		return false
+	}
+	script := fmt.Sprintf(`
+tell application "System Events"
+  set targetPid to %d
+  repeat with p in (every process)
+    try
+      if unix id of p is targetPid then
+        repeat with w in (every window of p)
+          try
+            if name of w is "%s" then
+              set cb to value of attribute "AXCloseButton" of w
+              if cb is not missing value then
+                perform action "AXPress" of cb
+                return "closed"
+              end if
+            end if
+          end try
+        end repeat
+      end if
+    end try
+  end repeat
+end tell
+return "miss"
+`, pid, escapeASLiteral(title))
+	out, err := exec.CommandContext(ctx, "osascript", "-e", script).Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "closed"
+}
+
+// escapeASLiteral は AppleScript 文字列リテラル内の " と \ をエスケープする。
+func escapeASLiteral(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }
 
 // gcViewerOrphans は WS A の規約 title だが期待にない viewer 窓を close。
