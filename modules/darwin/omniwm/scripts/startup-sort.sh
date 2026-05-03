@@ -69,20 +69,30 @@ while IFS=$'\t' read -r BUNDLE WID CUR_WS; do
   # `move-to-workspace` (window 単位) は niri で column 構造を壊す挙動になるため
   # 非採用。 stack を意図して作った user use case は「ws sort 対象外の構造」とみなす
   # (user 議論結果: 違う ws に飛ばす想定の window を stack に混ぜる運用は ありえない)。
+  # 早期 success polling: focus が早く反映されれば即 move (平均 ~30-60ms)、
+  # 遅延が出た場合のみ wait。 上限 0.5s に達したら focus race として skip。
+  # 高速化のため query は --format json | jq の二重 process spawn を避けて短縮。
   if "$OMNIWMCTL" window focus "$WID" > /dev/null 2>&1; then
-    /bin/sleep 0.15
-    ACTUAL_FOCUSED=$("$OMNIWMCTL" query focused-window --format json 2>/dev/null \
-      | "$JQ" -r '.result.payload.window.id // empty' 2>/dev/null || true)
-    if [ "$ACTUAL_FOCUSED" = "$WID" ]; then
-      if "$OMNIWMCTL" command move-column-to-workspace "$TARGET" > /dev/null 2>&1; then
-        MOVED=$((MOVED + 1))
-        log "  moved: $BUNDLE [$WID] $CUR_WS -> $TARGET"
-      else
-        log "  ERROR: move-column-to-workspace failed: $BUNDLE -> $TARGET"
+    MOVE_DONE=0
+    DEADLINE=$(($(/bin/date +%s%N) + 500000000)) # +500ms (ns)
+    while [ $(/bin/date +%s%N) -lt $DEADLINE ]; do
+      /bin/sleep 0.03
+      ACTUAL_FOCUSED=$("$OMNIWMCTL" query focused-window --format json 2>/dev/null \
+        | "$JQ" -r '.result.payload.window.id // empty' 2>/dev/null || true)
+      if [ "$ACTUAL_FOCUSED" = "$WID" ]; then
+        if "$OMNIWMCTL" command move-column-to-workspace "$TARGET" > /dev/null 2>&1; then
+          MOVED=$((MOVED + 1))
+          log "  moved: $BUNDLE [$WID] $CUR_WS -> $TARGET"
+        else
+          log "  ERROR: move-column-to-workspace failed: $BUNDLE -> $TARGET"
+        fi
+        MOVE_DONE=1
+        break
       fi
-    else
+    done
+    if [ $MOVE_DONE -eq 0 ]; then
       SKIPPED=$((SKIPPED + 1))
-      log "  SKIP focus-race: $BUNDLE [$WID] (target focus failed, actual=$ACTUAL_FOCUSED)"
+      log "  SKIP focus-race: $BUNDLE [$WID] (focus not stabilized in 500ms)"
     fi
   else
     log "  ERROR: window focus failed: $BUNDLE [$WID]"
