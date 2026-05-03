@@ -271,28 +271,45 @@ func (d *Driver) SpawnProjectWindow(ctx context.Context, profile string, urls []
 
 // CloseMarkerTab は SpawnProjectWindow が active tab に置いた marker を close する。
 // move-to-slot 等の OmniWM 識別作業が終わったタイミングで呼ぶ。
-// 失敗しても致命でない (marker file 自体は短時間で OS 再起動時に消える)。
+//
+// **URL ベース照合**: title は load 中だと未定 / file:// path のままで完全一致が
+// 不安定。URL は spawn 時に固定なので確実 (file://....html)。
+// 失敗しても致命でない (marker file は遅延 goroutine で削除、orphan tab は
+// 次回 reconcile では state に保存されないため副作用は限定的)。
 func (d *Driver) CloseMarkerTab(ctx context.Context, wid, markerTitle string) error {
-	// markerTitle = "projwm-spawn-<uuid>" (page title 全体)
-	// closeTabByTitle で url 経由じゃなく title 経由で探す方が確実 (URL は file://...)
-	return d.closeTabByTitle(ctx, wid, markerTitle)
+	// markerTitle = "projwm-spawn-<uuid>"、 marker URL は file://...spawn-markers/<uuid>.html
+	// title から uuid を抽出して URL を逆算 → URL 一致で close
+	uuid := strings.TrimPrefix(markerTitle, "projwm-spawn-")
+	home, _ := os.UserHomeDir()
+	markerURL := "file://" + filepath.Join(home, ".cache", "projwm", "spawn-markers", uuid+".html")
+	return d.closeTabByURL(ctx, wid, markerURL)
 }
 
-func (d *Driver) closeTabByTitle(ctx context.Context, wid, target string) error {
+// closeTabByURL は wid の中で URL 一致する tab を close (URL ベース、 race-free)。
+func (d *Driver) closeTabByURL(ctx context.Context, wid, target string) error {
+	// chrome-cli list tabs (id+title) と list links (id+url) を結合して URL→tabID。
 	tabsOut, err := exec.CommandContext(ctx, d.ChromeCli, "list", "tabs", "-w", wid).Output()
 	if err != nil {
 		return err
 	}
+	linksOut, err := exec.CommandContext(ctx, d.ChromeCli, "list", "links", "-w", wid).Output()
+	if err != nil {
+		return err
+	}
 	tabs := parseListing(string(tabsOut))
+	links := parseListing(string(linksOut))
+	urlByID := map[string]string{}
+	for _, l := range links {
+		urlByID[l.ID] = l.Title // list links は ID と URL を返す (Title = URL)
+	}
 	for _, t := range tabs {
-		// title は marker page の <title>projwm-spawn-uuid</title>
-		if t.Title == target {
+		if urlByID[t.ID] == target {
 			cmd := exec.CommandContext(ctx, d.ChromeCli, "close", "-t", t.ID)
 			cmd.Env = append(os.Environ(), "CHROME_BUNDLE_IDENTIFIER="+d.BundleID)
 			return cmd.Run()
 		}
 	}
-	return nil
+	return nil // 既に閉じられてる等
 }
 
 // writeSpawnMarker は uuid 入りの一時 HTML を ~/.cache/projwm/spawn-markers/
@@ -323,6 +340,11 @@ func writeSpawnMarker() (markerURL, path, pageTitle string, err error) {
 }
 
 // SnapshotURLs は指定 window の現在 tab URL 一覧を返す（focus 奪わない）。
+//
+// 除外対象:
+//   - chrome-extension://... (Vivaldi welcome 等)
+//   - about:blank (情報なし)
+//   - file:///.../spawn-markers/*.html (projwm の uuid marker、保存すると永久増殖)
 func (d *Driver) SnapshotURLs(ctx context.Context, wid string) ([]string, error) {
 	urls, err := d.ListTabLinksInWindow(ctx, wid)
 	if err != nil {
@@ -330,12 +352,13 @@ func (d *Driver) SnapshotURLs(ctx context.Context, wid string) ([]string, error)
 	}
 	out := make([]string, 0, len(urls))
 	for _, u := range urls {
-		// chrome-extension://... の welcome 等は除外
 		if strings.HasPrefix(u, "chrome-extension://") {
 			continue
 		}
-		// about:blank も除外（ユーザに restore する意味なし）
 		if u == "about:blank" {
+			continue
+		}
+		if strings.Contains(u, "/spawn-markers/") {
 			continue
 		}
 		out = append(out, u)

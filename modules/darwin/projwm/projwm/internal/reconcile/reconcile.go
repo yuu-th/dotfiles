@@ -439,9 +439,13 @@ func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName str
 	}
 
 	// 3) 完全に不在 → 新規 spawn だが flock で並走 reconcile からの重複 spawn を防ぐ
+	//
+	// **重要 (重複 spawn バグ修正)**: lock の保持期間は **placeZedAfterSpawn 完了まで**。
+	// 旧実装では関数 return 時に defer で release していたため、 spawn 後 Zed が
+	// 完全起動する前に lock 解除 → 別 reconcile が来た時 findZedByTitle で
+	// (まだ window 出てない) 見つからず → 二重 spawn の race が起きていた。
 	if !opts.DryRun {
 		if !acquireZedSpawnLock(title, 6*time.Second) {
-			// 直前で別 reconcile が spawn 中、skip
 			acts = append(acts, Action{
 				Op:     "skip-zed-spawn",
 				Target: title,
@@ -449,19 +453,20 @@ func (r *Reconciler) ensureZedWindow(ctx context.Context, title, cwd, wsName str
 			})
 			return acts
 		}
-		defer releaseZedSpawnLock(title)
+		// release は spawn ブランチの先で、placeZedAfterSpawn の goroutine 内 defer で行う。
 	}
 
 	acts = append(acts, Action{Op: "spawn-zed", Target: title, Detail: cwd})
 	if !opts.DryRun {
 		if err := r.Zed.Spawn(ctx, cwd); err != nil {
 			acts[len(acts)-1].OnError = err
+			releaseZedSpawnLock(title)
 		} else {
-			// spawn 後 polling で配置 + lock を保持して重複防止
+			// spawn 後 polling で配置 + lock を **goroutine 完了時に** release。
+			// この期間中に別 reconcile が来ても acquireZedSpawnLock が timeout して skip。
 			go func() {
+				defer releaseZedSpawnLock(title)
 				r.placeZedAfterSpawn(ctx, title, wsName)
-				// lock は defer で解放されるが、placeZedAfterSpawn が長いので
-				// その間に並走 reconcile が来ても skip される
 			}()
 		}
 	}
