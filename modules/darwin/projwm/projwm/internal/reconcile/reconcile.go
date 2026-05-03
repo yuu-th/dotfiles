@@ -641,11 +641,16 @@ func killPID(pid int) error {
 	return proc.Kill()
 }
 
-// SpawnBrowserWindow は project の browser-N window を Vivaldi に spawn する
-// (v12 paradigm C, 明示イベント専用)。reconcile からは絶対呼ばない。
+// SpawnBrowserWindow は project の browser-N window を Vivaldi に spawn し、
+// active profile で project が assign されている slot (= OmniWM workspace 名)
+// に move する (v12 paradigm C, 明示イベント専用)。reconcile からは絶対呼ばない。
 //
 // idempotent: state.Window.LiveWindowID が現存する → no-op。
 // spawn 成功時、新 window-id を state.Window.LiveWindowID に persist する。
+//
+// move-to-slot: spawn 直前後の OmniWM Vivaldi window 集合 diff で新 window を
+// 識別し、`MoveWindowToWorkspaceByName` で送る。OmniWM query は read のみで
+// focus を奪わない。
 func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w state.Window) Action {
 	a := Action{
 		Op:     "spawn-browser",
@@ -661,6 +666,16 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 		a.Detail = "already live (idempotent, wid=" + w.LiveWindowID + ")"
 		return a
 	}
+
+	// spawn 前の OmniWM Vivaldi window 集合
+	preOmniIDs := map[string]bool{}
+	if r.OmniWM != nil {
+		preWins, _ := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.VivaldiBundleID)
+		for _, pw := range preWins {
+			preOmniIDs[pw.ID] = true
+		}
+	}
+
 	wid, err := r.Chromium.SpawnAndRestoreFocus(ctx, w.BrowserProfile, w.SavedURLs)
 	if err != nil {
 		a.OnError = err
@@ -671,7 +686,72 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 		return a
 	}
 	a.Detail = fmt.Sprintf("profile=%s urls=%d wid=%s", w.BrowserProfile, len(w.SavedURLs), wid)
+
+	// active profile での slot を取得して move-to-ws する
+	if r.OmniWM != nil {
+		slot := findSlotForProject(project)
+		if slot != "" {
+			// 新 OmniWM-side window を polling で待つ（最大 ~6 秒、focus 奪わない）
+			deadline := time.Now().Add(6 * time.Second)
+			var newOmniID string
+			for time.Now().Before(deadline) {
+				time.Sleep(500 * time.Millisecond)
+				wins, qerr := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.VivaldiBundleID)
+				if qerr != nil {
+					continue
+				}
+				for _, pw := range wins {
+					if !preOmniIDs[pw.ID] {
+						newOmniID = pw.ID
+						break
+					}
+				}
+				if newOmniID != "" {
+					break
+				}
+			}
+			if newOmniID != "" {
+				if mvErr := r.OmniWM.MoveWindowToWorkspaceByName(ctx, newOmniID, slot); mvErr != nil {
+					// move 失敗は warn のみ (spawn は成功してるので)
+					a.Detail += " | WARN move-to-ws failed: " + mvErr.Error()
+				} else {
+					a.Detail += " | moved-to-slot=" + slot
+				}
+			} else {
+				a.Detail += " | WARN: omniwm did not see new Vivaldi window within 6s"
+			}
+		}
+	}
 	return a
+}
+
+// findSlotForProject は active profile で project が assign されている slot 名を
+// 返す。複数 slot で同じ project が assigned なら canonical 順 (Q,W,E,...) で最初。
+func findSlotForProject(project string) string {
+	paths, err := state.DefaultPaths()
+	if err != nil {
+		return ""
+	}
+	st, err := state.NewStore(paths).Load()
+	if err != nil || st.ActiveProfile == "" {
+		return ""
+	}
+	prof, ok := st.Profiles[st.ActiveProfile]
+	if !ok {
+		return ""
+	}
+	for _, slot := range []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"} {
+		if prof.Assignments[slot] == project {
+			return slot
+		}
+	}
+	// canonical 順に無ければ任意 slot
+	for s, p := range prof.Assignments {
+		if p == project {
+			return s
+		}
+	}
+	return ""
 }
 
 // SnapshotAndCloseBrowserWindow は project の単一 browser window を snapshot + close
