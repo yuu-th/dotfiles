@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -131,25 +132,45 @@ func newProfileCmd() *cobra.Command {
 		Short: "Switch active profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			s, _, err := loadStore()
+			s, st, err := loadStore()
 			if err != nil {
 				return err
 			}
+			oldActive := st.ActiveProfile
+			newActive := args[0]
+			oldProjects := activeProjectsOfProfile(st, oldActive)
 			err = s.Mutate(func(st *state.State) error {
-				if _, ok := st.Profiles[args[0]]; !ok {
-					return fmt.Errorf("profile %q not found", args[0])
+				if _, ok := st.Profiles[newActive]; !ok {
+					return fmt.Errorf("profile %q not found", newActive)
 				}
-				st.ActiveProfile = args[0]
+				st.ActiveProfile = newActive
 				return nil
 			})
 			if err != nil {
 				return err
 			}
-			// 切替後に reconcile を呼んで windows 操作を実行する
-			// (旧 profile の windows close + 新 profile の windows spawn)
-			// v12 で browser windows もこの reconcile 経路で spawn/close される。
+			// browser ライフサイクル (v12 paradigm C, FR-29):
+			// reconcile は browser に触らないので、ここで明示的に close/spawn を呼ぶ。
+			// 1) 旧 profile で active だが新 profile で active 外になる project の
+			//    browser windows を snapshot + close
+			_, st2, _ := loadStore()
+			newProjects := activeProjectsOfProfile(st2, newActive)
+			for _, projName := range diffProjects(oldProjects, newProjects) {
+				if err := snapshotAndCloseBrowserWindowsForProject(projName); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: close browser for %s: %v\n", projName, err)
+				}
+			}
+			// 2) reconcile (ai/shell/editor の close + spawn)
 			if !rootNoReconcile {
-				return runReconcileOnce()
+				if err := runReconcileOnce(); err != nil {
+					return err
+				}
+			}
+			// 3) 新 profile で active 復帰する project の browser windows を spawn
+			for _, projName := range diffProjects(newProjects, oldProjects) {
+				if err := spawnBrowserWindowsForProject(projName); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: spawn browser for %s: %v\n", projName, err)
+				}
 			}
 			return nil
 		},

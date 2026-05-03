@@ -27,6 +27,12 @@ func newArchiveTopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// browser kind 用に snapshot+close を archive 前に呼ぶ (paradigm C)。
+			// archive 後だと state.Project が p.Archived=true で project lookup
+			// 経路が変わる場合があるので、archived flag セット前に処理しておく。
+			if err := snapshotAndCloseBrowserWindowsForProject(name); err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: close browser before archive: %v\n", err)
+			}
 			err = s.Mutate(func(st *state.State) error {
 				p, ok := st.Projects[name]
 				if !ok {
@@ -76,7 +82,8 @@ func newUnarchiveTopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return s.Mutate(func(st *state.State) error {
+			isNowActive := false
+			if err := s.Mutate(func(st *state.State) error {
 				p, ok := st.Projects[name]
 				if !ok {
 					return fmt.Errorf("project %q not found", name)
@@ -100,12 +107,24 @@ func newUnarchiveTopCmd() *cobra.Command {
 					}
 					prof.Assignments[slot] = name
 					st.Profiles[profile] = prof
+					if profile == st.ActiveProfile {
+						isNowActive = true
+					}
 				} else if profile != "" || slot != "" {
 					return errors.New("--profile and --slot must be specified together")
 				}
 				fmt.Printf("unarchived %s\n", name)
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+			// active profile に戻ってきたなら browser を spawn (paradigm C)
+			if isNowActive {
+				if err := spawnBrowserWindowsForProject(name); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: spawn browser after unarchive: %v\n", err)
+				}
+			}
+			return nil
 		},
 	}
 	c.Flags().String("profile", "", "assign to this profile (optional)")

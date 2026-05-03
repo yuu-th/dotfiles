@@ -68,11 +68,11 @@ func newAddBrowserCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add-browser",
 		Short: "Add a browser window (Chromium-based) bound to a profile and URL list (v12, paradigm C)",
-		Long: `Add a browser-kind window to the project. The window opens in the
-specified Chromium user profile and loads the given URLs. Closed in
-profile switch / archive, re-opened with the saved URL list. cookies and
-login state are preserved by the browser profile (separate from projwm
-profile).`,
+		Long: `Add a browser-kind window to the project. Opens immediately in the
+specified Chromium user profile with the given URLs.
+
+reconcile は browser に触らない (FR-29)。spawn/close はこの cmd や
+profile switch / archive 等の明示イベントでのみ発火する。`,
 		RunE: func(c *cobra.Command, _ []string) error {
 			project, _ := c.Flags().GetString("project")
 			profile, _ := c.Flags().GetString("profile")
@@ -80,7 +80,8 @@ profile).`,
 			if profile == "" {
 				return errors.New("--profile is required (Chromium user profile name, e.g. work / client-x)")
 			}
-			return modifyCurrentProject(project, func(st *state.State, name string) error {
+			var resolvedName string
+			if err := modifyCurrentProject(project, func(st *state.State, name string) error {
 				p := st.Projects[name]
 				newID := state.NextWindowID(p, naming.KindBrowser)
 				p.Windows = append(p.Windows, state.Window{
@@ -90,9 +91,19 @@ profile).`,
 					SavedURLs:      urls,
 				})
 				st.Projects[name] = p
+				resolvedName = name
 				fmt.Printf("added browser-%d (profile=%s, %d urls) to %s\n", newID, profile, len(urls), name)
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+			// 直後 spawn (reconcile では触らないので明示的に呼ぶ)
+			if resolvedName != "" {
+				if err := spawnBrowserWindowsForProject(resolvedName); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: spawn browser: %v\n", err)
+				}
+			}
+			return nil
 		},
 	}
 	c.Flags().String("project", "", "project name (default: focused-slot project)")

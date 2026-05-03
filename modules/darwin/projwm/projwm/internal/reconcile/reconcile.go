@@ -186,7 +186,11 @@ func (r *Reconciler) ensureProjectInSlot(ctx context.Context, projName string, p
 			zedTitle := naming.ZedTitle(p.CWD)
 			acts = append(acts, r.ensureZedWindow(ctx, zedTitle, p.CWD, slot, opts)...)
 		case naming.KindBrowser:
-			acts = append(acts, r.ensureBrowserWindow(ctx, projName, w, opts)...)
+			// **重要**: reconcile は browser に **触らない**（v12 paradigm C 確定）。
+			// browser は user の通常運用 app を兼ねる。closed 状態を尊重し、launchd
+			// の auto-reconcile では絶対に spawn しない。spawn / close は明示
+			// イベント (add-browser / profile switch / archive / unarchive) でのみ
+			// 行う。詳細: queue/projwm-spec.md FR-29, D-50。
 		}
 	}
 	return acts
@@ -451,26 +455,30 @@ func (r *Reconciler) ensureGroupedSession(ctx context.Context, base, clone strin
 }
 
 // closeProjectWindowsKeepTmux は inactive な project の windows を close（tmux は touch しない）。
+//
+// browser kind window は **ここでは扱わない**。reconcile は browser に触らない設計
+// （v12 paradigm C, queue/projwm-spec.md FR-29）。browser の close は profile switch
+// cmd 等の明示イベントから直接呼ばれる。
 func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name string, p state.Project, opts Options) []Action {
 	var acts []Action
 	titles := allProjectTitles(name, p)
 	wins, err := r.queryAllProjwmWindows(ctx)
 	if err != nil {
 		r.logf(opts, "WARN: query: %v", err)
-	} else {
-		for _, w := range wins {
-			if titles[w.Title] {
-				acts = append(acts, r.closeWindow(ctx, w, opts))
-			}
+		return acts
+	}
+	for _, w := range wins {
+		if titles[w.Title] {
+			acts = append(acts, r.closeWindow(ctx, w, opts))
 		}
 	}
-	// browser windows: snapshot URLs → close（focus 復帰付き）。
-	acts = append(acts, r.snapshotAndCloseBrowserWindows(ctx, name, p, opts, false)...)
 	return acts
 }
 
 // purgeArchivedProject は archived project の windows を close、tmux も kill。
-// browser window は state.Window.SavedURLs に snapshot してから close する。
+//
+// browser kind window は **ここでは扱わない**（reconcile から外す原則）。archive
+// cmd 内で snapshot+close を直接呼ぶ。
 func (r *Reconciler) purgeArchivedProject(ctx context.Context, name string, p state.Project, opts Options) []Action {
 	var acts []Action
 	// windows
@@ -483,8 +491,6 @@ func (r *Reconciler) purgeArchivedProject(ctx context.Context, name string, p st
 			}
 		}
 	}
-	// browser windows: snapshot URLs → close（focus 復帰付き）。
-	acts = append(acts, r.snapshotAndCloseBrowserWindows(ctx, name, p, opts, true)...)
 	// tmux
 	for _, w := range p.Windows {
 		switch w.Kind {
@@ -635,80 +641,101 @@ func killPID(pid int) error {
 	return proc.Kill()
 }
 
-// ensureBrowserWindow は project の browser-N window が Vivaldi に存在することを保証する
-// (v12 paradigm C)。
+// SpawnBrowserWindow は project の browser-N window を Vivaldi に spawn する
+// (v12 paradigm C, 明示イベント専用)。reconcile からは絶対呼ばない。
 //
-// idempotent: 既に該当 window がある (marker URL で識別) → no-op。無い → spawn。
-// spawn 時のみ frontmost を保存・復帰する wrapper を通す。
-func (r *Reconciler) ensureBrowserWindow(ctx context.Context, project string, w state.Window, opts Options) []Action {
-	var acts []Action
-	if r.Chromium == nil {
-		return acts
-	}
-	// browser 未起動なら spawn 不要 (idempotent な観点で「browser が起動してれば
-	// reconcile が触る、起動してなければ user が browser を開いた時に projwm が
-	// 改めて呼ぶ」運用)。ただし add-browser 直後の初回 spawn では起動も含む。
-	// idempotent 判定 (browser running 時のみ findByMarker)
-	if r.Chromium.IsRunning() {
-		if _, found, _ := r.Chromium.FindWindowByMarker(ctx, project, w.ID); found {
-			r.logf(opts, "browser-%d for %s already present (idempotent)", w.ID, project)
-			return acts
-		}
-	}
+// 呼ぶ局面:
+//   - cmd add-browser 直後の初回 spawn
+//   - cmd profile switch で active 復帰した project の browser
+//   - cmd unarchive で復活した project の browser
+//
+// idempotent: marker URL で既存 window を検出すれば no-op。
+func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w state.Window) Action {
 	a := Action{
 		Op:     "spawn-browser",
 		Target: fmt.Sprintf("browser-%d:%s", w.ID, project),
 		Detail: fmt.Sprintf("profile=%s urls=%d", w.BrowserProfile, len(w.SavedURLs)),
 	}
-	if !opts.DryRun {
-		if _, err := r.Chromium.SpawnAndRestoreFocus(ctx, project, w.ID, w.BrowserProfile, w.SavedURLs); err != nil {
-			a.OnError = err
+	if r.Chromium == nil {
+		a.OnError = fmt.Errorf("chromium driver not initialized")
+		return a
+	}
+	if r.Chromium.IsRunning() {
+		if _, found, _ := r.Chromium.FindWindowByMarker(ctx, project, w.ID); found {
+			a.Detail = "already present (idempotent)"
+			return a
 		}
 	}
-	acts = append(acts, a)
-	return acts
+	if _, err := r.Chromium.SpawnAndRestoreFocus(ctx, project, w.ID, w.BrowserProfile, w.SavedURLs); err != nil {
+		a.OnError = err
+	}
+	return a
 }
 
-// snapshotAndCloseBrowserWindows は project の browser windows を snapshot + close する。
-// SavedURLs を state に書き戻すために Store.Mutate を呼ぶ (persistArchived=true は
-// archived 用の意味を区別するために残しているが、実装は同じ)。
-func (r *Reconciler) snapshotAndCloseBrowserWindows(ctx context.Context, project string, p state.Project, opts Options, persistArchived bool) []Action {
-	var acts []Action
-	if r.Chromium == nil || !r.Chromium.IsRunning() {
-		return acts
+// SnapshotAndCloseBrowserWindow は project の単一 browser window を snapshot + close
+// し、state.Window.SavedURLs を更新する (v12 paradigm C, 明示イベント専用)。
+//
+// 呼ぶ局面:
+//   - cmd profile switch で active 外になる project の browser
+//   - cmd archive 時の該当 project の browser
+//   - cmd remove --window=browser-N の前段
+//
+// browser 未起動 / live window なし → no-op (saved_urls は前回値が残る)。
+func (r *Reconciler) SnapshotAndCloseBrowserWindow(ctx context.Context, project string, w state.Window) Action {
+	a := Action{
+		Op:     "close-browser",
+		Target: fmt.Sprintf("browser-%d:%s", w.ID, project),
 	}
+	if r.Chromium == nil || !r.Chromium.IsRunning() {
+		a.Detail = "vivaldi not running (no-op)"
+		return a
+	}
+	wid, found, err := r.Chromium.FindWindowByMarker(ctx, project, w.ID)
+	if err != nil || !found {
+		a.Detail = "no live window (no-op)"
+		return a
+	}
+	a.Target = fmt.Sprintf("browser-%d:%s wid=%s", w.ID, project, wid)
+	urls, e := r.Chromium.SnapshotAndCloseAndRestoreFocus(ctx, wid, project, w.ID)
+	if e != nil {
+		a.OnError = e
+		return a
+	}
+	if perr := persistSavedURLs(project, w.ID, urls); perr != nil {
+		a.OnError = perr
+		return a
+	}
+	a.Detail = fmt.Sprintf("snapshot=%d urls", len(urls))
+	return a
+}
+
+// SpawnAllBrowserWindowsInProject は project の全 kind=browser windows を spawn する。
+func (r *Reconciler) SpawnAllBrowserWindowsInProject(ctx context.Context, project string, p state.Project) []Action {
+	var acts []Action
 	for _, w := range p.Windows {
 		if w.Kind != naming.KindBrowser {
 			continue
 		}
-		wid, found, err := r.Chromium.FindWindowByMarker(ctx, project, w.ID)
-		if err != nil || !found {
-			r.logf(opts, "browser-%d for %s: no live window (already closed)", w.ID, project)
+		acts = append(acts, r.SpawnBrowserWindow(ctx, project, w))
+	}
+	return acts
+}
+
+// SnapshotAndCloseAllBrowserWindowsInProject は project の全 kind=browser windows を
+// snapshot + close する。
+func (r *Reconciler) SnapshotAndCloseAllBrowserWindowsInProject(ctx context.Context, project string, p state.Project) []Action {
+	var acts []Action
+	for _, w := range p.Windows {
+		if w.Kind != naming.KindBrowser {
 			continue
 		}
-		a := Action{
-			Op:     "close-browser",
-			Target: fmt.Sprintf("browser-%d:%s wid=%s", w.ID, project, wid),
-		}
-		if !opts.DryRun {
-			urls, e := r.Chromium.SnapshotAndCloseAndRestoreFocus(ctx, wid, project, w.ID)
-			if e != nil {
-				a.OnError = e
-			} else {
-				// state に saved_urls を書き戻す
-				if perr := r.persistSavedURLs(project, w.ID, urls); perr != nil {
-					a.OnError = perr
-				}
-				a.Detail = fmt.Sprintf("snapshot=%d urls", len(urls))
-			}
-		}
-		acts = append(acts, a)
+		acts = append(acts, r.SnapshotAndCloseBrowserWindow(ctx, project, w))
 	}
 	return acts
 }
 
 // persistSavedURLs は state.Window.SavedURLs を書き戻す。
-func (r *Reconciler) persistSavedURLs(project string, browserID int, urls []string) error {
+func persistSavedURLs(project string, browserID int, urls []string) error {
 	paths, err := state.DefaultPaths()
 	if err != nil {
 		return err
