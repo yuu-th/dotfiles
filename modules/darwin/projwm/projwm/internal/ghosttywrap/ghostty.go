@@ -1,17 +1,18 @@
-// Package ghosttywrap (歴史的命名、現在は kitty driver を提供) は projwm の
-// terminal driver。
+// Package ghosttywrap は projwm の terminal driver（純正 Ghostty.app、v11.6）。
 //
-// v11.3 で ghostty → kitty に切替（OmniWM 0.4.8 が macOS 26.x Tahoe + SwiftUI 系
-// app の window を AX 列挙できないバグのため）。kitty を user-space copy して
-// NSPrincipalClass=NSApplication を注入、ad-hoc 再署名する setup-kitty-projwm.sh
-// と組み合わせる。
+// 経緯:
+//   - v11.3 で OmniWM 0.4.8 が SwiftUI WindowGroup の Ghostty を AX 列挙できない
+//     と判断、kitty を user-space copy する方式に逃げた
+//   - v11.6 で根本原因が判明: OmniWM の rule engine は app-rules で
+//     `titleRegex` を指定しないと Ghostty の hidden helper windows と main window を
+//     区別できず disposition=.unmanaged になる（modules/darwin/omniwm/app-rules.nix
+//     に `titleRegex = "^(ai|shell|ai-view)-[0-9]+:"` の rule を追加することで解決）
+//   - これにより純正 Ghostty.app での運用に戻せた
 //
-// 起動規約 (kitty CLI):
+// 起動規約 (Ghostty CLI):
 //
-//	open -na <terminal_app_path> --args -T <title> -d <cwd> tmux new-session -A -s <session>
-//
-// kitty の `--single-instance` は使わない（複数 window をそれぞれ別 OmniWM window
-// として認識させたいため、各 spawn は単一 instance）。
+//	open -na /Applications/Ghostty.app --args \
+//	     --title=<title> --working-directory=<cwd> -e tmux new-session -A -s <session>
 package ghosttywrap
 
 import (
@@ -29,25 +30,25 @@ type Spawner interface {
 // CmdSpawner は実プロセス実行。
 type CmdSpawner struct {
 	// AppPath は terminal .app への path。`~` で始まれば $HOME 展開する。
-	AppPath string  // 既定 "~/Applications/kitty-projwm.app"
-	TmuxBin string  // 既定 "tmux"
+	AppPath string // 既定 "/Applications/Ghostty.app"
+	TmuxBin string // 既定 "tmux"
 }
 
 func (s CmdSpawner) Spawn(ctx context.Context, title, cwd, tmuxSession string) error {
 	app := expandTilde(s.AppPath)
 	if app == "" {
-		app = expandTilde("~/Applications/kitty-projwm.app")
+		app = "/Applications/Ghostty.app"
 	}
 	tb := s.TmuxBin
 	if tb == "" {
 		tb = "tmux"
 	}
-	// open -na <App> --args -T <title> -d <cwd> tmux new-session -A -s <session>
+	// open -na <Ghostty.app> --args --title=<title> --working-directory=<cwd> -e tmux new-session -A -s <session>
 	args := []string{
 		"-na", app, "--args",
-		"-T", title,
-		"-d", cwd,
-		tb, "new-session", "-A", "-s", tmuxSession,
+		"--title=" + title,
+		"--working-directory=" + cwd,
+		"-e", tb, "new-session", "-A", "-s", tmuxSession,
 	}
 	cmd := exec.CommandContext(ctx, "open", args...)
 	out, err := cmd.CombinedOutput()

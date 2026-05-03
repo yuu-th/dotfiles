@@ -30,11 +30,6 @@ let
     };
   };
 
-  # kitty.app をユーザ空間にコピーして OmniWM 互換にする setup スクリプト。
-  # 詳細はスクリプトのコメント参照（queue/projwm-design.md v11.3）。
-  setupKittyProjwm = pkgs.writeShellScriptBin "projwm-setup-kitty"
-    (builtins.readFile ./scripts/setup-kitty-projwm.sh);
-
   # 500ms debounce ラッパ。omniwmctl watch から大量に発火する
   # windows-changed イベントを 1 つの reconcile に集約する。
   reconcileDebounced = pkgs.writeShellScriptBin "projwm-reconcile-debounced" ''
@@ -63,7 +58,7 @@ in {
 
   config = lib.mkIf cfg.enable {
     home-manager.users.${config.myConfig.primaryUser} = { lib, ... }: {
-      home.packages = [ projwm reconcileDebounced setupKittyProjwm ];
+      home.packages = [ projwm reconcileDebounced ];
 
       # config.toml は projwm が無くてもデフォルトで動くため Nix で固定する必要は無いが、
       # ベースラインとして配置（手動編集も可、§6.2.1 fallback）
@@ -71,10 +66,13 @@ in {
         # projwm config (managed by Nix; safe to edit, projwm will pick up changes on restart)
         viewer_workspace = "A"
         slot_names = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]
-        # terminal driver: kitty を ~/Applications/kitty-projwm.app に user-space copy
-        # して NSPrincipalClass 注入で OmniWM 互換にする (v11.3、setup-kitty-projwm.sh)
-        terminal_app_path = "~/Applications/kitty-projwm.app"
-        terminal_bundle_id = "net.kovidgoyal.kitty.projwm"
+        # terminal driver: 純正 Ghostty.app（v11.6）。
+        # OmniWM の app-rules.nix で titleRegex "^(ai|shell|ai-view)-[0-9]+:" rule
+        # を追加することで rule engine が SwiftUI hidden helper windows と区別して
+        # projwm 規約 title の Ghostty window のみを `.managed` 判定 → admit。
+        # kitty user-space copy 方式 (v11.3) は廃止。
+        terminal_app_path = "/Applications/Ghostty.app"
+        terminal_bundle_id = "com.mitchellh.ghostty"
       '';
 
       # 注: home.activation 経由の setup は macOS のセキュリティ制約 (codesign が

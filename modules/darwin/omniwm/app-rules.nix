@@ -48,5 +48,18 @@
   { bundleId = "com.tinkoffsystems.utm";       layout = "float"; }
 
   # ── Ghostty ────────────────────────────────────────────────────────────
-  { bundleId = "com.mitchellh.ghostty";        minWidth = 480.0; minHeight = 240.0; }
+  # projwm が起動する terminal は title="<kind>-<id>:<project>" 規約 (例: ai-1:dotfiles,
+  # shell-1:dotfiles, ai-view-1:dotfiles)。Ghostty の SwiftUI WindowGroup が出す
+  # hidden helper windows (1440x30 layer-0、title 無し) と分離するため、
+  # titleRegex で projwm 規約 title のみ tile 強制管理する。
+  # (Notion #243 で OmniWM owner 推奨の workaround パターン)
+  { bundleId   = "com.mitchellh.ghostty";
+    titleRegex = "^(ai|shell|ai-view)-[0-9]+:";
+    layout     = "tile";
+    minWidth   = 480.0;
+    minHeight  = 240.0; }
+  # Ghostty 一般 (projwm 管理外、最小サイズだけ確保)
+  { bundleId  = "com.mitchellh.ghostty";
+    minWidth  = 480.0;
+    minHeight = 240.0; }
 ]

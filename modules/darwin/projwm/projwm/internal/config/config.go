@@ -29,8 +29,10 @@ func Default() Config {
 	return Config{
 		ViewerWorkspace:  "A",
 		SlotNames:        []string{"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
-		TerminalAppPath:  "~/Applications/kitty-projwm.app",
-		TerminalBundleID: "net.kovidgoyal.kitty.projwm",
+		// v11.6: 純正 Ghostty に切替（app-rules.nix の titleRegex rule で
+		// SwiftUI hidden helper と分離して admit 成功）
+		TerminalAppPath:  "/Applications/Ghostty.app",
+		TerminalBundleID: "com.mitchellh.ghostty",
 	}
 }
 

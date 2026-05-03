@@ -146,13 +146,13 @@ in
   (rules1 "OmniWM: opt+space = toggle Quake terminal"
     (basicShell "spacebar" [ "option" ] (ctl "command toggle-quake-terminal")))
 
-  # ── Option+` → projwm cockpit（kitty 上で projwm tui を spawn）──────────
-  # 設計書 §8.3 の「cockpit を別キーで」を実現。kitty-projwm.app（OmniWM 互換の
-  # user-space 派生）で projwm tui の専用 window を立てる。title="projwm-cockpit"
-  # を持つので app-rules.nix の matcher で float 配置に切替えられる（拡張余地）。
-  (rules1 "projwm: opt+` = open projwm cockpit (kitty + projwm tui)"
+  # ── Option+` → projwm cockpit（純正 Ghostty で projwm tui を spawn、v11.6）──
+  # 設計書 §8.3 の「cockpit を別キーで」を実現。app-rules.nix の titleRegex
+  # rule で title="ai-view-..." 等は projwm 管理対象、cockpit は title="projwm-cockpit"
+  # で float 配置（rule 追加可、現状は通常 window として開く）
+  (rules1 "projwm: opt+` = open projwm cockpit (Ghostty + projwm tui)"
     (basicShell "grave_accent_and_tilde" [ "option" ]
-      "/usr/bin/open -na ~/Applications/kitty-projwm.app --args -T projwm-cockpit -d ~ ${"\${"}HOME${"}"}/.nix-profile/bin/projwm tui"))
+      "/usr/bin/open -na /Applications/Ghostty.app --args --title=projwm-cockpit --working-directory=${"\${"}HOME${"}"} -e ${"\${"}HOME${"}"}/.nix-profile/bin/projwm tui"))
 
   # ──────────────────────────────────────────────────────────────────────────
   # 順序 3: macOS Hide ブロック（左 Cmd 限定、右 Cmd は通す）
