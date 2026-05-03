@@ -37,6 +37,8 @@ func Execute(version string) error {
 	root.AddCommand(newAddAICmd())
 	root.AddCommand(newAddShellCmd())
 	root.AddCommand(newAddEditorCmd())
+	root.AddCommand(newAddBrowserCmd())
+	root.AddCommand(newBrowserCmd())
 	root.AddCommand(newRemoveCmd())
 	root.AddCommand(newArchiveTopCmd())
 	root.AddCommand(newUnarchiveTopCmd())

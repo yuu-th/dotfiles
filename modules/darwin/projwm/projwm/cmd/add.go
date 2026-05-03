@@ -64,6 +64,43 @@ func newAddShellCmd() *cobra.Command {
 	return c
 }
 
+func newAddBrowserCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "add-browser",
+		Short: "Add a browser window (Chromium-based) bound to a profile and URL list (v12, paradigm C)",
+		Long: `Add a browser-kind window to the project. The window opens in the
+specified Chromium user profile and loads the given URLs. Closed in
+profile switch / archive, re-opened with the saved URL list. cookies and
+login state are preserved by the browser profile (separate from projwm
+profile).`,
+		RunE: func(c *cobra.Command, _ []string) error {
+			project, _ := c.Flags().GetString("project")
+			profile, _ := c.Flags().GetString("profile")
+			urls, _ := c.Flags().GetStringArray("url")
+			if profile == "" {
+				return errors.New("--profile is required (Chromium user profile name, e.g. work / client-x)")
+			}
+			return modifyCurrentProject(project, func(st *state.State, name string) error {
+				p := st.Projects[name]
+				newID := state.NextWindowID(p, naming.KindBrowser)
+				p.Windows = append(p.Windows, state.Window{
+					ID:             newID,
+					Kind:           naming.KindBrowser,
+					BrowserProfile: profile,
+					SavedURLs:      urls,
+				})
+				st.Projects[name] = p
+				fmt.Printf("added browser-%d (profile=%s, %d urls) to %s\n", newID, profile, len(urls), name)
+				return nil
+			})
+		},
+	}
+	c.Flags().String("project", "", "project name (default: focused-slot project)")
+	c.Flags().String("profile", "", "Chromium user profile name (required, e.g. work / personal)")
+	c.Flags().StringArray("url", nil, "URL to open in the new browser window (repeatable)")
+	return c
+}
+
 func newAddEditorCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add-editor",
