@@ -747,6 +747,17 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 		return a
 	}
 
+	// **OmniWM 側 識別**: spawn 直前後の Vivaldi window 集合 diff で new OmniWM ID を
+	// 取得 (race-free, sequential spawn 前提)。 marker title 一致は Vivaldi の load
+	// timing で title 変動するため信頼性低く撤去。
+	preOmniIDs := map[string]bool{}
+	if r.OmniWM != nil {
+		preWins, _ := r.OmniWM.QueryWindows(ctx, "--bundle-id", naming.VivaldiBundleID)
+		for _, pw := range preWins {
+			preOmniIDs[pw.ID] = true
+		}
+	}
+
 	res, err := r.Chromium.SpawnAndRestoreFocus(ctx, w.BrowserProfile, w.SavedURLs)
 	if err != nil {
 		a.OnError = err
@@ -758,17 +769,11 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 	}
 	a.Detail = fmt.Sprintf("profile=%s urls=%d wid=%s", w.BrowserProfile, len(w.SavedURLs), res.WindowID)
 
-	// 高速化戦略: reconcile.Run の上層で先に target slot に focus 切替済 (caller 責務)。
-	// OmniWM は新 window を active workspace = slot に自動配置するため、ここでの
-	// move-to-ws は **safety net** として short polling のみ実行 (すでに target slot
-	// にいれば即 return)。
-	//
-	// 識別: spawn 直後 active tab = marker → window title = "<markerTitle> - Vivaldi"。
+	// new OmniWM Vivaldi window を polling で検出 → move-to-ws (or auto-placed)
 	if r.OmniWM != nil {
 		slot := findSlotForProject(project)
 		if slot != "" {
-			expectedTitle := res.MarkerTitle + " - Vivaldi"
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(6 * time.Second)
 			var omniID string
 			var currentWS string
 			for time.Now().Before(deadline) {
@@ -778,7 +783,7 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 					continue
 				}
 				for _, pw := range wins {
-					if pw.Title == expectedTitle {
+					if !preOmniIDs[pw.ID] {
 						omniID = pw.ID
 						currentWS = pw.Workspace.RawName
 						if currentWS == "" {
@@ -797,8 +802,10 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 				} else if mvErr := r.OmniWM.MoveWindowToWorkspaceByName(ctx, omniID, slot); mvErr != nil {
 					a.Detail += " | WARN move-to-ws failed: " + mvErr.Error()
 				} else {
-					a.Detail += " | moved-to-slot=" + slot
+					a.Detail += " | moved-to-slot=" + slot + " (was " + currentWS + ")"
 				}
+			} else {
+				a.Detail += " | WARN: OmniWM did not see new Vivaldi window in 6s"
 			}
 		}
 	}
@@ -877,32 +884,20 @@ func (r *Reconciler) SnapshotAndCloseBrowserWindow(ctx context.Context, project 
 	return a
 }
 
-// SpawnAllBrowserWindowsInProject は project の全 kind=browser windows を **並列 spawn** する。
+// SpawnAllBrowserWindowsInProject は project の全 kind=browser windows を spawn する。
 //
-// uuid marker による race-free 識別 (chromium.SpawnProjectWindow) のため、複数
-// browser を同時に open -na しても各 window は固有 marker URL / title で確実に
-// 区別される。OmniWM への move も並列実行可能。
+// **sequential 実行**: 各 spawn の OmniWM 識別は pre/post window 集合 diff を使う
+// ため、 並列 spawn だと「どの new window が自分のものか」を確実に区別できない
+// (race)。 1 project に browser × N は典型的に 1-2 個なので sequential でも
+// 実用範囲。 多 project の並列化は呼び出し元 (cmd/withFocusBatch) で行う。
 func (r *Reconciler) SpawnAllBrowserWindowsInProject(ctx context.Context, project string, p state.Project) []Action {
-	var (
-		acts   []Action
-		actsMu sync.Mutex
-	)
-	var wg sync.WaitGroup
+	var acts []Action
 	for _, w := range p.Windows {
 		if w.Kind != naming.KindBrowser {
 			continue
 		}
-		w := w
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			a := r.SpawnBrowserWindow(ctx, project, w)
-			actsMu.Lock()
-			acts = append(acts, a)
-			actsMu.Unlock()
-		}()
+		acts = append(acts, r.SpawnBrowserWindow(ctx, project, w))
 	}
-	wg.Wait()
 	return acts
 }
 

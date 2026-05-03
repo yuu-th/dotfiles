@@ -152,7 +152,7 @@ func newProfileCmd() *cobra.Command {
 			// browser ライフサイクル (v12 paradigm C, FR-29):
 			// reconcile は browser に触らないので、ここで明示的に close/spawn を呼ぶ。
 			// 1) 旧 profile で active だが新 profile で active 外になる project の
-			//    browser windows を snapshot + close
+			//    browser windows を snapshot + close (focus 不要、 並列で OK)
 			_, st2, _ := loadStore()
 			newProjects := activeProjectsOfProfile(st2, newActive)
 			for _, projName := range diffProjects(oldProjects, newProjects) {
@@ -166,10 +166,13 @@ func newProfileCmd() *cobra.Command {
 					return err
 				}
 			}
-			// 3) 新 profile で active 復帰する project の browser windows を spawn
-			for _, projName := range diffProjects(newProjects, oldProjects) {
-				if err := spawnBrowserWindowsForProject(projName); err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: spawn browser for %s: %v\n", projName, err)
+			// 3) 新 profile で active 復帰する project の browser windows を **bulk** spawn
+			//    (origWS save/restore を 1 回に集約、 各 project の slot に順次 focus
+			//    切替して spawn → 全完了で origWS 戻す。 race / 二重切替なし)
+			toSpawn := diffProjects(newProjects, oldProjects)
+			if len(toSpawn) > 0 {
+				if err := spawnBrowserWindowsForMultipleProjects(newActive, toSpawn); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: bulk spawn browsers: %v\n", err)
 				}
 			}
 			return nil
