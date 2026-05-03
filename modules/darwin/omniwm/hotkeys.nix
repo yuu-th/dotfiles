@@ -95,7 +95,9 @@
   { binding = "Unassigned";           id = "openMenuAnywhere"; }
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ────────────────────────
-  { binding = "Option+`"; id = "toggleQuakeTerminal"; }
+  # 注: Option+` は projwm の cockpit (kitty で projwm tui を spawn) に振替（v11.4）
+  # OmniWM Quake (libghostty fish scratch) は Option+Shift+` でトグルする
+  { binding = "Option+Shift+`"; id = "toggleQuakeTerminal"; }
 
   # ── 安全装置 / レアな救済 action ────────────────────────────────────────
   # 画面外に流れたウィンドウを呼び戻す（外部モニタを抜いた後など）
