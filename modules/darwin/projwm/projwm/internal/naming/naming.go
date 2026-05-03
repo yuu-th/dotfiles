@@ -110,12 +110,3 @@ const TerminalBundleID = "com.mitchellh.ghostty"
 
 // VivaldiBundleID は browser kind の bundleId（v12）。
 const VivaldiBundleID = "com.vivaldi.Vivaldi"
-
-// BrowserMarkerTitle は browser window の identifying marker tab title を返す。
-// projwm は file:// HTML marker を spawn 直後に navigate して、Window menu の
-// tab list scan で title 一致 → window 識別する（v12, projwm-history.md）。
-//
-//	(1, "dotfiles") → "projwm:dotfiles:1"
-func BrowserMarkerTitle(id int, project string) string {
-	return fmt.Sprintf("projwm:%s:%d", project, id)
-}

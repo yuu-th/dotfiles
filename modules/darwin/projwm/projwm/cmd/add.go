@@ -136,7 +136,7 @@ func newAddEditorCmd() *cobra.Command {
 func newRemoveCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove",
-		Short: "Remove a single window (e.g. ai-2, shell-1, editor-1)",
+		Short: "Remove a single window (e.g. ai-2, shell-1, editor-1, browser-1)",
 		RunE: func(c *cobra.Command, _ []string) error {
 			win, _ := c.Flags().GetString("window")
 			project, _ := c.Flags().GetString("project")
@@ -146,6 +146,30 @@ func newRemoveCmd() *cobra.Command {
 			kind, id, err := parseWinSpec(win)
 			if err != nil {
 				return err
+			}
+			// browser kind なら state mutate 前に live window を close (paradigm C)
+			if kind == naming.KindBrowser {
+				_, st, _ := loadStore()
+				name := project
+				if name == "" {
+					if n, e := resolveCurrentProject(st); e == nil {
+						name = n
+					}
+				}
+				if name != "" {
+					if p, ok := st.Projects[name]; ok {
+						for _, w := range p.Windows {
+							if w.Kind == naming.KindBrowser && w.ID == id && w.LiveWindowID != "" {
+								// 単一 window の close を呼ぶ
+								tmpProj := state.Project{Windows: []state.Window{w}}
+								_ = tmpProj // 使わない
+								if err := snapshotAndCloseSingleBrowser(name, w); err != nil {
+									fmt.Fprintf(os.Stderr, "WARN: close browser before remove: %v\n", err)
+								}
+							}
+						}
+					}
+				}
 			}
 			return modifyCurrentProject(project, func(st *state.State, name string) error {
 				p := st.Projects[name]
@@ -168,7 +192,7 @@ func newRemoveCmd() *cobra.Command {
 			})
 		},
 	}
-	c.Flags().String("window", "", "window spec, e.g. ai-2 / shell-1 / editor-1 (required)")
+	c.Flags().String("window", "", "window spec, e.g. ai-2 / shell-1 / editor-1 / browser-1 (required)")
 	c.Flags().String("project", "", "project name")
 	return c
 }

@@ -212,7 +212,9 @@ func newProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return s.Mutate(func(st *state.State) error {
+			projName := args[1]
+			var becameActive bool
+			if err := s.Mutate(func(st *state.State) error {
 				if st.ActiveProfile == "" {
 					return errors.New("no active profile")
 				}
@@ -220,10 +222,33 @@ func newProfileCmd() *cobra.Command {
 				if prof.Assignments == nil {
 					prof.Assignments = map[string]string{}
 				}
-				prof.Assignments[args[0]] = args[1]
+				// 既に他 slot で同じ project が assigned なら active 状態は不変
+				wasActive := false
+				for _, v := range prof.Assignments {
+					if v == projName {
+						wasActive = true
+						break
+					}
+				}
+				prof.Assignments[args[0]] = projName
 				st.Profiles[st.ActiveProfile] = prof
+				becameActive = !wasActive
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+			// reconcile (ai/shell/editor の spawn) + browser spawn
+			if !rootNoReconcile {
+				if err := runReconcileOnce(); err != nil {
+					return err
+				}
+			}
+			if becameActive {
+				if err := spawnBrowserWindowsForProject(projName); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: spawn browser on assign: %v\n", err)
+				}
+			}
+			return nil
 		},
 	}
 	c.AddCommand(assignCmd)
@@ -237,23 +262,52 @@ func newProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return s.Mutate(func(st *state.State) error {
+			var unassignedProjects []string
+			if err := s.Mutate(func(st *state.State) error {
 				if st.ActiveProfile == "" {
 					return errors.New("no active profile")
 				}
 				prof := st.Profiles[st.ActiveProfile]
-				if _, ok := prof.Assignments[args[0]]; ok {
+				if v, ok := prof.Assignments[args[0]]; ok {
+					unassignedProjects = append(unassignedProjects, v)
 					delete(prof.Assignments, args[0])
 				} else {
 					for k, v := range prof.Assignments {
 						if v == args[0] {
+							unassignedProjects = append(unassignedProjects, v)
 							delete(prof.Assignments, k)
 						}
 					}
 				}
 				st.Profiles[st.ActiveProfile] = prof
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+			// active 外になった project の browser を close
+			// (ai/shell/editor は次の reconcile で close される)
+			for _, projName := range unassignedProjects {
+				// 同 profile の他 slot に同じ project がまだあるか確認
+				_, st2, _ := loadStore()
+				stillActive := false
+				if prof, ok := st2.Profiles[st2.ActiveProfile]; ok {
+					for _, v := range prof.Assignments {
+						if v == projName {
+							stillActive = true
+							break
+						}
+					}
+				}
+				if !stillActive {
+					if err := snapshotAndCloseBrowserWindowsForProject(projName); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: close browser on unassign: %v\n", err)
+					}
+				}
+			}
+			if !rootNoReconcile {
+				return runReconcileOnce()
+			}
+			return nil
 		},
 	})
 

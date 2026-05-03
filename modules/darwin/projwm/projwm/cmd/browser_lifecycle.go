@@ -108,6 +108,26 @@ func snapshotAndCloseBrowserWindowsForProject(projectName string) error {
 	return nil
 }
 
+// snapshotAndCloseSingleBrowser は単一の browser window を snapshot+close する
+// (remove --window=browser-N 用)。
+func snapshotAndCloseSingleBrowser(projectName string, w state.Window) error {
+	cfgRes, err := config.LoadFromDefaultPath()
+	if err != nil {
+		return err
+	}
+	r := reconcile.New(cfgRes.Config)
+	r.Chromium.Logger = os.Stderr
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a := r.SnapshotAndCloseBrowserWindow(ctx, projectName, w)
+	if a.OnError != nil {
+		fmt.Fprintf(os.Stderr, "  ERROR %s %s: %v\n", a.Op, a.Target, a.OnError)
+		return a.OnError
+	}
+	fmt.Fprintf(os.Stderr, "  %s %s  %s\n", a.Op, a.Target, a.Detail)
+	return nil
+}
+
 // activeProjectsOfProfile は profile の Assignments から非 archived project 名を返す。
 func activeProjectsOfProfile(st *state.State, profileName string) []string {
 	prof, ok := st.Profiles[profileName]

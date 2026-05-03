@@ -644,12 +644,8 @@ func killPID(pid int) error {
 // SpawnBrowserWindow は project の browser-N window を Vivaldi に spawn する
 // (v12 paradigm C, 明示イベント専用)。reconcile からは絶対呼ばない。
 //
-// 呼ぶ局面:
-//   - cmd add-browser 直後の初回 spawn
-//   - cmd profile switch で active 復帰した project の browser
-//   - cmd unarchive で復活した project の browser
-//
-// idempotent: marker URL で既存 window を検出すれば no-op。
+// idempotent: state.Window.LiveWindowID が現存する → no-op。
+// spawn 成功時、新 window-id を state.Window.LiveWindowID に persist する。
 func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w state.Window) Action {
 	a := Action{
 		Op:     "spawn-browser",
@@ -660,27 +656,29 @@ func (r *Reconciler) SpawnBrowserWindow(ctx context.Context, project string, w s
 		a.OnError = fmt.Errorf("chromium driver not initialized")
 		return a
 	}
-	if r.Chromium.IsRunning() {
-		if _, found, _ := r.Chromium.FindWindowByMarker(ctx, project, w.ID); found {
-			a.Detail = "already present (idempotent)"
-			return a
-		}
+	// idempotent: 既存 LiveWindowID が現存していれば no-op
+	if w.LiveWindowID != "" && r.Chromium.IsRunning() && r.Chromium.WindowExists(ctx, w.LiveWindowID) {
+		a.Detail = "already live (idempotent, wid=" + w.LiveWindowID + ")"
+		return a
 	}
-	if _, err := r.Chromium.SpawnAndRestoreFocus(ctx, project, w.ID, w.BrowserProfile, w.SavedURLs); err != nil {
+	wid, err := r.Chromium.SpawnAndRestoreFocus(ctx, w.BrowserProfile, w.SavedURLs)
+	if err != nil {
 		a.OnError = err
+		return a
 	}
+	if perr := persistLiveWindowID(project, w.ID, wid); perr != nil {
+		a.OnError = perr
+		return a
+	}
+	a.Detail = fmt.Sprintf("profile=%s urls=%d wid=%s", w.BrowserProfile, len(w.SavedURLs), wid)
 	return a
 }
 
 // SnapshotAndCloseBrowserWindow は project の単一 browser window を snapshot + close
-// し、state.Window.SavedURLs を更新する (v12 paradigm C, 明示イベント専用)。
+// し、state.Window.SavedURLs / LiveWindowID を更新する (v12 paradigm C)。
 //
-// 呼ぶ局面:
-//   - cmd profile switch で active 外になる project の browser
-//   - cmd archive 時の該当 project の browser
-//   - cmd remove --window=browser-N の前段
-//
-// browser 未起動 / live window なし → no-op (saved_urls は前回値が残る)。
+// state.Window.LiveWindowID が空 / stale なら no-op (browser 未起動 or 別 cmd で
+// 既に close 済 等)。
 func (r *Reconciler) SnapshotAndCloseBrowserWindow(ctx context.Context, project string, w state.Window) Action {
 	a := Action{
 		Op:     "close-browser",
@@ -690,18 +688,23 @@ func (r *Reconciler) SnapshotAndCloseBrowserWindow(ctx context.Context, project 
 		a.Detail = "vivaldi not running (no-op)"
 		return a
 	}
-	wid, found, err := r.Chromium.FindWindowByMarker(ctx, project, w.ID)
-	if err != nil || !found {
-		a.Detail = "no live window (no-op)"
+	if w.LiveWindowID == "" {
+		a.Detail = "no live wid in state (no-op)"
 		return a
 	}
-	a.Target = fmt.Sprintf("browser-%d:%s wid=%s", w.ID, project, wid)
-	urls, e := r.Chromium.SnapshotAndCloseAndRestoreFocus(ctx, wid, project, w.ID)
+	if !r.Chromium.WindowExists(ctx, w.LiveWindowID) {
+		// stale wid: state クリアだけ実行
+		_ = persistLiveWindowID(project, w.ID, "")
+		a.Detail = "stale wid (cleared, no-op)"
+		return a
+	}
+	a.Target = fmt.Sprintf("browser-%d:%s wid=%s", w.ID, project, w.LiveWindowID)
+	urls, e := r.Chromium.SnapshotAndCloseAndRestoreFocus(ctx, w.LiveWindowID)
 	if e != nil {
 		a.OnError = e
 		return a
 	}
-	if perr := persistSavedURLs(project, w.ID, urls); perr != nil {
+	if perr := persistSavedURLsAndClearWid(project, w.ID, urls); perr != nil {
 		a.OnError = perr
 		return a
 	}
@@ -734,8 +737,8 @@ func (r *Reconciler) SnapshotAndCloseAllBrowserWindowsInProject(ctx context.Cont
 	return acts
 }
 
-// persistSavedURLs は state.Window.SavedURLs を書き戻す。
-func persistSavedURLs(project string, browserID int, urls []string) error {
+// persistLiveWindowID は state.Window.LiveWindowID を書き戻す。
+func persistLiveWindowID(project string, browserID int, wid string) error {
 	paths, err := state.DefaultPaths()
 	if err != nil {
 		return err
@@ -744,17 +747,42 @@ func persistSavedURLs(project string, browserID int, urls []string) error {
 	return store.Mutate(func(st *state.State) error {
 		p, ok := st.Projects[project]
 		if !ok {
-			return fmt.Errorf("project %q not found in state (snapshot persist)", project)
+			return fmt.Errorf("project %q not found", project)
+		}
+		for i := range p.Windows {
+			w := &p.Windows[i]
+			if w.Kind == naming.KindBrowser && w.ID == browserID {
+				w.LiveWindowID = wid
+				st.Projects[project] = p
+				return nil
+			}
+		}
+		return fmt.Errorf("browser-%d not found in %q", browserID, project)
+	})
+}
+
+// persistSavedURLsAndClearWid は SavedURLs を更新 + LiveWindowID をクリア。
+func persistSavedURLsAndClearWid(project string, browserID int, urls []string) error {
+	paths, err := state.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	store := state.NewStore(paths)
+	return store.Mutate(func(st *state.State) error {
+		p, ok := st.Projects[project]
+		if !ok {
+			return fmt.Errorf("project %q not found", project)
 		}
 		for i := range p.Windows {
 			w := &p.Windows[i]
 			if w.Kind == naming.KindBrowser && w.ID == browserID {
 				w.SavedURLs = urls
+				w.LiveWindowID = ""
 				st.Projects[project] = p
 				return nil
 			}
 		}
-		return fmt.Errorf("browser-%d not found in project %q (snapshot persist)", browserID, project)
+		return fmt.Errorf("browser-%d not found in %q", browserID, project)
 	})
 }
 

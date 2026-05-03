@@ -13,6 +13,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -541,25 +542,12 @@ func (m *Model) cycleProfile() tea.Cmd {
 
 func (m *Model) archiveCurrent(name string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.store.Mutate(func(st *state.State) error {
-			p, ok := st.Projects[name]
-			if !ok {
-				return fmt.Errorf("not found: %s", name)
-			}
-			p.Archived = true
-			st.Projects[name] = p
-			for pn, prof := range st.Profiles {
-				for slot, target := range prof.Assignments {
-					if target == name {
-						delete(prof.Assignments, slot)
-					}
-				}
-				st.Profiles[pn] = prof
-			}
-			return nil
-		})
+		// projwm cmd 経由で実行: archive_top.go の archive-project が
+		// paradigm C 対応 (browser snapshot+close → state mutate → reconcile) を
+		// 一貫して行う。TUI 内の重複実装を避ける。
+		out, err := exec.Command("projwm", "archive-project", name).CombinedOutput()
 		if err != nil {
-			return infoMsg("ERROR: " + err.Error())
+			return infoMsg("ERROR archive: " + strings.TrimSpace(string(out)))
 		}
 		m.refresh()
 		return infoMsg("archived: " + name)
@@ -568,17 +556,9 @@ func (m *Model) archiveCurrent(name string) tea.Cmd {
 
 func (m *Model) unarchiveCurrent(name string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.store.Mutate(func(st *state.State) error {
-			p, ok := st.Projects[name]
-			if !ok {
-				return fmt.Errorf("not found: %s", name)
-			}
-			p.Archived = false
-			st.Projects[name] = p
-			return nil
-		})
+		out, err := exec.Command("projwm", "unarchive", name).CombinedOutput()
 		if err != nil {
-			return infoMsg("ERROR: " + err.Error())
+			return infoMsg("ERROR unarchive: " + strings.TrimSpace(string(out)))
 		}
 		m.refresh()
 		return infoMsg("unarchived: " + name + " (parked; assign to a slot)")
@@ -587,17 +567,10 @@ func (m *Model) unarchiveCurrent(name string) tea.Cmd {
 
 func (m *Model) unassignCurrent(slot string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.store.Mutate(func(st *state.State) error {
-			if st.ActiveProfile == "" {
-				return fmt.Errorf("no active profile")
-			}
-			prof := st.Profiles[st.ActiveProfile]
-			delete(prof.Assignments, slot)
-			st.Profiles[st.ActiveProfile] = prof
-			return nil
-		})
+		// projwm cmd 経由で実行: paradigm C の browser close + reconcile を一貫処理
+		out, err := exec.Command("projwm", "profile", "unassign", slot).CombinedOutput()
 		if err != nil {
-			return infoMsg("ERROR: " + err.Error())
+			return infoMsg("ERROR unassign: " + strings.TrimSpace(string(out)))
 		}
 		m.refresh()
 		return infoMsg("slot " + slot + " unassigned (parked)")

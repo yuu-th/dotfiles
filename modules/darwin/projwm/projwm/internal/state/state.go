@@ -22,14 +22,17 @@ import (
 // title / tmux session 名は **保存しない**。projwm が naming パッケージで
 // (kind, id, project) から決定的に算出する（v11.1 §6.3.2）。
 //
-// kind="browser" の挙動は v12 paradigm C で確定予定（chrome-cli + Chromium profile）。
-// 現状は未実装、reconcile は no-op。
+// kind="browser" は v12 paradigm C: chrome-cli + Chromium profile + 明示
+// イベント駆動 (reconcile は触らない)。識別は LiveWindowID (chrome-cli の
+// window-id) で行い、marker tab は使わない。再起動跨ぎでは LiveWindowID は
+// stale になるが、close 時に not-found なら no-op で安全に抜ける。
 type Window struct {
 	ID             int         `json:"id"`
 	Kind           naming.Kind `json:"kind"`
 	AI             naming.AI   `json:"ai,omitempty"`              // kind=="ai" のみ必須
 	BrowserProfile string      `json:"browser_profile,omitempty"` // kind=="browser" のみ: Chromium user profile 名
-	SavedURLs      []string    `json:"saved_urls,omitempty"`      // kind=="browser" のみ: project archive 時に snapshot
+	SavedURLs      []string    `json:"saved_urls,omitempty"`      // kind=="browser" のみ: snapshot URL 一覧 (close 時に更新)
+	LiveWindowID   string      `json:"live_window_id,omitempty"`  // kind=="browser" のみ: chrome-cli window-id (spawn で設定、close で空)
 }
 
 // Project は 1 つの作業 cwd（典型的には 1 git worktree）。
@@ -253,7 +256,7 @@ func Validate(st *State) error {
 				}
 			}
 			if w.Kind != naming.KindBrowser {
-				if w.BrowserProfile != "" || len(w.SavedURLs) > 0 {
+				if w.BrowserProfile != "" || len(w.SavedURLs) > 0 || w.LiveWindowID != "" {
 					return fmt.Errorf("project %q: window %s has browser_* field but kind != browser", name, key)
 				}
 			}
