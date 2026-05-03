@@ -308,6 +308,9 @@ func (m *Model) windowSubLines(projName string, p state.Project) []string {
 	if len(wins) == 0 {
 		lines = append(lines, dimStyle.Render("  (no windows)"))
 	}
+	if p.BrowserWorkspace != nil && p.BrowserWorkspace.Name != "" {
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  browser  %s:%s", p.BrowserWorkspace.Browser, p.BrowserWorkspace.Name)))
+	}
 	return lines
 }
 

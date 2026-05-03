@@ -27,11 +27,21 @@ type Window struct {
 	AI   naming.AI  `json:"ai,omitempty"` // kind=="ai" のみ必須
 }
 
+// BrowserWorkspace は project に紐づく browser workspace 参照。
+//
+// 現状は Vivaldi のみサポート（v12, projwm-roadmap.md）。Browser 値が
+// "vivaldi" の場合、Name は Vivaldi の workspace 名（Window メニュー内表示名）。
+type BrowserWorkspace struct {
+	Browser string `json:"browser"` // "vivaldi" のみ（v12）
+	Name    string `json:"name"`
+}
+
 // Project は 1 つの作業 cwd（典型的には 1 git worktree）。
 type Project struct {
-	CWD      string   `json:"cwd"`
-	Archived bool     `json:"archived"`
-	Windows  []Window `json:"windows"`
+	CWD              string            `json:"cwd"`
+	Archived         bool              `json:"archived"`
+	Windows          []Window          `json:"windows"`
+	BrowserWorkspace *BrowserWorkspace `json:"browser_workspace,omitempty"`
 }
 
 // Profile は slot 割当の名前付きセット。

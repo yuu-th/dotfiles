@@ -41,6 +41,7 @@ func Execute(version string) error {
 	root.AddCommand(newArchiveTopCmd())
 	root.AddCommand(newUnarchiveTopCmd())
 	root.AddCommand(newTUICmd())
+	root.AddCommand(newBrowserCmd())
 
 	return root.Execute()
 }
