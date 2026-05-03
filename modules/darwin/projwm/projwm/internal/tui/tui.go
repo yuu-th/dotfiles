@@ -95,11 +95,16 @@ const (
 	modeConfirm
 )
 
+// promptState は単一テキスト入力の状態。
+//
+// 設計: enter 時に呼ぶ callback (onSubmit) を closure で渡す。state-based の
+// "purpose" + "aux1" pattern は clear 順序のバグが頻発する (実例: aux1 を
+// clear 後に参照するバグを 2 箇所で連続発生) ため、callback で値を capture する
+// 形に統一した。callback は v=空 の時の cancel 動作も内部で扱う。
 type promptState struct {
-	purpose  string // 例: "new-project", "assign-slot", "unarchive-to-active", "move-project", "add-ai-<proj>", ...
 	question string
 	value    string
-	aux1     string // purpose に応じた追加引数 (例: assign 対象 project / move 対象 project)
+	onSubmit func(value string) tea.Cmd
 	hidden   bool
 }
 
@@ -418,7 +423,14 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ── 既存操作 ─────────────────────────────────────────────────────
 	case "n":
 		if m.filter == "" {
-			return m.startPrompt("new-project", "new project name (cwd basename, ~/dev で探す):")
+			return m.askPrompt(
+				"new project name (cwd basename, ~/dev で探す):",
+				func(v string) tea.Cmd {
+					if v == "" {
+						return infoCmd("new-project cancelled")
+					}
+					return m.createProject(v)
+				})
 		}
 	case "a":
 		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
@@ -426,8 +438,16 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "u":
 		if m.filter == "" && cur.kind == entryArchived {
-			return m.startPrompt("unarchive-to-active",
-				fmt.Sprintf("unarchive %s — slot to assign (active profile %q, blank=parked):", cur.project, m.st.ActiveProfile))
+			project := cur.project
+			activeProfile := m.st.ActiveProfile
+			return m.askPrompt(
+				fmt.Sprintf("unarchive %s — slot to assign (active profile %q, blank=parked):", project, activeProfile),
+				func(slot string) tea.Cmd {
+					if slot == "" {
+						return m.execProjwm("unarchive", project)
+					}
+					return m.execProjwm("unarchive", project, "--profile="+activeProfile, "--slot="+slot)
+				})
 		}
 	case "d":
 		if m.filter == "" && cur.kind == entrySlot {
@@ -440,12 +460,31 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ── 新規: assign / move / window 操作 ────────────────────────────
 	case "m":
 		if m.filter == "" && (cur.kind == entrySlot || cur.kind == entryParked) {
-			return m.startPrompt("move-project",
-				fmt.Sprintf("move %s — target slot (Q,W,E,R,T,Y,U,I,O,P):", cur.project))
+			project := cur.project
+			return m.askPrompt(
+				fmt.Sprintf("move %s — target slot (Q,W,E,R,T,Y,U,I,O,P):", project),
+				func(slot string) tea.Cmd {
+					if slot == "" {
+						return infoCmd("move cancelled")
+					}
+					return tea.Sequence(
+						m.execProjwm("profile", "unassign", project),
+						m.execProjwm("profile", "assign", slot, project),
+					)
+				})
 		}
 	case "A":
 		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
-			return m.startPrompt("add-ai-"+cur.project, "add-ai claude|copilot:")
+			project := cur.project
+			return m.askPrompt(
+				"add-ai claude|copilot (default claude):",
+				func(v string) tea.Cmd {
+					ai := v
+					if ai == "" {
+						ai = "claude"
+					}
+					return m.execProjwm("add-ai", "--project="+project, "--ai="+ai)
+				})
 		}
 	case "S":
 		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
@@ -457,16 +496,44 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "B":
 		if m.filter == "" && cur.project != "" && cur.kind != entryArchived {
-			return m.startPrompt("add-browser-"+cur.project, "add-browser <profile> [url1 url2 ...]:")
+			project := cur.project
+			return m.askPrompt(
+				"add-browser <profile> [url1 url2 ...]:",
+				func(v string) tea.Cmd {
+					fields := strings.Fields(v)
+					if len(fields) == 0 {
+						return infoCmd("add-browser cancelled (need profile)")
+					}
+					args := []string{"add-browser", "--project=" + project, "--profile=" + fields[0]}
+					for _, u := range fields[1:] {
+						args = append(args, "--url="+u)
+					}
+					return m.execProjwm(args...)
+				})
 		}
 	case "X":
 		if m.filter == "" && cur.project != "" {
-			return m.startPrompt("remove-window-"+cur.project, "remove window (e.g. ai-2 / shell-1 / editor-1 / browser-1):")
+			project := cur.project
+			return m.askPrompt(
+				"remove window (e.g. ai-2 / shell-1 / editor-1 / browser-1):",
+				func(spec string) tea.Cmd {
+					if spec == "" {
+						return infoCmd("remove cancelled")
+					}
+					return m.execProjwm("remove", "--project="+project, "--window="+spec)
+				})
 		}
 	// ── profile management ──────────────────────────────────────────
 	case "P":
 		if m.filter == "" {
-			return m.startPrompt("profile-create", "new profile name:")
+			return m.askPrompt(
+				"new profile name:",
+				func(v string) tea.Cmd {
+					if v == "" {
+						return infoCmd("profile-create cancelled")
+					}
+					return m.execProjwm("profile", "create", v)
+				})
 		}
 	case "!":
 		if m.filter == "" && cur.kind == entryProfile {
@@ -474,7 +541,15 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+r":
 		if m.filter == "" && cur.kind == entryProfile {
-			return m.startPrompt("profile-rename-"+cur.profile, "rename profile "+cur.profile+" → ?:")
+			old := cur.profile
+			return m.askPrompt(
+				"rename profile "+old+" → ?:",
+				func(newName string) tea.Cmd {
+					if newName == "" {
+						return infoCmd("rename cancelled")
+					}
+					return m.execProjwm("profile", "rename", old, newName)
+				})
 		}
 	case "?":
 		if m.filter == "" {
@@ -496,15 +571,11 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) startPrompt(purpose, question string) (tea.Model, tea.Cmd) {
+// askPrompt は単一テキスト入力を要求し、enter で onSubmit に value を渡す。
+// onSubmit 内で closure capture した値を使えるので外部 state を持たなくて済む。
+func (m *Model) askPrompt(question string, onSubmit func(value string) tea.Cmd) (tea.Model, tea.Cmd) {
 	m.mode = modePrompt
-	m.prompt = promptState{purpose: purpose, question: question}
-	return m, nil
-}
-
-func (m *Model) startPromptWithAux(purpose, question, aux1 string) (tea.Model, tea.Cmd) {
-	m.mode = modePrompt
-	m.prompt = promptState{purpose: purpose, question: question, aux1: aux1}
+	m.prompt = promptState{question: question, onSubmit: onSubmit}
 	return m, nil
 }
 
@@ -515,76 +586,13 @@ func (m *Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt = promptState{}
 	case "enter":
 		v := strings.TrimSpace(m.prompt.value)
-		purpose := m.prompt.purpose
-		aux1 := m.prompt.aux1
+		cb := m.prompt.onSubmit
 		m.mode = modeNormal
 		m.prompt = promptState{}
-		switch {
-		case purpose == "new-project":
-			return m, m.createProject(v)
-		case purpose == "assign-slot":
-			// value = project name, aux1 = slot
-			if v == "" {
-				return m, infoCmd("assign cancelled (empty project)")
-			}
-			return m, m.execProjwm("profile", "assign", aux1, v)
-		case purpose == "assign-parked":
-			// value = slot, aux1 = project
-			if v == "" {
-				return m, infoCmd("assign cancelled (empty slot)")
-			}
-			return m, m.execProjwm("profile", "assign", v, aux1)
-		case purpose == "unarchive-to-active":
-			// value = slot ("" なら parked), aux1 = project
-			if v == "" {
-				return m, m.execProjwm("unarchive", aux1)
-			}
-			return m, m.execProjwm("unarchive", aux1, "--profile="+m.st.ActiveProfile, "--slot="+v)
-		case purpose == "move-project":
-			// value = target slot, aux1 = project
-			if v == "" {
-				return m, infoCmd("move cancelled")
-			}
-			return m, tea.Sequence(
-				m.execProjwm("profile", "unassign", aux1),
-				m.execProjwm("profile", "assign", v, aux1),
-			)
-		case strings.HasPrefix(purpose, "add-ai-"):
-			project := strings.TrimPrefix(purpose, "add-ai-")
-			ai := v
-			if ai == "" {
-				ai = "claude"
-			}
-			return m, m.execProjwm("add-ai", "--project="+project, "--ai="+ai)
-		case strings.HasPrefix(purpose, "add-browser-"):
-			project := strings.TrimPrefix(purpose, "add-browser-")
-			fields := strings.Fields(v)
-			if len(fields) == 0 {
-				return m, infoCmd("add-browser cancelled (need profile)")
-			}
-			args := []string{"add-browser", "--project=" + project, "--profile=" + fields[0]}
-			for _, u := range fields[1:] {
-				args = append(args, "--url="+u)
-			}
-			return m, m.execProjwm(args...)
-		case strings.HasPrefix(purpose, "remove-window-"):
-			project := strings.TrimPrefix(purpose, "remove-window-")
-			if v == "" {
-				return m, infoCmd("remove cancelled")
-			}
-			return m, m.execProjwm("remove", "--project="+project, "--window="+v)
-		case purpose == "profile-create":
-			if v == "" {
-				return m, infoCmd("profile-create cancelled")
-			}
-			return m, m.execProjwm("profile", "create", v)
-		case strings.HasPrefix(purpose, "profile-rename-"):
-			old := strings.TrimPrefix(purpose, "profile-rename-")
-			if v == "" {
-				return m, infoCmd("rename cancelled")
-			}
-			return m, m.execProjwm("profile", "rename", old, v)
+		if cb == nil {
+			return m, nil
 		}
+		return m, cb(v)
 	case "backspace":
 		if len(m.prompt.value) > 0 {
 			m.prompt.value = m.prompt.value[:len(m.prompt.value)-1]
@@ -632,11 +640,13 @@ func infoCmd(s string) tea.Cmd {
 // activate は entry の種類に応じた既定アクションを実行する (enter キー)。
 //
 // paradigm C 対応:
-//   - entrySlot: workspace に jump (focus)
-//   - entryEmptySlot: prompt で project 名 → assign（assign cmd は paradigm C を通す）
-//   - entryProfile: 外部 cmd で profile switch（paradigm C 通す）
-//   - entryParked: prompt で slot → assign
-//   - entryArchived: prompt で slot → unarchive --profile=active --slot=X
+//   - entrySlot:      workspace に jump (focus)
+//   - entryEmptySlot: prompt で project 名 → assign（paradigm C を通す）
+//   - entryProfile:   外部 cmd で profile switch（paradigm C 通す）
+//   - entryParked:    prompt で slot → assign
+//   - entryArchived:  prompt で slot → unarchive --profile=active --slot=X
+//
+// 値は closure で capture するため、prompt の clear タイミングに依存しない。
 func (m *Model) activate(e entry) (tea.Model, tea.Cmd) {
 	switch e.kind {
 	case entrySlot:
@@ -646,16 +656,38 @@ func (m *Model) activate(e entry) (tea.Model, tea.Cmd) {
 		}
 		return m, infoCmd(fmt.Sprintf("→ %s [%s]", e.project, e.slot))
 	case entryEmptySlot:
-		return m.startPromptWithAux("assign-slot",
-			fmt.Sprintf("assign project to slot [%s] — project name:", e.slot), e.slot)
+		slot := e.slot
+		return m.askPrompt(
+			fmt.Sprintf("assign project to slot [%s] — project name:", slot),
+			func(project string) tea.Cmd {
+				if project == "" {
+					return infoCmd("assign cancelled (empty project)")
+				}
+				return m.execProjwm("profile", "assign", slot, project)
+			})
 	case entryProfile:
 		return m, m.execProjwm("profile", "switch", e.profile)
 	case entryParked:
-		return m.startPromptWithAux("assign-parked",
-			fmt.Sprintf("assign %s — slot (Q,W,E,R,T,Y,U,I,O,P):", e.project), e.project)
+		project := e.project
+		return m.askPrompt(
+			fmt.Sprintf("assign %s — slot (Q,W,E,R,T,Y,U,I,O,P):", project),
+			func(slot string) tea.Cmd {
+				if slot == "" {
+					return infoCmd("assign cancelled (empty slot)")
+				}
+				return m.execProjwm("profile", "assign", slot, project)
+			})
 	case entryArchived:
-		return m.startPromptWithAux("unarchive-to-active",
-			fmt.Sprintf("unarchive %s — slot (active profile %q, blank=parked):", e.project, m.st.ActiveProfile), e.project)
+		project := e.project
+		activeProfile := m.st.ActiveProfile
+		return m.askPrompt(
+			fmt.Sprintf("unarchive %s — slot (active profile %q, blank=parked):", project, activeProfile),
+			func(slot string) tea.Cmd {
+				if slot == "" {
+					return m.execProjwm("unarchive", project)
+				}
+				return m.execProjwm("unarchive", project, "--profile="+activeProfile, "--slot="+slot)
+			})
 	}
 	return m, nil
 }
