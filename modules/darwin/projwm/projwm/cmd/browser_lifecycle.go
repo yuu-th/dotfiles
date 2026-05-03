@@ -61,11 +61,14 @@ func findSlotInProfile(st *state.State, profileName, projectName string) string 
 // withFocusBatch は origWS を保存し、 各 item の slot に順次 focus → fn を実行
 // → 全完了後に origWS 戻す。 wrapper 内の fn では更なる focus 切替をしない。
 //
-// 単一 / 複数 project 両方対応 (items=1 でも安全)。
-// items の Slot が "" の要素は focus 切替 skip。
+// **巻き込み防止**: focus 切替の前に **既存 window 集合 + 各 window の現 ws** を
+// snapshot。 fn 全完了後、 snapshot に存在した window が違う ws に居たら
+// 元 ws に戻す (user が手で開いた他 app の window が focus 切替で巻き込まれる
+// 問題への対処、 user 報告)。
+//
+// items=1 でも安全。 items の Slot が "" の要素は focus 切替 skip。
 func withFocusBatch(ctx context.Context, oc *omniwm.Client, items []slotProjectPair, fn func(slotProjectPair) error) error {
 	if oc == nil || len(items) == 0 {
-		// focus 管理なしで実行
 		var firstErr error
 		for _, it := range items {
 			if err := fn(it); err != nil && firstErr == nil {
@@ -78,7 +81,35 @@ func withFocusBatch(ctx context.Context, oc *omniwm.Client, items []slotProjectP
 	if w, e := oc.ActiveWorkspaceName(ctx); e == nil {
 		origWS = w
 	}
+	// 既存 window の現 ws をスナップショット
+	preWS := map[string]string{} // window-id → ws name (rawName or displayName)
+	if preWins, perr := oc.QueryWindows(ctx); perr == nil {
+		for _, w := range preWins {
+			ws := w.Workspace.RawName
+			if ws == "" {
+				ws = w.Workspace.DisplayName
+			}
+			preWS[w.ID] = ws
+		}
+	}
 	defer func() {
+		// snapshot に存在した window で、 ws が変わっているもの (= 巻き込まれて
+		// 移動した projwm 関係外 window) を元 ws に戻す
+		if postWins, perr := oc.QueryWindows(ctx); perr == nil {
+			for _, w := range postWins {
+				origForW, ok := preWS[w.ID]
+				if !ok {
+					continue
+				}
+				curWS := w.Workspace.RawName
+				if curWS == "" {
+					curWS = w.Workspace.DisplayName
+				}
+				if curWS != origForW && origForW != "" {
+					_ = oc.MoveWindowToWorkspaceByName(ctx, w.ID, origForW)
+				}
+			}
+		}
 		if origWS != "" {
 			_ = oc.FocusWorkspaceByName(ctx, origWS)
 		}

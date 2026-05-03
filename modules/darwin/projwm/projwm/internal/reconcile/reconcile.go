@@ -585,6 +585,9 @@ func (r *Reconciler) ensureGroupedSession(ctx context.Context, base, clone strin
 // browser kind window は **ここでは扱わない**。reconcile は browser に触らない設計
 // （v12 paradigm C, queue/projwm-spec.md FR-29）。browser の close は profile switch
 // cmd 等の明示イベントから直接呼ばれる。
+//
+// 高速化: 複数 window の AX close を **1 つの osascript invoke** で batch 実行
+// (osascript 起動 overhead 1 回に圧縮)。
 func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name string, p state.Project, opts Options) []Action {
 	var acts []Action
 	titles := allProjectTitles(name, p)
@@ -593,10 +596,15 @@ func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name strin
 		r.logf(opts, "WARN: query: %v", err)
 		return acts
 	}
+	byBundle := map[string][]string{}
 	for _, w := range wins {
 		if titles[w.Title] {
-			acts = append(acts, r.closeWindow(ctx, w, opts))
+			acts = append(acts, Action{Op: "close-window", Target: w.ID, Detail: w.Title})
+			byBundle[w.BundleID] = append(byBundle[w.BundleID], w.Title)
 		}
+	}
+	if !opts.DryRun && len(byBundle) > 0 {
+		closeWindowsBatch(ctx, byBundle)
 	}
 	return acts
 }
@@ -605,16 +613,23 @@ func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name strin
 //
 // browser kind window は **ここでは扱わない**（reconcile から外す原則）。archive
 // cmd 内で snapshot+close を直接呼ぶ。
+//
+// 高速化: AX close を batch 実行 (closeProjectWindowsKeepTmux と同様)。
 func (r *Reconciler) purgeArchivedProject(ctx context.Context, name string, p state.Project, opts Options) []Action {
 	var acts []Action
 	// windows
 	titles := allProjectTitles(name, p)
 	wins, err := r.queryAllProjwmWindows(ctx)
 	if err == nil {
+		byBundle := map[string][]string{}
 		for _, w := range wins {
 			if titles[w.Title] {
-				acts = append(acts, r.closeWindow(ctx, w, opts))
+				acts = append(acts, Action{Op: "close-window", Target: w.ID, Detail: w.Title})
+				byBundle[w.BundleID] = append(byBundle[w.BundleID], w.Title)
 			}
+		}
+		if !opts.DryRun && len(byBundle) > 0 {
+			closeWindowsBatch(ctx, byBundle)
 		}
 	}
 	// tmux
@@ -645,49 +660,93 @@ func (r *Reconciler) killTmux(ctx context.Context, session string, opts Options)
 func (r *Reconciler) closeWindow(ctx context.Context, w omniwm.Window, opts Options) Action {
 	a := Action{Op: "close-window", Target: w.ID, Detail: w.Title}
 	if !opts.DryRun {
-		// **重要**: PID kill は app の全 window を巻き込んで殺すため、 user が他に
-		// 開いている関係ない window (例: 別 cwd の Zed、 別 tab の Vivaldi 等) を
-		// 道連れにする (user 報告: profile 切替で関係ない window が巻き込まれる)。
-		// AX 経由で **指定 window のみ close** に変更。
-		// AX close 不可な場合のみ fallback で PID kill。
-		closed := closeWindowByPIDAndTitle(ctx, w.PID, w.Title)
+		// AX 経由で specific window のみ close (同 app の他 window は影響なし)
+		closed := closeWindowByBundleAndTitle(ctx, w.BundleID, w.Title)
 		if !closed && w.PID > 0 {
-			_ = killPID(w.PID)
+			_ = killPID(w.PID) // fallback (壊れた app の保険)
 		}
 	}
 	return a
 }
 
-// closeWindowByPIDAndTitle は AX で specific app の specific title の window のみ
-// close する (同 app の他 window は生き残る)。
-// 成功時 true。 AX 不可 / window 不在 / close button なし → false。
-func closeWindowByPIDAndTitle(ctx context.Context, pid int, title string) bool {
-	if pid <= 0 || title == "" {
+// closeWindowsBatch は複数 window を **1 つの osascript invoke** で AX close する。
+// osascript 起動 overhead (~100ms × N) を 1 回に圧縮するため profile 切替時の
+// 大量 close で大幅高速化 (user 報告: 「全部消えるが時間かかりすぎ」)。
+//
+// 入力: bundleID → titles[] の map。
+// 戻り値: 成功した (bundleID, title) の数。
+func closeWindowsBatch(ctx context.Context, byBundle map[string][]string) int {
+	if len(byBundle) == 0 {
+		return 0
+	}
+	var sb strings.Builder
+	sb.WriteString(`tell application "System Events"` + "\n")
+	sb.WriteString(`set closedCount to 0` + "\n")
+	for bundleID, titles := range byBundle {
+		if bundleID == "" || len(titles) == 0 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf(`try
+  tell (first application process whose bundle identifier is "%s")
+    repeat with t in {`, escapeASLiteral(bundleID)))
+		for i, t := range titles {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(`"` + escapeASLiteral(t) + `"`)
+		}
+		sb.WriteString(`}
+      try
+        set ws to (every window whose name is t)
+        repeat with w in ws
+          try
+            set cb to value of attribute "AXCloseButton" of w
+            if cb is not missing value then
+              perform action "AXPress" of cb
+              set closedCount to closedCount + 1
+            end if
+          end try
+        end repeat
+      end try
+    end repeat
+  end tell
+end try
+`)
+	}
+	sb.WriteString(`return closedCount` + "\n")
+	sb.WriteString(`end tell` + "\n")
+	out, err := exec.CommandContext(ctx, "osascript", "-e", sb.String()).Output()
+	if err != nil {
+		return 0
+	}
+	var n int
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+	return n
+}
+
+// closeWindowByBundleAndTitle は単発 AX close (batch にできない単独経路用)。
+// bundle identifier で process を直接 lookup するので every process iterate なし。
+func closeWindowByBundleAndTitle(ctx context.Context, bundleID, title string) bool {
+	if bundleID == "" || title == "" {
 		return false
 	}
 	script := fmt.Sprintf(`
 tell application "System Events"
-  set targetPid to %d
-  repeat with p in (every process)
-    try
-      if unix id of p is targetPid then
-        repeat with w in (every window of p)
-          try
-            if name of w is "%s" then
-              set cb to value of attribute "AXCloseButton" of w
-              if cb is not missing value then
-                perform action "AXPress" of cb
-                return "closed"
-              end if
-            end if
-          end try
-        end repeat
-      end if
-    end try
-  end repeat
+  try
+    tell (first application process whose bundle identifier is "%s")
+      try
+        set w to (first window whose name is "%s")
+        set cb to value of attribute "AXCloseButton" of w
+        if cb is not missing value then
+          perform action "AXPress" of cb
+          return "closed"
+        end if
+      end try
+    end tell
+  end try
 end tell
 return "miss"
-`, pid, escapeASLiteral(title))
+`, escapeASLiteral(bundleID), escapeASLiteral(title))
 	out, err := exec.CommandContext(ctx, "osascript", "-e", script).Output()
 	if err != nil {
 		return false
