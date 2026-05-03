@@ -516,37 +516,38 @@ func (m *Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		v := strings.TrimSpace(m.prompt.value)
 		purpose := m.prompt.purpose
+		aux1 := m.prompt.aux1
 		m.mode = modeNormal
 		m.prompt = promptState{}
 		switch {
 		case purpose == "new-project":
 			return m, m.createProject(v)
 		case purpose == "assign-slot":
-			// value = project name, slot は purpose に詰めない → 別 field
-			return m, m.execProjwm("profile", "assign", m.prompt.aux1, v)
+			// value = project name, aux1 = slot
+			if v == "" {
+				return m, infoCmd("assign cancelled (empty project)")
+			}
+			return m, m.execProjwm("profile", "assign", aux1, v)
 		case purpose == "assign-parked":
-			// value = slot, project は aux1
+			// value = slot, aux1 = project
 			if v == "" {
 				return m, infoCmd("assign cancelled (empty slot)")
 			}
-			return m, m.execProjwm("profile", "assign", v, m.prompt.aux1)
+			return m, m.execProjwm("profile", "assign", v, aux1)
 		case purpose == "unarchive-to-active":
-			// value = slot ("" なら parked)
-			project := m.prompt.aux1
+			// value = slot ("" なら parked), aux1 = project
 			if v == "" {
-				return m, m.execProjwm("unarchive", project)
+				return m, m.execProjwm("unarchive", aux1)
 			}
-			return m, m.execProjwm("unarchive", project, "--profile="+m.st.ActiveProfile, "--slot="+v)
+			return m, m.execProjwm("unarchive", aux1, "--profile="+m.st.ActiveProfile, "--slot="+v)
 		case purpose == "move-project":
-			// value = target slot, project は aux1
-			project := m.prompt.aux1
+			// value = target slot, aux1 = project
 			if v == "" {
 				return m, infoCmd("move cancelled")
 			}
-			// move = unassign 元 slot + assign 新 slot。簡略: unassign by project name then assign。
 			return m, tea.Sequence(
-				m.execProjwm("profile", "unassign", project),
-				m.execProjwm("profile", "assign", v, project),
+				m.execProjwm("profile", "unassign", aux1),
+				m.execProjwm("profile", "assign", v, aux1),
 			)
 		case strings.HasPrefix(purpose, "add-ai-"):
 			project := strings.TrimPrefix(purpose, "add-ai-")
