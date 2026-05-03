@@ -86,34 +86,22 @@ func (r *Reconciler) Run(ctx context.Context, st *state.State, opts Options) ([]
 
 	// 1) active profile の slot 配置
 	//
-	// 高速化戦略 (user 提案): spawn 時に move-to-ws polling するのではなく、
-	// **先に target slot に focus 切替** して、 OmniWM の auto-placement で新 window
-	// が active workspace に自動配置されることに乗る。終了で元 workspace に戻す。
-	// move-to-ws の 6s polling × N が消えるため大幅高速化。
+	// **重要**: reconcile.Run では OmniWM workspace を切替えない。
+	// 理由: launchd auto-reconcile (windows-changed watch / periodic) が頻発で
+	// 走るため、ここで focus 切替すると「reconcile が ws 変える → window 状態変化
+	// 検知 → 再 reconcile」の無限ループになる (user 報告)。
+	// focus 切替戦略は明示イベント (spawnBrowserWindowsForProject 等) のみで使う。
+	// 各 spawn 関数 (ensureGhosttyWindow / ensureZedWindow) は内部 polling +
+	// move-to-ws で idempotent に動くので reconcile 経路では focus 不要。
 	if st.ActiveProfile != "" {
 		active := st.Profiles[st.ActiveProfile].Assignments
-		// 現 OmniWM workspace を保存
-		var origWS string
-		if r.OmniWM != nil && !opts.DryRun {
-			if w, e := r.OmniWM.ActiveWorkspaceName(ctx); e == nil {
-				origWS = w
-			}
-		}
-		// 各 project に対して slot 切替 → spawn → 同じ slot にとどめる
 		for slot, projName := range active {
 			p := st.Projects[projName]
 			if p.Archived {
 				r.logf(opts, "WARN: archived project %q is in active assignments (skipped)", projName)
 				continue
 			}
-			if r.OmniWM != nil && !opts.DryRun {
-				_ = r.OmniWM.FocusWorkspaceByName(ctx, slot)
-			}
 			actions = append(actions, r.ensureProjectInSlot(ctx, projName, p, slot, opts)...)
-		}
-		// 元 workspace に戻す (user の見ていた画面に復帰)
-		if r.OmniWM != nil && !opts.DryRun && origWS != "" {
-			_ = r.OmniWM.FocusWorkspaceByName(ctx, origWS)
 		}
 	}
 

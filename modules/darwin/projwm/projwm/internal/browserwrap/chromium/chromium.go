@@ -90,21 +90,20 @@ func isChromiumProc(name string) bool {
 
 // withFocusRestore は fn 実行の前後で frontmost を保存・復帰する。
 //
-// browser は new-window 後に「welcome page loading 完了」「onboarding modal 表示」等
-// で遅延して focus を奪い返してくる。defer 内で複数回 (合計 ~3 秒) Activate を試みる。
+// 旧実装は「Vivaldi の遅延 grab」対抗で 0/0.5/1/1.5s の多段 Activate を
+// していたが、 cmd 完了後にも遅延 Activate が残り、 ユーザの作業中アプリと
+// browser の間で **focus が行き来し続けるループ** の原因になっていた
+// (user 報告)。 これを 1 回の即時 Activate に簡素化する。
+// 残存する遅延 grab は spawn cmd の上層で focus 切替戦略 (slot ws へ switch)
+// により対処する。
 func (d *Driver) withFocusRestore(fn func() error) error {
 	prev, _ := Frontmost()
 	defer func() {
 		if prev == "" || isChromiumProc(prev) {
 			return
 		}
-		for _, delay := range []time.Duration{0, 500 * time.Millisecond, 1 * time.Second, 1500 * time.Millisecond} {
-			if delay > 0 {
-				time.Sleep(delay)
-			}
-			if rerr := Activate(prev); rerr != nil {
-				d.logf("WARN: restore frontmost %q: %v", prev, rerr)
-			}
+		if rerr := Activate(prev); rerr != nil {
+			d.logf("WARN: restore frontmost %q: %v", prev, rerr)
 		}
 	}()
 	return fn()
