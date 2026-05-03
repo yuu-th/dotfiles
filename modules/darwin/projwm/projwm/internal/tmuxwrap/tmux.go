@@ -95,6 +95,21 @@ func (c *Client) KillSession(ctx context.Context, name string) error {
 	return err
 }
 
+// SendKeys は target session の最初の pane にキーストローク（or 文字列）を送る。
+// 例: SendKeys(ctx, "ai-1/dotfiles", "claude", "Enter") → "claude" 打鍵 → Enter
+//
+// projwm-design.md §5.1 の「AI が tmux session で走る」ために、新規 session
+// 作成直後に AI コマンドを発行する用途で使う。
+//
+// 注: tmux send-keys の `-t` は pane を期待する。session 名のみ渡すと「最初の
+// window の最初の pane」と解釈される（`session:0.0` 相当）。`=session` 構文は
+// 曖昧解決用なので send-keys では使えない（"can't find pane: =name" エラー）。
+func (c *Client) SendKeys(ctx context.Context, target string, keys ...string) error {
+	args := append([]string{"send-keys", "-t", target}, keys...)
+	_, err := c.exec.Run(ctx, args...)
+	return err
+}
+
 // ListSessions は全 session 名を返す。
 func (c *Client) ListSessions(ctx context.Context) ([]string, error) {
 	out, err := c.exec.Run(ctx, "list-sessions", "-F", "#{session_name}")

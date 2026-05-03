@@ -36,6 +36,18 @@ func IsValidAI(a AI) bool {
 	return a == AIClaude || a == AICopilot
 }
 
+// AICommand は AI 種別から起動コマンドを返す（projwm-design.md §5.1: 「AI 本体（Claude
+// or Copilot）」が tmux session で走る）。tmux send-keys で打鍵する文字列。
+func AICommand(a AI) string {
+	switch a {
+	case AIClaude:
+		return "claude"
+	case AICopilot:
+		return "copilot"
+	}
+	return ""
+}
+
 // GhosttyTitle は ai/shell window の ghostty title を返す。
 //
 //	(KindAI, 1, "dotfiles")    → "ai-1:dotfiles"

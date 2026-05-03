@@ -145,7 +145,30 @@ func (r *Reconciler) ensureProjectInSlot(ctx context.Context, projName string, p
 		case naming.KindAI, naming.KindShell:
 			title := naming.GhosttyTitle(w.Kind, w.ID, projName)
 			session := naming.TmuxSession(w.Kind, w.ID, projName)
+
+			// 新規 tmux session 作成 → AI window なら AI コマンドを送る (送る前後で
+			// session 在の状態が変わるので、事前 has-session で「新規だった」を記録)
+			wasMissing := false
+			if hasTmux, _ := r.Tmux.HasSession(ctx, session); !hasTmux {
+				wasMissing = true
+			}
 			acts = append(acts, r.ensureGhosttyWindow(ctx, title, session, p.CWD, slot, opts)...)
+			if wasMissing && w.Kind == naming.KindAI && !opts.DryRun {
+				if cmd := naming.AICommand(w.AI); cmd != "" {
+					// shell prompt が ready になるのを少し待ってから打鍵
+					time.Sleep(300 * time.Millisecond)
+					if err := r.Tmux.SendKeys(ctx, session, cmd, "Enter"); err != nil {
+						r.logf(opts, "WARN: AI command send-keys failed (%s): %v", session, err)
+					} else {
+						acts = append(acts, Action{
+							Op:     "ai-launch",
+							Target: session,
+							Detail: cmd,
+						})
+					}
+				}
+			}
+
 			if w.Kind == naming.KindAI {
 				vSession := naming.ViewerTmuxSession(w.ID, projName)
 				vTitle := naming.ViewerGhosttyTitle(w.ID, projName)

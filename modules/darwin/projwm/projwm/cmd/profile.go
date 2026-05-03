@@ -135,14 +135,22 @@ func newProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return s.Mutate(func(st *state.State) error {
+			err = s.Mutate(func(st *state.State) error {
 				if _, ok := st.Profiles[args[0]]; !ok {
 					return fmt.Errorf("profile %q not found", args[0])
 				}
 				st.ActiveProfile = args[0]
 				return nil
 			})
-			// TODO: trigger reconcile (windows-only switching) — Phase 3
+			if err != nil {
+				return err
+			}
+			// 切替後に reconcile を呼んで windows 操作を実行する
+			// (旧 profile の windows close + 新 profile の windows spawn)
+			if !rootNoReconcile {
+				return runReconcileOnce()
+			}
+			return nil
 		},
 	})
 
