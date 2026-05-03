@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -500,7 +501,7 @@ func (r *Reconciler) waitForZedWindow(parentCtx context.Context, title string, t
 }
 
 func (r *Reconciler) placeZedAfterSpawn(parentCtx context.Context, title, wsName string) {
-	// Zed 起動は ghostty より重いことがあるので timeout は長めに（POC-20 観測待ち）
+	// Zed 起動は ghostty より重いことがあるので timeout は長めに
 	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
 	defer cancel()
 	deadline := time.Now().Add(10 * time.Second)
@@ -517,12 +518,52 @@ func (r *Reconciler) placeZedAfterSpawn(parentCtx context.Context, title, wsName
 					if w.Workspace.RawName != wsName && w.Workspace.DisplayName != wsName {
 						_ = r.OmniWM.MoveWindowToWorkspaceByName(ctx, w.ID, wsName)
 					}
+					// target window 確認後、 同 process の余分な Zed windows
+					// (welcome "empty project" / 重複 dotfiles 等) を AX close
+					closeExtraZedWindows(ctx, title)
 					return
 				}
 			}
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+}
+
+// closeExtraZedWindows は Zed process 内で target title と一致しない window と
+// 同 title の重複 (2 つ目以降) を AX 経由で close する。
+//
+// 背景: Zed は --user-data-dir 起動時の welcome / empty project window や
+// session restore 残骸で複数 window を出すことがある。 projwm は特定 title の
+// 1 window だけを管理対象とするため、 余剰は close。
+//
+// 実装: AXCloseButton attribute を取って AXPress action を投げる方式
+// (実機で動作確認済、 文法的に subrole filter は AppleScript に通らない)。
+func closeExtraZedWindows(ctx context.Context, keepTitle string) {
+	script := fmt.Sprintf(`
+tell application "System Events"
+  tell process "Zed"
+    set keepName to "%s"
+    set keptOne to false
+    set wins to every window
+    repeat with w in wins
+      try
+        set wn to name of w
+        if wn is keepName and not keptOne then
+          set keptOne to true
+        else
+          try
+            set cb to value of attribute "AXCloseButton" of w
+            if cb is not missing value then
+              perform action "AXPress" of cb
+            end if
+          end try
+        end if
+      end try
+    end repeat
+  end tell
+end tell
+`, keepTitle)
+	_ = exec.CommandContext(ctx, "osascript", "-e", script).Run()
 }
 
 // ensureGroupedSession は viewer 用 grouped clone を確保する。
