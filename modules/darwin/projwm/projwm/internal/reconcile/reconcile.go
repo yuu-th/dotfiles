@@ -96,7 +96,14 @@ func (r *Reconciler) Run(ctx context.Context, st *state.State, opts Options) ([]
 	// move-to-ws で idempotent に動くので reconcile 経路では focus 不要。
 	if st.ActiveProfile != "" {
 		active := st.Profiles[st.ActiveProfile].Assignments
-		for slot, projName := range active {
+		// slot_names 順でイテレートして WS A への viewer spawn 順を決定論的に保つ。
+		// map 反復は非決定論的なので、slot_names で順序を固定しないと
+		// reconcile 毎に viewer の column 順が変わる。
+		for _, slot := range r.Cfg.SlotNames {
+			projName, ok := active[slot]
+			if !ok {
+				continue
+			}
 			p := st.Projects[projName]
 			if p.Archived {
 				r.logf(opts, "WARN: archived project %q is in active assignments (skipped)", projName)
@@ -597,14 +604,23 @@ func (r *Reconciler) closeProjectWindowsKeepTmux(ctx context.Context, name strin
 		return acts
 	}
 	byBundle := map[string][]string{}
+	var pids []int
 	for _, w := range wins {
 		if titles[w.Title] {
 			acts = append(acts, Action{Op: "close-window", Target: w.ID, Detail: w.Title})
 			byBundle[w.BundleID] = append(byBundle[w.BundleID], w.Title)
+			if w.PID > 0 {
+				pids = append(pids, w.PID)
+			}
 		}
 	}
 	if !opts.DryRun && len(byBundle) > 0 {
 		closeWindowsBatch(ctx, byBundle)
+		// Ghostty は 1 プロセス = 1 ウィンドウ構成のため AX close が効かない。
+		// PID kill で確実に閉じる (tmux session は alive のまま)。
+		for _, pid := range pids {
+			_ = killPID(pid)
+		}
 	}
 	return acts
 }
@@ -622,14 +638,21 @@ func (r *Reconciler) purgeArchivedProject(ctx context.Context, name string, p st
 	wins, err := r.queryAllProjwmWindows(ctx)
 	if err == nil {
 		byBundle := map[string][]string{}
+		var pids []int
 		for _, w := range wins {
 			if titles[w.Title] {
 				acts = append(acts, Action{Op: "close-window", Target: w.ID, Detail: w.Title})
 				byBundle[w.BundleID] = append(byBundle[w.BundleID], w.Title)
+				if w.PID > 0 {
+					pids = append(pids, w.PID)
+				}
 			}
 		}
 		if !opts.DryRun && len(byBundle) > 0 {
 			closeWindowsBatch(ctx, byBundle)
+			for _, pid := range pids {
+				_ = killPID(pid)
+			}
 		}
 	}
 	// tmux

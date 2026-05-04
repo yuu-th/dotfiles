@@ -139,6 +139,17 @@ func newProfileCmd() *cobra.Command {
 			oldActive := st.ActiveProfile
 			newActive := args[0]
 			oldProjects := activeProjectsOfProfile(st, oldActive)
+			// (j) old active で out になる project の layout を mutate 前に snapshot
+			//     (slot は old profile での slot 必要なので mutate 前に取る)
+			// 注: newProjects は mutate 後に再 load するが、 ここでは old active
+			//     視点で居る project のみ対象なので、 oldActive を渡す。
+			//     差分計算は new load 後に行うが、 snapshot 自体は全 oldProjects
+			//     に対して行う (どうせ slot 解決して slot ws の現状を撮るだけ)。
+			//     ただし「new でも active な project」も含めて snapshot しても
+			//     後で restore 時に上書きされるだけで害はない。 シンプルさ優先。
+			for _, projName := range oldProjects {
+				snapshotLayoutForProject(oldActive, projName)
+			}
 			err = s.Mutate(func(st *state.State) error {
 				if _, ok := st.Profiles[newActive]; !ok {
 					return fmt.Errorf("profile %q not found", newActive)
@@ -175,6 +186,14 @@ func newProfileCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "WARN: bulk spawn browsers: %v\n", err)
 				}
 			}
+			// (j) layout restore: 新 profile で active 復帰する project に対し
+			//     spawn 完了 (reconcile + browser) 後に column/stack を再構築。
+			for _, projName := range diffProjects(newProjects, oldProjects) {
+				restoreLayoutForProject(newActive, projName)
+			}
+			// viewer (WS A) を slot_names 順に整列。reconcile の async spawn で
+			// column 順が不定になるため、全 restore 完了後に修正する。
+			fixViewerOrderForProfile(newActive)
 			return nil
 		},
 	})
