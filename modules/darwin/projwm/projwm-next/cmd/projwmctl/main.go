@@ -94,6 +94,10 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return intent.ShowScratchShell{}, nil
 	case "hide-scratch-shell":
 		return intent.HideScratchShell{}, nil
+	case "summon-viewer":
+		// SSOT §4.1 OP06: 直前にフォーカスしていた AI の viewer (または
+		// slot 順の最初の viewer) に focus を移して workspace A に切替。
+		return intent.SummonViewer{}, nil
 	default:
 		return nil, fmt.Errorf("unknown command %q", args[0])
 	}

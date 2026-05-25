@@ -1407,6 +1407,8 @@ func commandKeyForIntent(in intent.Intent) string {
 		return "intent:reconcile"
 	case intent.ValidateEnvironment:
 		return "intent:validate-environment"
+	case intent.SummonViewer:
+		return "intent:summon-viewer"
 	}
 	return ""
 }

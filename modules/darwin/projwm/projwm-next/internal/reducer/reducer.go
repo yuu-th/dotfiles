@@ -370,6 +370,15 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 			d.SystemWindows[idx].Visibility = w.CockpitShown
 		}
 
+	case intent.SummonViewer:
+		// SSOT §4.1 OP06: viewer に jump。reducer は DesiredWorld を変えない
+		// — 「どの viewer を focus するか」は observed.Focus に依存する
+		// transient な決定なので planner 側で resolve する (commandKey=
+		// "intent:summon-viewer" の branch でハンドル)。
+		// 直前にフォーカスしていた window の identity を見て: AI なら同じ
+		// (project, index) の viewer、それ以外なら slot order の最初の viewer。
+		_ = v
+
 	case intent.HideScratchShell:
 		// SSOT §4.1 OP11: scratch を隠す。Visibility=Hidden。PriorWindow は
 		// 残しておく (planner が hide op の Target.LiveWindow として消費する)。

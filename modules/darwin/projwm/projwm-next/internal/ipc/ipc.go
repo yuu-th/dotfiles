@@ -463,6 +463,14 @@ func DecodeIntent(req IntentRequest) (intent.Intent, error) {
 			return nil, fmt.Errorf("ipc: decode sync-cockpit-system-windows: %w", err)
 		}
 		return v, nil
+	case intent.KindSummonViewer:
+		var v intent.SummonViewer
+		if len(req.Payload) > 0 && string(req.Payload) != "null" {
+			if err := json.Unmarshal(req.Payload, &v); err != nil {
+				return nil, fmt.Errorf("ipc: decode summon-viewer: %w", err)
+			}
+		}
+		return v, nil
 	case intent.KindShowScratchShell:
 		var v intent.ShowScratchShell
 		if len(req.Payload) > 0 && string(req.Payload) != "null" {

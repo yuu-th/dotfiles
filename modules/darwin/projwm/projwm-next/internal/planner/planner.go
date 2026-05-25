@@ -565,6 +565,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	//      close any leftover cockpit window with that title prefix.
 	planCockpitOps(state, target, &phaseRemovals, &phaseSpawns, &phaseLayout, mkID)
 	planScratchOps(state, target, &phaseLayout, mkID)
+	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
@@ -1245,6 +1246,123 @@ func planCockpitOps(state w.WorldState, target w.DesiredWorld,
 			Kind:   op.KindCloseCockpit,
 			Target: op.Target{LiveWindow: idPtr(lid)},
 			Risk:   op.RiskMedium,
+		})
+	}
+}
+
+// planSummonViewerOps emits focus ops realising SSOT §4.1 OP06.
+//
+// 動作:
+//  1. 起動時点で focused window が AI なら、その (project, index) に対応する
+//     viewer DesiredWindow を target にする。
+//  2. それ以外 (shell/editor/browser/cockpit/scratch/未管理) のときは、
+//     active profile の slot 順序の最初の slot に住む project の viewer-1 を
+//     target にする (INV-12 viewer order follows slot order)。
+//  3. target に該当する live viewer window が observed に居れば、
+//     focus-workspace (viewer ws) + focus-window (viewer live) op を emit。
+//  4. 該当 viewer が未だ spawn されていない場合は no-op (transaction loop の
+//     次の cycle で spawn が走る前提)。
+//
+// command != "intent:summon-viewer" のときは何もしない。
+func planSummonViewerOps(state w.WorldState, target w.DesiredWorld, command CommandKey,
+	phaseLayout *[]op.Operation, mkID func(string) w.OperationID,
+) {
+	if string(command) != "intent:summon-viewer" {
+		return
+	}
+	viewerWs := state.Environment.Workspaces.Viewer
+	if viewerWs == "" {
+		return
+	}
+
+	// Step 1: identify the currently focused window's project-DesiredWindow identity.
+	var focusedDesired *w.DesiredWindowID
+	if focusedID := state.Observed.Focus.Window; focusedID != "" {
+		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil {
+			focusedDesired = ow.MatchedTo
+		}
+	}
+
+	// Step 2: compute target viewer DesiredWindowID.
+	var targetDesired *w.DesiredWindowID
+	if focusedDesired != nil && focusedDesired.Kind == w.WindowAI {
+		tdw := w.DesiredWindowID{Project: focusedDesired.Project, Kind: w.WindowViewer, Index: focusedDesired.Index}
+		targetDesired = &tdw
+	} else {
+		// Fallback: first viewer in slot order of the active profile.
+		prof, ok := target.ActiveProfileObj()
+		if !ok {
+			return
+		}
+		for _, slotID := range state.Environment.SlotOrder() {
+			projID, assigned := prof.Assignments[slotID]
+			if !assigned {
+				continue
+			}
+			proj, ok := target.Projects[projID]
+			if !ok {
+				continue
+			}
+			// Look up the first WindowViewer in this project's Windows.
+			for _, win := range proj.Windows {
+				if win.Kind == w.WindowViewer {
+					tdw := win.ID
+					targetDesired = &tdw
+					break
+				}
+			}
+			if targetDesired != nil {
+				break
+			}
+		}
+	}
+	if targetDesired == nil {
+		return
+	}
+
+	// Step 3: resolve target DesiredWindowID to LiveWindowID via observed.Windows.
+	var targetLive w.LiveWindowID
+	for id, ow := range state.Observed.Windows {
+		if ow.MatchedTo == nil {
+			continue
+		}
+		if *ow.MatchedTo == *targetDesired {
+			targetLive = id
+			break
+		}
+	}
+	if targetLive == "" {
+		// Viewer not yet spawned — let transaction loop spawn on next cycle.
+		return
+	}
+
+	// Step 4: emit focus-workspace + focus-window ops.
+	wsCopy := viewerWs
+	if state.Observed.Focus.Workspace != viewerWs {
+		*phaseLayout = append(*phaseLayout, op.Operation{
+			ID:     mkID("focus-viewer-ws"),
+			Kind:   op.KindFocusWorkspace,
+			Target: op.Target{Workspace: &wsCopy},
+			Preconditions: []op.Precondition{
+				{Kind: op.PreWorkspaceExists, Target: op.Target{Workspace: &wsCopy}},
+			},
+			ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWorkspace, FocusedWS: &wsCopy}},
+			Risk:            op.RiskLow,
+			IdempotencyKey:  "summon-viewer:focus-ws",
+		})
+	}
+	if state.Observed.Focus.Window != targetLive {
+		liveCopy := targetLive
+		*phaseLayout = append(*phaseLayout, op.Operation{
+			ID:     mkID("focus-viewer-window"),
+			Kind:   op.KindFocusWindow,
+			Target: op.Target{LiveWindow: &liveCopy},
+			Preconditions: []op.Precondition{
+				{Kind: op.PreWindowExists, Target: op.Target{LiveWindow: &liveCopy}},
+			},
+			ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWindow, FocusedWin: &liveCopy}},
+			Risk:            op.RiskLow,
+			IdempotencyKey:  "summon-viewer:focus-window",
 		})
 	}
 }
