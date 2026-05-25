@@ -568,6 +568,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
 	planSummonWindowOps(state, target, command, &phaseLayout, mkID)
 	planSwitchProjectOps(state, target, command, &phaseLayout, mkID)
+	planCycleSlotWindowOps(state, target, command, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
@@ -1539,6 +1540,97 @@ func planSwitchProjectOps(state w.WorldState, target w.DesiredWorld, command Com
 		ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWorkspace, FocusedWS: &wsCopy}},
 		Risk:            op.RiskLow,
 		IdempotencyKey:  "switch-project:focus-ws:" + string(slotID),
+	})
+}
+
+// planCycleSlotWindowOps realises SSOT §4.1 OP05: 同じ slot 内で kind 別に
+// focus を移す (workspace は変えない)。
+//
+// commandKey format: "intent:cycle-slot-window:<slot>:<kind>"
+//
+//   - slot から active profile 経由で project を resolve
+//   - target = (project, kind, 1) — または現 focus が同 (project, kind, N)
+//     なら index N+1 にラップ cycle (OP01-03 と同様)
+//   - target DesiredWindowID → LiveWindowID 逆引き
+//   - focus-window op のみ emit (focus-workspace は SSOT 「current_ws 変わら
+//     ない」契約により emit しない)
+func planCycleSlotWindowOps(state w.WorldState, target w.DesiredWorld, command CommandKey,
+	phaseLayout *[]op.Operation, mkID func(string) w.OperationID,
+) {
+	cmd := string(command)
+	const prefix = "intent:cycle-slot-window:"
+	if !strings.HasPrefix(cmd, prefix) {
+		return
+	}
+	rest := strings.TrimPrefix(cmd, prefix)
+	// rest = "<slot>:<kind>"
+	colonIdx := strings.IndexByte(rest, ':')
+	if colonIdx <= 0 || colonIdx == len(rest)-1 {
+		return
+	}
+	slotID := w.SlotID(rest[:colonIdx])
+	kind := w.WindowKind(rest[colonIdx+1:])
+
+	prof, ok := target.ActiveProfileObj()
+	if !ok {
+		return
+	}
+	projID, assigned := prof.Assignments[slotID]
+	if !assigned {
+		return
+	}
+	proj, ok := target.Projects[projID]
+	if !ok {
+		return
+	}
+
+	indices := []int{}
+	for _, win := range proj.Windows {
+		if win.Kind == kind {
+			indices = append(indices, win.ID.Index)
+		}
+	}
+	if len(indices) == 0 {
+		return
+	}
+	sort.Ints(indices)
+
+	targetIndex := indices[0]
+	if focusedID := state.Observed.Focus.Window; focusedID != "" {
+		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil &&
+			ow.MatchedTo.Project == projID && ow.MatchedTo.Kind == kind {
+			currentIdx := ow.MatchedTo.Index
+			for i, idx := range indices {
+				if idx == currentIdx {
+					targetIndex = indices[(i+1)%len(indices)]
+					break
+				}
+			}
+		}
+	}
+	targetDesired := w.DesiredWindowID{Project: projID, Kind: kind, Index: targetIndex}
+
+	var targetLive w.LiveWindowID
+	for id, ow := range state.Observed.Windows {
+		if ow.MatchedTo != nil && *ow.MatchedTo == targetDesired {
+			targetLive = id
+			break
+		}
+	}
+	if targetLive == "" || state.Observed.Focus.Window == targetLive {
+		return
+	}
+	liveCopy := targetLive
+	*phaseLayout = append(*phaseLayout, op.Operation{
+		ID:     mkID("focus-cycle-slot-window"),
+		Kind:   op.KindFocusWindow,
+		Target: op.Target{LiveWindow: &liveCopy},
+		Preconditions: []op.Precondition{
+			{Kind: op.PreWindowExists, Target: op.Target{LiveWindow: &liveCopy}},
+		},
+		ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWindow, FocusedWin: &liveCopy}},
+		Risk:            op.RiskLow,
+		IdempotencyKey:  "cycle-slot-window:focus:" + string(slotID) + ":" + string(kind),
 	})
 }
 

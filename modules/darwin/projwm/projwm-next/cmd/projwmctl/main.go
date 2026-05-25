@@ -94,6 +94,12 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return intent.ShowScratchShell{}, nil
 	case "hide-scratch-shell":
 		return intent.HideScratchShell{}, nil
+	case "cycle-slot-window":
+		// SSOT §4.1 OP05: slot 内で kind 切替 (workspace は変えない)。
+		if len(args) != 3 {
+			return nil, fmt.Errorf("usage: projwmctl cycle-slot-window <slot> <kind>")
+		}
+		return intent.CycleSlotWindow{Slot: w.SlotID(args[1]), WindowKind: w.WindowKind(args[2])}, nil
 	case "switch-project":
 		// SSOT §4.1 OP04: target slot の workspace に切替。
 		if len(args) != 2 {

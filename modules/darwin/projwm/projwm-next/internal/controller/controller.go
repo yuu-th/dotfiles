@@ -1425,6 +1425,10 @@ func commandKeyForIntent(in intent.Intent) string {
 		// SSOT §4.1 OP04: target slot key を suffix に encode。
 		s := in.(intent.SwitchProject)
 		return "intent:switch-project:" + string(s.Slot)
+	case intent.CycleSlotWindow:
+		// SSOT §4.1 OP05: slot + kind を suffix に encode (":<slot>:<kind>")。
+		s := in.(intent.CycleSlotWindow)
+		return "intent:cycle-slot-window:" + string(s.Slot) + ":" + string(s.WindowKind)
 	}
 	return ""
 }

@@ -377,6 +377,11 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 		// (omniwm の per-workspace MRU が focus 復帰を担当)。
 		_ = v
 
+	case intent.CycleSlotWindow:
+		// SSOT §4.1 OP05: 同じ slot 内の (kind) window に focus 切替。
+		// workspace は変えない (planner が focus-window のみ emit)。
+		_ = v
+
 	case intent.SummonShell, intent.SummonEditor, intent.SummonBrowser:
 		// SSOT §4.1 OP01-03: slot 内の (shell/editor/browser) を summon。
 		// reducer は DesiredWorld を変えない — observed.Focus を見て cycle
