@@ -25,7 +25,7 @@ func Apply(pred w.PredictedWorld, oper op.Operation) (w.PredictedWorld, error) {
 				id := w.LiveWindowID(fmt.Sprintf("predicted-cockpit-%s-%d", sw.Kind, sw.Index))
 				out.Windows[id] = w.ObservedWindow{
 					ID:              id,
-					Title:           w.ObservedTitle{Value: fmt.Sprintf("projwm-cockpit-D%d", sw.Index)},
+					Title:           w.ObservedTitle{Value: fmt.Sprintf("projwm-cockpit-%d", sw.Index)},
 					Kind:            e.WindowKind,
 					SystemMatchedTo: &sw,
 				}

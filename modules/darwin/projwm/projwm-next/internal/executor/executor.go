@@ -487,9 +487,9 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 		return e.Adapter.Close(ctx, *oper.Target.LiveWindow)
 
 	case op.KindMoveCockpitToParkWorkspace:
-		// v2.8 §8.10 cockpit invariant: force-move the cockpit window
-		// back to its ParkWorkspace. Target.LiveWindow is the cockpit
-		// ghostty id; Target.Workspace is the ParkWorkspace.
+		// SSOT §3.4 INV-06: force-move the cockpit window back to its
+		// ParkWorkspace. Target.LiveWindow is the cockpit ghostty id;
+		// Target.Workspace is the ParkWorkspace.
 		if oper.Target.LiveWindow == nil || oper.Target.Workspace == nil {
 			return fmt.Errorf("executor: move-cockpit-to-park missing LiveWindow or Workspace target")
 		}
@@ -498,12 +498,7 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 		if spec, ok := e.Env.WorkspaceByID(parkWs); ok {
 			rawName = spec.RawName
 		}
-		if reaper, ok := e.Adapter.(interface {
-			MoveCockpitToParkWorkspace(ctx context.Context, id w.LiveWindowID, parkWs string) error
-		}); ok {
-			return reaper.MoveCockpitToParkWorkspace(ctx, *oper.Target.LiveWindow, rawName)
-		}
-		return fmt.Errorf("executor: adapter does not support MoveCockpitToParkWorkspace")
+		return e.Adapter.MoveCockpitToParkWorkspace(ctx, *oper.Target.LiveWindow, rawName)
 	}
 	return fmt.Errorf("executor: unsupported op kind %q", oper.Kind)
 }

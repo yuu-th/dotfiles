@@ -691,15 +691,24 @@ func TestSigWM_FocusWorkspace_UnknownWorkspace(t *testing.T) {
 }
 
 func TestSigWM_FocusWindow(t *testing.T) {
+	// SSOT §7.5 F5: FocusWindow は navigate → focus の 2-step。
+	// navigate は best-effort、focus が authoritative。
 	env := newTestEnv()
 	m := newMockExec()
 	m.set("window focus", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
+	m.set("window navigate", []byte(`{"ok":true,"result":{"kind":"navigate","payload":{}}}`))
 	sw := NewSigWM(env, m, &mockLauncher{})
 	if err := sw.FocusWindow(context.Background(), "abc"); err != nil {
 		t.Fatalf("FocusWindow: %v", err)
 	}
-	if len(m.calls) != 1 || m.calls[0].args[2] != "abc" {
-		t.Fatalf("unexpected call: %+v", m.calls)
+	if len(m.calls) != 2 {
+		t.Fatalf("expected 2 calls (navigate, focus), got %+v", m.calls)
+	}
+	if m.calls[0].args[1] != "navigate" || m.calls[0].args[2] != "abc" {
+		t.Fatalf("call[0] should be window navigate abc, got %+v", m.calls[0].args)
+	}
+	if m.calls[1].args[1] != "focus" || m.calls[1].args[2] != "abc" {
+		t.Fatalf("call[1] should be window focus abc, got %+v", m.calls[1].args)
 	}
 }
 

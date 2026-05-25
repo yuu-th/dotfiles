@@ -281,6 +281,158 @@ func TestFocusWindowNavigationBeforeFocus(t *testing.T) {
 	}
 }
 
+// TestShowScratchShellExistingWindowReusesIt verifies SSOT §4.1 OP11 冪等性:
+// omniwm が既に scratch window を持っているとき、ShowScratchShell は新規 spawn を
+// せず navigate → focus だけで完結する。
+func TestShowScratchShellExistingWindowReusesIt(t *testing.T) {
+	m := newMockExec()
+	m.set("query windows", okEnvelope("windows", `{"windows":[
+		{"id":"scratch-omni-1","title":"projwm-scratch-shell","app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"}}
+	]}`))
+	m.set("window navigate", okEnvelope("navigate", `{}`))
+	m.set("window focus", okEnvelope("focus", `{}`))
+	launcher := &mockLauncher{}
+	sw := NewSigWM(newTestEnv(), m, launcher)
+
+	id, err := sw.ShowScratchShell(context.Background())
+	if err != nil {
+		t.Fatalf("ShowScratchShell: %v", err)
+	}
+	if string(id) != "scratch-omni-1" {
+		t.Fatalf("ShowScratchShell returned %q, want scratch-omni-1", id)
+	}
+	if got := len(launcher.calls); got != 0 {
+		t.Fatalf("expected no launcher invocations for existing scratch, got %d", got)
+	}
+	navigateIdx := l2FirstCommandPrefix(m, "window navigate")
+	focusIdx := l2FirstCommandPrefix(m, "window focus")
+	if navigateIdx < 0 || focusIdx < 0 || navigateIdx > focusIdx {
+		t.Fatalf("ShowScratchShell must navigate before focus; navigateIdx=%d focusIdx=%d", navigateIdx, focusIdx)
+	}
+}
+
+// TestShowScratchShellSpawnsWhenAbsent verifies SSOT §4.1 OP11 新規生成:
+// scratch window が存在しないとき、ShowScratchShell は tmux session ensure と
+// Ghostty 起動 (Launcher.Launch) を呼ぶ。
+func TestShowScratchShellSpawnsWhenAbsent(t *testing.T) {
+	m := newMockExec()
+	// First query: empty (no scratch). After spawn settle, scratch appears.
+	m.setSeq("query windows",
+		okEnvelope("windows", `{"windows":[]}`),
+		okEnvelope("windows", `{"windows":[
+			{"id":"scratch-omni-1","title":"projwm-scratch-shell","app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"}}
+		]}`),
+	)
+	m.set("window navigate", okEnvelope("navigate", `{}`))
+	m.set("window focus", okEnvelope("focus", `{}`))
+	launcher := &mockLauncher{}
+	sw := NewSigWM(newTestEnv(), m, launcher)
+	sw.EnsureScratchShellSession = func(ctx context.Context) error { return nil }
+
+	id, err := sw.ShowScratchShell(context.Background())
+	if err != nil {
+		t.Fatalf("ShowScratchShell: %v", err)
+	}
+	if string(id) != "scratch-omni-1" {
+		t.Fatalf("ShowScratchShell returned %q, want scratch-omni-1 after settle", id)
+	}
+	if len(launcher.calls) != 1 {
+		t.Fatalf("expected 1 launcher call for fresh spawn, got %d", len(launcher.calls))
+	}
+	gotBundle := launcher.calls[0].bundleID
+	if gotBundle != "com.mitchellh.ghostty" {
+		t.Fatalf("launcher bundleID = %q, want com.mitchellh.ghostty", gotBundle)
+	}
+	// Launcher args should contain --title=projwm-scratch-shell
+	found := false
+	for _, a := range launcher.calls[0].args {
+		if a == "--title=projwm-scratch-shell" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("launcher args missing --title=projwm-scratch-shell: %+v", launcher.calls[0].args)
+	}
+}
+
+// TestHideScratchShellNavigatesAndFocusesPrior verifies SSOT §4.1 OP11:
+// HideScratchShell issues navigate → focus on priorWindow.
+func TestHideScratchShellNavigatesAndFocusesPrior(t *testing.T) {
+	m := newMockExec()
+	m.set("window navigate", okEnvelope("navigate", `{}`))
+	m.set("window focus", okEnvelope("focus", `{}`))
+	sw := NewSigWM(newTestEnv(), m, &mockLauncher{})
+
+	if err := sw.HideScratchShell(context.Background(), "shell-omni-7"); err != nil {
+		t.Fatalf("HideScratchShell: %v", err)
+	}
+	navigateIdx := l2FirstCommandPrefix(m, "window navigate shell-omni-7")
+	focusIdx := l2FirstCommandPrefix(m, "window focus shell-omni-7")
+	if navigateIdx < 0 || focusIdx < 0 || navigateIdx > focusIdx {
+		t.Fatalf("HideScratchShell must navigate before focus; navigateIdx=%d focusIdx=%d calls=%+v", navigateIdx, focusIdx, m.calls)
+	}
+}
+
+// TestMoveCockpitToParkWorkspaceCommandSequence verifies SSOT §3.4 INV-06:
+// MoveCockpitToParkWorkspace は queryWorkspaces で park の numeric id を
+// 解決し、cockpit window を focus してから `command move-to-workspace <num>`
+// を発行する。
+func TestMoveCockpitToParkWorkspaceCommandSequence(t *testing.T) {
+	m := newMockExec()
+	m.set("query workspaces", okEnvelope("workspaces", `{"workspaces":[
+		{"id":"omni-A","rawName":"A","displayName":"A","number":1},
+		{"id":"omni-CP1","rawName":"CP1","displayName":"CP1","number":11}
+	]}`))
+	m.set("window focus", okEnvelope("focus", `{}`))
+	m.set("command move-to-workspace", okEnvelope("move", `{}`))
+	sw := NewSigWM(newTestEnv(), m, &mockLauncher{})
+
+	if err := sw.MoveCockpitToParkWorkspace(context.Background(), "cockpit-omni-1", "CP1"); err != nil {
+		t.Fatalf("MoveCockpitToParkWorkspace: %v", err)
+	}
+	focusIdx := l2FirstCommandPrefix(m, "window focus cockpit-omni-1")
+	moveIdx := l2FirstCommandPrefix(m, "command move-to-workspace 11")
+	if focusIdx < 0 || moveIdx < 0 {
+		t.Fatalf("expected focus then move; calls=%+v", m.calls)
+	}
+	if focusIdx > moveIdx {
+		t.Fatalf("focus must precede move; focusIdx=%d moveIdx=%d", focusIdx, moveIdx)
+	}
+}
+
+// TestMoveCockpitToParkWorkspaceUnknownParkErrors verifies the error path:
+// park workspace name not present in omniwm → return error rather than silently
+// no-op (otherwise INV-06 violation would persist).
+func TestMoveCockpitToParkWorkspaceUnknownParkErrors(t *testing.T) {
+	m := newMockExec()
+	m.set("query workspaces", okEnvelope("workspaces", `{"workspaces":[
+		{"id":"omni-A","rawName":"A","displayName":"A","number":1}
+	]}`))
+	sw := NewSigWM(newTestEnv(), m, &mockLauncher{})
+	err := sw.MoveCockpitToParkWorkspace(context.Background(), "cockpit-omni-1", "CP-NONEXISTENT")
+	if err == nil {
+		t.Fatal("expected error for unknown park workspace, got nil")
+	}
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("error should mention workspace lookup, got %v", err)
+	}
+}
+
+// TestHideScratchShellEmptyPriorIsNoop verifies the safety branch: empty
+// priorWindow → no commands issued (matches NFR-15 規約)。
+func TestHideScratchShellEmptyPriorIsNoop(t *testing.T) {
+	m := newMockExec()
+	sw := NewSigWM(newTestEnv(), m, &mockLauncher{})
+
+	if err := sw.HideScratchShell(context.Background(), ""); err != nil {
+		t.Fatalf("HideScratchShell empty: %v", err)
+	}
+	if len(m.calls) != 0 {
+		t.Fatalf("expected zero exec calls for empty prior, got %+v", m.calls)
+	}
+}
+
 func l2CountCommandPrefix(m *mockExec, prefix string) int {
 	count := 0
 	for _, call := range m.calls {

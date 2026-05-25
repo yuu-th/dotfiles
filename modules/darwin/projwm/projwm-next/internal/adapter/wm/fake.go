@@ -325,6 +325,86 @@ func (f *Fake) HideCockpitOnDisplay(ctx context.Context, displayID w.DisplayID, 
 	return nil
 }
 
+// MoveCockpitToParkWorkspace updates the in-memory cockpit window's workspace
+// to parkWS. parkWS is the rawName (e.g. "CP1"); we resolve it to a
+// WorkspaceID via the env so the observed window's workspace field matches
+// the convention used by Spawn / MoveWindowToWorkspace.
+func (f *Fake) MoveCockpitToParkWorkspace(ctx context.Context, id w.LiveWindowID, parkWS string) error {
+	if !f.enterMutation() {
+		f.exitMutation()
+		return nil
+	}
+	defer f.exitMutation()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	wn, ok := f.windows[id]
+	if !ok {
+		return fmt.Errorf("fake: MoveCockpitToParkWorkspace: unknown window %s", id)
+	}
+	target := w.WorkspaceID(parkWS)
+	for _, spec := range f.env.Workspaces.Workspaces {
+		if spec.RawName == parkWS || string(spec.ID) == parkWS {
+			target = spec.ID
+			break
+		}
+	}
+	oldWS := wn.workspace
+	wn.workspace = target
+	f.removeFromLayoutLocked(oldWS, id)
+	// cockpit は scratchpad-floating なので layout column には追加しない
+	return nil
+}
+
+// ShowScratchShell ensures a single scratch shell window exists and focuses it.
+// SSOT §4.1 OP11 / §7.3 SCRATCH. Fake では既存窓を search → なければ新規 add。
+func (f *Fake) ShowScratchShell(ctx context.Context) (w.LiveWindowID, error) {
+	if !f.enterMutation() {
+		f.exitMutation()
+		return "", nil
+	}
+	defer f.exitMutation()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	const scratchTitle = "projwm-scratch-shell"
+	for id, wn := range f.windows {
+		if wn.bundleID == "com.mitchellh.ghostty" && wn.title == scratchTitle {
+			f.focus = w.ObservedFocus{Workspace: wn.workspace, Window: id}
+			return id, nil
+		}
+	}
+	f.nextID++
+	id := w.LiveWindowID(fmt.Sprintf("scratch-fake-%d", f.nextID))
+	f.windows[id] = &fakeWin{
+		id:       id,
+		title:    scratchTitle,
+		bundleID: "com.mitchellh.ghostty",
+		kind:     w.WindowScratch,
+	}
+	f.focus = w.ObservedFocus{Window: id}
+	return id, nil
+}
+
+// HideScratchShell restores focus to priorWindow if non-empty. The scratch
+// shell window itself stays alive.
+func (f *Fake) HideScratchShell(ctx context.Context, priorWindow w.LiveWindowID) error {
+	if !f.enterMutation() {
+		f.exitMutation()
+		return nil
+	}
+	defer f.exitMutation()
+	if priorWindow == "" {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	wn, ok := f.windows[priorWindow]
+	if !ok {
+		return fmt.Errorf("fake: HideScratchShell: unknown prior window %s", priorWindow)
+	}
+	f.focus = w.ObservedFocus{Workspace: wn.workspace, Window: priorWindow}
+	return nil
+}
+
 func (f *Fake) removeFromLayoutLocked(ws w.WorkspaceID, id w.LiveWindowID) {
 	cols := f.layouts[ws]
 	out := cols[:0]

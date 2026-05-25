@@ -102,6 +102,31 @@ type Adapter interface {
 	// workspace back to priorWsName, hiding the cockpit. Saves and
 	// restores focus (NFR-15).
 	HideCockpitOnDisplay(ctx context.Context, displayID w.DisplayID, priorWsName string) error
+
+	// MoveCockpitToParkWorkspace force-moves a cockpit window back to its
+	// park workspace (e.g. CP1). SSOT §3.4 INV-06: cockpit は常に park
+	// workspace に存在する。Transaction loop が invariant 違反を検出した
+	// ときに呼ぶ。MoveWindowToWorkspace と違って失敗時は raw error 返す
+	// (invariant 修復経路で fallback できないため)。
+	MoveCockpitToParkWorkspace(ctx context.Context, id w.LiveWindowID, parkWS string) error
+
+	// ShowScratchShell ensures a single global Ghostty scratch shell window
+	// is visible and focused. SSOT §4.1 OP11 / §7.3 SCRATCH.
+	//
+	// - グローバルに 1 つだけ存在 (project/profile に非依存)
+	// - tmux session と ghostty title は両方 `projwm-scratch-shell`
+	// - 冪等: 既存 scratch shell があれば新規作成せず focus
+	// - 戻り値 LiveWindowID は (既存 or 新規 spawn の) scratch window の ID
+	ShowScratchShell(ctx context.Context) (w.LiveWindowID, error)
+
+	// HideScratchShell hides the scratch shell by restoring focus to
+	// priorWindow. SSOT §4.1 OP11: 「非表示時: focused_window: scratch 表示
+	// 前のウィンドウに戻る」。
+	//
+	// - scratch shell プロセス自体は kill しない (次回 ShowScratchShell が
+	//   即座に再 focus できるよう永続)
+	// - priorWindow が空のときは focus 復帰を skip (NFR-15 と同じ規約)
+	HideScratchShell(ctx context.Context, priorWindow w.LiveWindowID) error
 }
 
 // OmniwmSelfHealer is an optional capability for adapters that can probe

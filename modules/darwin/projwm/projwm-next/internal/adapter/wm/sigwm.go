@@ -249,6 +249,11 @@ type SigWM struct {
 	// default). Tests inject a no-op to avoid real tmux invocations.
 	EnsureCockpitSession func(ctx context.Context) error
 
+	// EnsureScratchShellSession is called by ShowScratchShell to ensure the
+	// scratch tmux session is running. If nil, ensureScratchShellSession is
+	// used (production default). Tests inject a no-op for deterministic L2.
+	EnsureScratchShellSession func(ctx context.Context) error
+
 	// CockpitProcessAlive is an injection point for the SpawnCockpit
 	// idempotence pgrep check. Production leaves it nil and falls back to
 	// `pgrep -f ghostty.*--title=<title>`. Tests override it (typically
@@ -805,7 +810,7 @@ func classifyLiveWindow(cw ctlWindow) w.WindowKind {
 		return w.WindowBrowser
 	case "com.mitchellh.ghostty":
 		switch {
-		case strings.HasPrefix(cw.Title, "projwm-cockpit-D"):
+		case strings.HasPrefix(cw.Title, "projwm-cockpit-"):
 			return w.WindowCockpit
 		case strings.HasPrefix(cw.Title, "ai-view-"):
 			return w.WindowViewer
@@ -1173,10 +1178,10 @@ func (s *SigWM) Close(ctx context.Context, id w.LiveWindowID) error {
 	if target == nil {
 		return nil // already gone
 	}
-	if target.App.BundleID == "com.mitchellh.ghostty" && strings.HasPrefix(target.Title, "projwm-cockpit-D") {
+	if target.App.BundleID == "com.mitchellh.ghostty" && strings.HasPrefix(target.Title, "projwm-cockpit-") {
 		// Cockpit close: kill the underlying tmux clone (no AX
 		// dialogs, no user data). Clone name == window title since
-		// SpawnCockpit uses `projwm-cockpit-D<idx>` for both.
+		// SpawnCockpit uses `projwm-cockpit-<idx>` for both.
 		clone := target.Title
 		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", clone).Run()
 		// Best-effort: also close the Ghostty window via the host
@@ -2054,6 +2059,11 @@ func (s *SigWM) FocusWorkspace(ctx context.Context, ws w.WorkspaceID) error {
 func (s *SigWM) FocusWindow(ctx context.Context, id w.LiveWindowID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// SSOT §7.5 F5: navigate → focus の command-order contract。navigate は
+	// 「対象 window の workspace を active にする」ヒントで best-effort。
+	// 失敗しても focus 単独で復帰できることが多いので error は飲み込む。
+	// 実 focus 結果は L3 F3 が保証する。
+	_, _ = s.Exec.Run(ctx, "window", "navigate", string(id))
 	_, err := s.Exec.Run(ctx, "window", "focus", string(id))
 	return err
 }
@@ -2127,7 +2137,7 @@ const cockpitBaseSession = "projwm-cockpit"
 
 // cockpitCloneName returns the tmux clone session name for displayIdx.
 func cockpitCloneName(displayIdx int) string {
-	return fmt.Sprintf("projwm-cockpit-D%d", displayIdx)
+	return fmt.Sprintf("projwm-cockpit-%d", displayIdx)
 }
 
 // ensureCockpitBaseSession creates the base tmux session if missing.
@@ -2424,6 +2434,128 @@ func (s *SigWM) HideCockpitOnDisplay(ctx context.Context, displayID w.DisplayID,
 	return nil
 }
 
+// scratchShellTitle is both the tmux session name and the Ghostty title for
+// the global scratch shell (SSOT §7.3).
+const scratchShellTitle = "projwm-scratch-shell"
+
+// ensureScratchShellSession creates the scratch tmux session if missing.
+// Mirrors ensureCockpitBaseSession but with the scratch shell title and
+// `fish` (login shell) as the session entry point — scratch is a plain
+// shell, not a daemon binary.
+func ensureScratchShellSession(ctx context.Context) error {
+	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", scratchShellTitle).Run(); err == nil {
+		return nil
+	}
+	// Use the user's login shell. Empty $SHELL falls back to /bin/sh which
+	// is always present on macOS.
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	if err := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", scratchShellTitle, shell).Run(); err != nil {
+		return fmt.Errorf("tmux new-session %s: %w", scratchShellTitle, err)
+	}
+	return nil
+}
+
+// ShowScratchShell ensures a single global Ghostty scratch shell window is
+// visible and focused. SSOT §4.1 OP11 / §7.3 SCRATCH.
+//
+// 冪等な実装:
+//  1. omniwm query で `--title=projwm-scratch-shell` の Ghostty window があれば
+//     navigate → focus して既存 ID を返す
+//  2. なければ tmux session `projwm-scratch-shell` を ensure し、
+//     `open -na ghostty --args --title=projwm-scratch-shell -e tmux new-session -A -s projwm-scratch-shell`
+//     で spawn し、settle 後の window ID を返す
+//
+// process-alive fallback: omniwm 側がまだ window を登録していないが ghostty
+// process が起きている場合は LiveWindowID 空文字 + nil で返す (spawn 系の慣例)。
+func (s *SigWM) ShowScratchShell(ctx context.Context) (w.LiveWindowID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	// Step 1: search for existing scratch window.
+	wins, err := s.queryWindows(ctx)
+	if err != nil {
+		return "", fmt.Errorf("sigwm.ShowScratchShell: pre-check observe: %w", err)
+	}
+	for _, win := range wins {
+		if win.App.BundleID == "com.mitchellh.ghostty" && win.Title == scratchShellTitle {
+			id := w.LiveWindowID(win.ID)
+			// navigate → focus (SSOT §7.5 F5).
+			_, _ = s.Exec.Run(ctx, "window", "navigate", win.ID)
+			if _, err := s.Exec.Run(ctx, "window", "focus", win.ID); err != nil {
+				return id, fmt.Errorf("sigwm.ShowScratchShell: focus existing: %w", err)
+			}
+			return id, nil
+		}
+	}
+	// Step 2: spawn fresh.
+	ensureSession := s.EnsureScratchShellSession
+	if ensureSession == nil {
+		ensureSession = ensureScratchShellSession
+	}
+	if err := ensureSession(ctx); err != nil {
+		return "", fmt.Errorf("sigwm.ShowScratchShell: ensure tmux session: %w", err)
+	}
+	args := []string{
+		fmt.Sprintf("--title=%s", scratchShellTitle),
+		"-e", "tmux", "new-session", "-A", "-s", scratchShellTitle,
+	}
+	if err := s.Launcher.Launch(ctx, "", "com.mitchellh.ghostty", args); err != nil {
+		return "", fmt.Errorf("sigwm.ShowScratchShell: launch ghostty: %w", err)
+	}
+	// Settle: poll omniwm for the new window. Up to ~3s.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", cerr
+		}
+		wins, err := s.queryWindows(ctx)
+		if err == nil {
+			for _, win := range wins {
+				if win.App.BundleID == "com.mitchellh.ghostty" && win.Title == scratchShellTitle {
+					id := w.LiveWindowID(win.ID)
+					_, _ = s.Exec.Run(ctx, "window", "navigate", win.ID)
+					_, _ = s.Exec.Run(ctx, "window", "focus", win.ID)
+					return id, nil
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Process-alive fallback: ghostty exists but omniwm didn't register it
+	// yet. Return empty ID + nil so caller proceeds (matches the existing
+	// spawn-system convention).
+	out, _ := exec.CommandContext(ctx, "pgrep", "-f", fmt.Sprintf("ghostty.*--title=%s", scratchShellTitle)).Output()
+	if len(strings.TrimSpace(string(out))) > 0 {
+		return "", nil
+	}
+	return "", fmt.Errorf("sigwm.ShowScratchShell: settle timeout, no scratch window observed")
+}
+
+// HideScratchShell restores focus to priorWindow. The scratch shell window
+// itself stays alive (SSOT §4.1 OP11: 非表示時に scratch を kill しない、
+// 次回 ShowScratchShell が即座に再 focus できる)。
+func (s *SigWM) HideScratchShell(ctx context.Context, priorWindow w.LiveWindowID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if priorWindow == "" {
+		return nil
+	}
+	// navigate → focus (SSOT §7.5 F5).
+	_, _ = s.Exec.Run(ctx, "window", "navigate", string(priorWindow))
+	if _, err := s.Exec.Run(ctx, "window", "focus", string(priorWindow)); err != nil {
+		return fmt.Errorf("sigwm.HideScratchShell: focus prior %s: %w", priorWindow, err)
+	}
+	return nil
+}
+
 // --- Omniwm self-heal contract (requirements v2.8 §8.9) -----------------
 
 // OmniwmHealth describes the current health of the omniwm side as
@@ -2444,7 +2576,7 @@ type OmniwmHealth struct {
 	RuleCount int
 	// CockpitWindowSeen reports whether omniwm currently observes a
 	// window with bundleId=com.mitchellh.ghostty and title prefix
-	// "projwm-cockpit-D". Missing means SpawnCockpit is needed (existing
+	// "projwm-cockpit-". Missing means SpawnCockpit is needed (existing
 	// planner path) or omniwm tracking lost it (Lv2 ghostty relaunch).
 	CockpitWindowSeen bool
 }
@@ -2518,7 +2650,7 @@ func (s *SigWM) ProbeOmniwmHealth(ctx context.Context) OmniwmHealth {
 	// query windows for cockpit window presence
 	if wins, err := s.queryWindows(ctx); err == nil {
 		for _, win := range wins {
-			if win.App.BundleID == "com.mitchellh.ghostty" && strings.HasPrefix(win.Title, "projwm-cockpit-D") {
+			if win.App.BundleID == "com.mitchellh.ghostty" && strings.HasPrefix(win.Title, "projwm-cockpit-") {
 				h.CockpitWindowSeen = true
 				break
 			}
@@ -2686,14 +2818,14 @@ func (s *SigWM) reapCockpitArtifacts(ctx context.Context) {
 	if out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output(); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			name := strings.TrimSpace(line)
-			if name == cockpitBaseSession || strings.HasPrefix(name, "projwm-cockpit-D") {
+			if name == cockpitBaseSession || strings.HasPrefix(name, "projwm-cockpit-") {
 				_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", name).Run()
 			}
 		}
 	}
 	// 2. Kill ghostty windows launched with our cockpit title. pgrep -f
 	//    matches against the full command line including --title=.
-	_ = exec.CommandContext(ctx, "pkill", "-TERM", "-f", "ghostty.*projwm-cockpit-D").Run()
+	_ = exec.CommandContext(ctx, "pkill", "-TERM", "-f", "ghostty.*projwm-cockpit-").Run()
 	// 3. Kill remaining cockpit binary processes. Two patterns to catch
 	//    both invocations (wrapper script preserves argv[0]="projwm-cockpit",
 	//    direct daemon-spawned binary uses the /nix/store path).
@@ -2707,11 +2839,11 @@ func (s *SigWM) reapCockpitArtifacts(ctx context.Context) {
 	}
 	_ = exec.CommandContext(ctx, "pkill", "-KILL", "-f", "/bin/projwm-cockpit").Run()
 	_ = exec.CommandContext(ctx, "pkill", "-KILL", "-x", "projwm-cockpit").Run()
-	_ = exec.CommandContext(ctx, "pkill", "-KILL", "-f", "ghostty.*projwm-cockpit-D").Run()
+	_ = exec.CommandContext(ctx, "pkill", "-KILL", "-f", "ghostty.*projwm-cockpit-").Run()
 }
 
 // ReapDuplicateCockpits enforces the §8.1 / §8.10 "exactly one cockpit"
-// invariant by killing every ghostty `--title=projwm-cockpit-D0`
+// invariant by killing every ghostty `--title=projwm-cockpit-0`
 // process that is NOT the one currently backing the tmux base session.
 // "Backing" is determined by having descendant children — a healthy
 // cockpit ghostty always has at least one (tmux client → login → fish →
@@ -2727,7 +2859,7 @@ func (s *SigWM) reapCockpitArtifacts(ctx context.Context) {
 func (s *SigWM) ReapDuplicateCockpits(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out, err := exec.CommandContext(ctx, "pgrep", "-f", "ghostty.*--title=projwm-cockpit-D0").Output()
+	out, err := exec.CommandContext(ctx, "pgrep", "-f", "ghostty.*--title=projwm-cockpit-0").Output()
 	if err != nil {
 		return
 	}

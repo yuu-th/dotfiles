@@ -779,7 +779,7 @@ func (c *Controller) applyCockpitSync() {
 			for _, sw := range sws {
 				if sw.Kind == w.WindowCockpit {
 					cockpits++
-					if sw.DisplayIdx != 0 || sw.ParkWorkspace != "CP1" || sw.Title != "projwm-cockpit-D0" {
+					if sw.DisplayIdx != 0 || sw.ParkWorkspace != "CP1" || sw.Title != "projwm-cockpit-0" {
 						return false // needs migration to canonical form
 					}
 				}
