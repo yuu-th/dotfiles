@@ -382,6 +382,73 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 		// workspace は変えない (planner が focus-window のみ emit)。
 		_ = v
 
+	case intent.BrowserAddTab:
+		// SSOT §4.1 OP14: browser window に URL タブを追加する。
+		// 注意 (S14 honest gap): SSOT 650 では URL 本文を PrivatePayloadStore
+		// に保存し DesiredWorld には opaque ref と URLCount だけ残す設計だが、
+		// S14 第一段階では reducer 純粋性を保つため URLPayloadRefs に URL を
+		// literal で格納する一時実装。S20 (browser tab observer + proper
+		// PrivatePayloadStore wiring) で controller-level の Put/Forget に
+		// 置き換える。
+		if err := mutateBrowserSession(&d, v.Project, v.WindowID, func(b *w.DesiredBrowserSession) error {
+			b.URLPayloadRefs = append(b.URLPayloadRefs, w.PrivatePayloadRef(v.URL))
+			b.URLCount = len(b.URLPayloadRefs)
+			return nil
+		}); err != nil {
+			return d, err
+		}
+
+	case intent.BrowserRemoveTab:
+		// SSOT §4.1 OP15: tab index (1-based) を削除。最後の tab 削除時は
+		// browser window 自体を close (この方針は planner / observer 側で
+		// fire — reducer は URLPayloadRefs と URLCount のみ更新)。
+		if err := mutateBrowserSession(&d, v.Project, v.WindowID, func(b *w.DesiredBrowserSession) error {
+			if v.Tab < 1 || v.Tab > len(b.URLPayloadRefs) {
+				return fmt.Errorf("reducer: browser-remove-tab: tab %d out of range (1..%d)", v.Tab, len(b.URLPayloadRefs))
+			}
+			b.URLPayloadRefs = append(b.URLPayloadRefs[:v.Tab-1], b.URLPayloadRefs[v.Tab:]...)
+			b.URLCount = len(b.URLPayloadRefs)
+			return nil
+		}); err != nil {
+			return d, err
+		}
+
+	case intent.BrowserChangeTabURL:
+		// SSOT §4.1 OP16: tab index の URL を URL に差し替え。
+		if err := mutateBrowserSession(&d, v.Project, v.WindowID, func(b *w.DesiredBrowserSession) error {
+			if v.Tab < 1 || v.Tab > len(b.URLPayloadRefs) {
+				return fmt.Errorf("reducer: browser-change-tab-url: tab %d out of range (1..%d)", v.Tab, len(b.URLPayloadRefs))
+			}
+			b.URLPayloadRefs[v.Tab-1] = w.PrivatePayloadRef(v.URL)
+			return nil
+		}); err != nil {
+			return d, err
+		}
+
+	case intent.BrowserReorderTabs:
+		// SSOT §4.1 OP17: tab を From → To に移動 (1-based)。
+		if err := mutateBrowserSession(&d, v.Project, v.WindowID, func(b *w.DesiredBrowserSession) error {
+			n := len(b.URLPayloadRefs)
+			if v.From < 1 || v.From > n || v.To < 1 || v.To > n {
+				return fmt.Errorf("reducer: browser-reorder-tabs: from=%d to=%d out of range (1..%d)", v.From, v.To, n)
+			}
+			if v.From == v.To {
+				return nil
+			}
+			ref := b.URLPayloadRefs[v.From-1]
+			b.URLPayloadRefs = append(b.URLPayloadRefs[:v.From-1], b.URLPayloadRefs[v.From:]...)
+			// Re-insert at To-1 (after the From removal, indices shift)
+			insertAt := v.To - 1
+			if v.To > v.From {
+				// 削除で 1 つ前にずれているので調整不要 (v.To-1 そのまま)
+				_ = insertAt
+			}
+			b.URLPayloadRefs = append(b.URLPayloadRefs[:insertAt], append([]w.PrivatePayloadRef{ref}, b.URLPayloadRefs[insertAt:]...)...)
+			return nil
+		}); err != nil {
+			return d, err
+		}
+
 	case intent.SummonShell, intent.SummonEditor, intent.SummonBrowser:
 		// SSOT §4.1 OP01-03: slot 内の (shell/editor/browser) を summon。
 		// reducer は DesiredWorld を変えない — observed.Focus を見て cycle
@@ -412,6 +479,37 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 		return d, fmt.Errorf("reducer: unknown intent %T", in)
 	}
 	return d, nil
+}
+
+// mutateBrowserSession locates the target browser window inside DesiredWorld
+// and applies the mutator to its DesiredBrowserSession (allocated on demand).
+// Errors out if the project / window cannot be located or kind ≠ browser.
+func mutateBrowserSession(d *w.DesiredWorld, project w.ProjectID, windowID w.DesiredWindowID, mutate func(*w.DesiredBrowserSession) error) error {
+	pr, ok := d.Projects[project]
+	if !ok {
+		return fmt.Errorf("reducer: browser-tab: unknown project %q", project)
+	}
+	idx := -1
+	for i, win := range pr.Windows {
+		if win.ID == windowID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("reducer: browser-tab: window %v not in project %s", windowID, project)
+	}
+	if pr.Windows[idx].Kind != w.WindowBrowser {
+		return fmt.Errorf("reducer: browser-tab: window %v is %s, not browser", windowID, pr.Windows[idx].Kind)
+	}
+	if pr.Windows[idx].Browser == nil {
+		pr.Windows[idx].Browser = &w.DesiredBrowserSession{}
+	}
+	if err := mutate(pr.Windows[idx].Browser); err != nil {
+		return err
+	}
+	d.Projects[project] = pr
+	return nil
 }
 
 // nextWindowIndex returns the next unused 1-based ordinal for kind in wins.

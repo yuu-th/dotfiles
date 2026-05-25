@@ -94,6 +94,76 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return intent.ShowScratchShell{}, nil
 	case "hide-scratch-shell":
 		return intent.HideScratchShell{}, nil
+	case "browser-add-tab":
+		// SSOT §4.1 OP14: usage: projwmctl browser-add-tab <project> <window> <url>
+		if len(args) != 4 {
+			return nil, fmt.Errorf("usage: projwmctl browser-add-tab <project> <window> <url>")
+		}
+		kind, idx, err := simpleParseWindow(args[2])
+		if err != nil {
+			return nil, fmt.Errorf("browser-add-tab: %w", err)
+		}
+		return intent.BrowserAddTab{
+			Project:  w.ProjectID(args[1]),
+			WindowID: w.DesiredWindowID{Project: w.ProjectID(args[1]), Kind: kind, Index: idx},
+			URL:      args[3],
+		}, nil
+	case "browser-remove-tab":
+		if len(args) != 4 {
+			return nil, fmt.Errorf("usage: projwmctl browser-remove-tab <project> <window> <tab>")
+		}
+		kind, idx, err := simpleParseWindow(args[2])
+		if err != nil {
+			return nil, fmt.Errorf("browser-remove-tab: %w", err)
+		}
+		var tab int
+		if _, err := fmt.Sscanf(args[3], "%d", &tab); err != nil {
+			return nil, fmt.Errorf("browser-remove-tab: tab must be int")
+		}
+		return intent.BrowserRemoveTab{
+			Project:  w.ProjectID(args[1]),
+			WindowID: w.DesiredWindowID{Project: w.ProjectID(args[1]), Kind: kind, Index: idx},
+			Tab:      tab,
+		}, nil
+	case "browser-change-tab-url":
+		if len(args) != 5 {
+			return nil, fmt.Errorf("usage: projwmctl browser-change-tab-url <project> <window> <tab> <url>")
+		}
+		kind, idx, err := simpleParseWindow(args[2])
+		if err != nil {
+			return nil, fmt.Errorf("browser-change-tab-url: %w", err)
+		}
+		var tab int
+		if _, err := fmt.Sscanf(args[3], "%d", &tab); err != nil {
+			return nil, fmt.Errorf("browser-change-tab-url: tab must be int")
+		}
+		return intent.BrowserChangeTabURL{
+			Project:  w.ProjectID(args[1]),
+			WindowID: w.DesiredWindowID{Project: w.ProjectID(args[1]), Kind: kind, Index: idx},
+			Tab:      tab,
+			URL:      args[4],
+		}, nil
+	case "browser-reorder-tabs":
+		if len(args) != 5 {
+			return nil, fmt.Errorf("usage: projwmctl browser-reorder-tabs <project> <window> <from> <to>")
+		}
+		kind, idx, err := simpleParseWindow(args[2])
+		if err != nil {
+			return nil, fmt.Errorf("browser-reorder-tabs: %w", err)
+		}
+		var from, to int
+		if _, err := fmt.Sscanf(args[3], "%d", &from); err != nil {
+			return nil, fmt.Errorf("browser-reorder-tabs: from must be int")
+		}
+		if _, err := fmt.Sscanf(args[4], "%d", &to); err != nil {
+			return nil, fmt.Errorf("browser-reorder-tabs: to must be int")
+		}
+		return intent.BrowserReorderTabs{
+			Project:  w.ProjectID(args[1]),
+			WindowID: w.DesiredWindowID{Project: w.ProjectID(args[1]), Kind: kind, Index: idx},
+			From:     from,
+			To:       to,
+		}, nil
 	case "cycle-slot-window":
 		// SSOT §4.1 OP05: slot 内で kind 切替 (workspace は変えない)。
 		if len(args) != 3 {
@@ -129,6 +199,23 @@ func parseIntent(args []string) (intent.Intent, error) {
 	default:
 		return nil, fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+// simpleParseWindow parses "browser-1" → (WindowBrowser, 1) etc. Local
+// to projwmctl (cmd/projwm has its own parseWindowSpec).
+func simpleParseWindow(spec string) (w.WindowKind, int, error) {
+	for kind, prefix := range map[w.WindowKind]string{
+		w.WindowAI: "ai-", w.WindowShell: "shell-", w.WindowEditor: "editor-",
+		w.WindowBrowser: "browser-", w.WindowViewer: "viewer-",
+	} {
+		if len(spec) > len(prefix) && spec[:len(prefix)] == prefix {
+			var n int
+			if _, err := fmt.Sscanf(spec[len(prefix):], "%d", &n); err == nil && n >= 1 {
+				return kind, n, nil
+			}
+		}
+	}
+	return "", 0, fmt.Errorf("window spec %q must be kind-N (e.g. browser-1)", spec)
 }
 
 func submit(socketPath, manifestPath, manifestDigest string, in intent.Intent) (ipc.IntentResponse, error) {

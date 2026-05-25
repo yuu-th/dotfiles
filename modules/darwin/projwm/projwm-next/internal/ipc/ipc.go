@@ -463,6 +463,30 @@ func DecodeIntent(req IntentRequest) (intent.Intent, error) {
 			return nil, fmt.Errorf("ipc: decode sync-cockpit-system-windows: %w", err)
 		}
 		return v, nil
+	case intent.KindBrowserAddTab:
+		var v intent.BrowserAddTab
+		if err := json.Unmarshal(req.Payload, &v); err != nil {
+			return nil, fmt.Errorf("ipc: decode browser-add-tab: %w", err)
+		}
+		return v, nil
+	case intent.KindBrowserRemoveTab:
+		var v intent.BrowserRemoveTab
+		if err := json.Unmarshal(req.Payload, &v); err != nil {
+			return nil, fmt.Errorf("ipc: decode browser-remove-tab: %w", err)
+		}
+		return v, nil
+	case intent.KindBrowserChangeTabURL:
+		var v intent.BrowserChangeTabURL
+		if err := json.Unmarshal(req.Payload, &v); err != nil {
+			return nil, fmt.Errorf("ipc: decode browser-change-tab-url: %w", err)
+		}
+		return v, nil
+	case intent.KindBrowserReorderTabs:
+		var v intent.BrowserReorderTabs
+		if err := json.Unmarshal(req.Payload, &v); err != nil {
+			return nil, fmt.Errorf("ipc: decode browser-reorder-tabs: %w", err)
+		}
+		return v, nil
 	case intent.KindCycleSlotWindow:
 		var v intent.CycleSlotWindow
 		if err := json.Unmarshal(req.Payload, &v); err != nil {

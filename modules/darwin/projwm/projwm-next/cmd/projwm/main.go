@@ -143,6 +143,8 @@ func runSubcommand(gf globalFlags, sub string, args []string, stdout, stderr io.
 		return cmdJump(gf, args, stdout, stderr)
 	case "cockpit":
 		return cmdCockpit(gf, args, stdout, stderr)
+	case "browser":
+		return cmdBrowser(gf, args, stdout, stderr)
 	case "reconcile":
 		return cmdReconcile(gf, args, stdout, stderr)
 	case "validate-environment":
