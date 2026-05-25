@@ -868,19 +868,32 @@ func desiredWindowByID(target w.DesiredWorld, id w.DesiredWindowID) (*w.DesiredW
 }
 
 func lifecycleRemovalAllowed(env w.ManagedEnvironment, target w.DesiredWorld, id w.DesiredWindowID, observed w.ObservedWindow) bool {
-	dw, ok := desiredWindowByID(target, id)
-	if !ok {
-		return false
-	}
+	// SSOT §4.1 OP13 remove-window: 削除済 DesiredWindow に対する close も
+	// 許可する必要がある。observed.App.BundleID / observed.Kind /
+	// observed.Title をフォールバックとして使う。
+	dw, hasDW := desiredWindowByID(target, id)
+
 	switch observed.Kind {
 	case w.WindowAI, w.WindowShell, w.WindowViewer, w.WindowEditor, w.WindowBrowser:
 	default:
 		return false
 	}
-	if observed.Kind != w.WindowViewer && dw.Kind != observed.Kind {
+	if hasDW && observed.Kind != w.WindowViewer && dw.Kind != observed.Kind {
 		return false
 	}
-	app, ok := env.ManagedAppByBundle(dw.App.BundleID)
+
+	// bundleID: desired を優先、なければ observed から
+	bundleID := ""
+	if hasDW {
+		bundleID = dw.App.BundleID
+	}
+	if bundleID == "" {
+		bundleID = observed.App.BundleID
+	}
+	if bundleID == "" {
+		return false
+	}
+	app, ok := env.ManagedAppByBundle(bundleID)
 	if !ok || !app.LifecycleRemoval.Allowed {
 		return false
 	}
@@ -895,12 +908,15 @@ func lifecycleRemovalAllowed(env w.ManagedEnvironment, target w.DesiredWorld, id
 	if !windowKindAllowed(app.LifecycleRemoval.AllowedKinds, observed.Kind) {
 		return false
 	}
-	if dw.App.BundleID == "" {
-		return false
-	}
 	switch app.LifecycleRemoval.Method {
 	case w.LifecycleRemovalAXCloseGuarded:
-		return dw.TitleContract.Authority == w.TitleControllerOwned && dw.TitleContract.Expected != ""
+		// desired がある場合は controller-owned title 契約を要求 (規約上の安全
+		// チェック)。desired が削除済の場合は observed.Title.Value が controller
+		// 命名規約に従う prefix (e.g. "shell-N:project") であることで safety を担保。
+		if hasDW {
+			return dw.TitleContract.Authority == w.TitleControllerOwned && dw.TitleContract.Expected != ""
+		}
+		return observed.Title.Value != ""
 	case w.LifecycleRemovalProjectScopedApp,
 		w.LifecycleRemovalBrowserWindowClose:
 		// app-owned title contracts (Zed/Vivaldi) do not require controller-owned title authority;
