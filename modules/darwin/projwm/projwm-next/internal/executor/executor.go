@@ -499,6 +499,22 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 			rawName = spec.RawName
 		}
 		return e.Adapter.MoveCockpitToParkWorkspace(ctx, *oper.Target.LiveWindow, rawName)
+
+	case op.KindShowScratchShell:
+		// SSOT §4.1 OP11: scratch shell を表示し focus を移す。
+		// adapter が idempotent (既存窓があれば spawn せず focus のみ) なので
+		// op の Target は不要。
+		_, err := e.Adapter.ShowScratchShell(ctx)
+		return err
+
+	case op.KindHideScratchShell:
+		// SSOT §4.1 OP11: scratch shell を隠して PriorWindow へ focus 復帰。
+		// Target.LiveWindow が nil/empty のとき adapter 側で no-op になる。
+		var prior w.LiveWindowID
+		if oper.Target.LiveWindow != nil {
+			prior = *oper.Target.LiveWindow
+		}
+		return e.Adapter.HideScratchShell(ctx, prior)
 	}
 	return fmt.Errorf("executor: unsupported op kind %q", oper.Kind)
 }

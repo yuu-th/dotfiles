@@ -463,6 +463,22 @@ func DecodeIntent(req IntentRequest) (intent.Intent, error) {
 			return nil, fmt.Errorf("ipc: decode sync-cockpit-system-windows: %w", err)
 		}
 		return v, nil
+	case intent.KindShowScratchShell:
+		var v intent.ShowScratchShell
+		if len(req.Payload) > 0 && string(req.Payload) != "null" {
+			if err := json.Unmarshal(req.Payload, &v); err != nil {
+				return nil, fmt.Errorf("ipc: decode show-scratch-shell: %w", err)
+			}
+		}
+		return v, nil
+	case intent.KindHideScratchShell:
+		var v intent.HideScratchShell
+		if len(req.Payload) > 0 && string(req.Payload) != "null" {
+			if err := json.Unmarshal(req.Payload, &v); err != nil {
+				return nil, fmt.Errorf("ipc: decode hide-scratch-shell: %w", err)
+			}
+		}
+		return v, nil
 	default:
 		return nil, fmt.Errorf("ipc: unsupported intent kind %q", req.Kind)
 	}

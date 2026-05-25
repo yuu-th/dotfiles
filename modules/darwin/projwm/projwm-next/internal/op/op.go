@@ -65,6 +65,18 @@ const (
 	// reverts. Target.LiveWindow = the cockpit ghostty window id;
 	// Target.Workspace = ParkWorkspace.
 	KindMoveCockpitToParkWorkspace Kind = "move-cockpit-to-park"
+	// KindShowScratchShell: ensure the global scratch shell ghostty
+	// exists and is focused. SSOT §4.1 OP11 / §7.5 ShowScratchShell.
+	// Idempotent. No Target fields are required (scratch is a singleton).
+	// The executor captures observed.Focus.Window into the scratch
+	// SystemWindow.PriorWindow via the controller (not the planner) so
+	// the subsequent Hide path can restore focus.
+	KindShowScratchShell Kind = "show-scratch-shell"
+	// KindHideScratchShell: restore focus to the scratch SystemWindow's
+	// PriorWindow. SSOT §4.1 OP11 / §7.5 HideScratchShell. Target.LiveWindow
+	// = PriorWindow (may be empty: adapter treats empty as no-op).
+	// The scratch ghostty itself stays alive.
+	KindHideScratchShell Kind = "hide-scratch-shell"
 )
 
 // PreconditionKind. design.md §10.2.

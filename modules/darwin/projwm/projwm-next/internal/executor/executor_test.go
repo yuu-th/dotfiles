@@ -931,6 +931,103 @@ func TestExecuteHideCockpitRestoresPriorWindowFocus(t *testing.T) {
 	}
 }
 
+// TestExecuteShowScratchShell verifies SSOT §4.1 OP11: the show-scratch-shell
+// op dispatches to Adapter.ShowScratchShell, which spawns / focuses the
+// global scratch window.
+func TestExecuteShowScratchShell(t *testing.T) {
+	env := w.ManagedEnvironment{
+		WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+		Workspaces: w.WorkspaceEnvironment{
+			Workspaces: []w.WorkspaceSpec{{ID: "A", RawName: "A", Role: w.WorkspaceViewer}},
+		},
+	}
+	fake := wm.NewFake(env)
+	ctx := context.Background()
+
+	ex := Executor{Adapter: fake, Env: env}
+	if err := ex.Execute(ctx, op.Operation{Kind: op.KindShowScratchShell}, w.ObservedWorld{}, w.DesiredWorld{}); err != nil {
+		t.Fatalf("Execute show-scratch-shell: %v", err)
+	}
+	obs, _ := fake.Observe(ctx)
+	scratchCount := 0
+	for _, win := range obs.Windows {
+		if win.Title.Value == "projwm-scratch-shell" {
+			scratchCount++
+		}
+	}
+	if scratchCount != 1 {
+		t.Errorf("expected 1 scratch window after show op, got %d", scratchCount)
+	}
+}
+
+// TestExecuteHideScratchShellRestoresPriorFocus verifies that hide-scratch-shell
+// with Target.LiveWindow set restores focus to that window.
+func TestExecuteHideScratchShellRestoresPriorFocus(t *testing.T) {
+	env := w.ManagedEnvironment{
+		WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+		Workspaces: w.WorkspaceEnvironment{
+			Workspaces: []w.WorkspaceSpec{
+				{ID: "A", RawName: "A", Role: w.WorkspaceViewer},
+				{ID: "8", RawName: "8", Role: w.WorkspaceGeneral},
+			},
+		},
+	}
+	fake := wm.NewFake(env)
+	ctx := context.Background()
+
+	// Spawn a "prior" window. Show scratch (focus shifts). Then exec
+	// hide-scratch-shell with the prior on Target.LiveWindow.
+	priorLive, err := fake.Spawn(ctx, wm.SpawnRequest{
+		Workspace: "8",
+		Kind:      w.WindowShell,
+		Desired:   w.DesiredWindowID{Project: "p", Kind: w.WindowShell, Index: 1},
+		Title:     "shell-1:p",
+		BundleID:  "com.mitchellh.ghostty",
+	})
+	if err != nil {
+		t.Fatalf("Spawn prior: %v", err)
+	}
+	if _, err := fake.ShowScratchShell(ctx); err != nil {
+		t.Fatalf("ShowScratchShell: %v", err)
+	}
+
+	ex := Executor{Adapter: fake, Env: env}
+	priorCopy := priorLive
+	if err := ex.Execute(ctx, op.Operation{
+		Kind:   op.KindHideScratchShell,
+		Target: op.Target{LiveWindow: &priorCopy},
+	}, w.ObservedWorld{}, w.DesiredWorld{}); err != nil {
+		t.Fatalf("Execute hide-scratch-shell: %v", err)
+	}
+	obs, _ := fake.Observe(ctx)
+	if obs.Focus.Window != priorLive {
+		t.Errorf("hide-scratch-shell did not restore focus: got %q, want %q", obs.Focus.Window, priorLive)
+	}
+}
+
+// TestExecuteHideScratchShellEmptyPriorIsNoop verifies the safety branch:
+// Target.LiveWindow == nil → no error, no focus change.
+func TestExecuteHideScratchShellEmptyPriorIsNoop(t *testing.T) {
+	env := w.ManagedEnvironment{
+		WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+		Workspaces:    w.WorkspaceEnvironment{Workspaces: []w.WorkspaceSpec{{ID: "A", RawName: "A", Role: w.WorkspaceViewer}}},
+	}
+	fake := wm.NewFake(env)
+	ctx := context.Background()
+	scratch, err := fake.ShowScratchShell(ctx)
+	if err != nil {
+		t.Fatalf("ShowScratchShell: %v", err)
+	}
+	ex := Executor{Adapter: fake, Env: env}
+	if err := ex.Execute(ctx, op.Operation{Kind: op.KindHideScratchShell}, w.ObservedWorld{}, w.DesiredWorld{}); err != nil {
+		t.Fatalf("Execute hide-scratch-shell with empty prior: %v", err)
+	}
+	obs, _ := fake.Observe(ctx)
+	if obs.Focus.Window != scratch {
+		t.Errorf("focus changed unexpectedly with empty prior: got %q, want %q", obs.Focus.Window, scratch)
+	}
+}
+
 // TestExecuteHideCockpitWithoutPriorWindowSkipsFocus verifies the safety
 // path: when Target.LiveWindow is nil (no PriorWindow captured), the
 // executor must NOT panic or block; the workspace switch alone is

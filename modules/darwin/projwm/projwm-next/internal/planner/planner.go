@@ -564,6 +564,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	//   3) For displays that no longer have a SystemWindow (unplug) ->
 	//      close any leftover cockpit window with that title prefix.
 	planCockpitOps(state, target, &phaseRemovals, &phaseSpawns, &phaseLayout, mkID)
+	planScratchOps(state, target, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
@@ -1245,5 +1246,74 @@ func planCockpitOps(state w.WorldState, target w.DesiredWorld,
 			Target: op.Target{LiveWindow: idPtr(lid)},
 			Risk:   op.RiskMedium,
 		})
+	}
+}
+
+// planScratchOps emits show/hide ops for the scratch SystemWindow.
+// SSOT §4.1 OP11 + §7.5 ShowScratchShell/HideScratchShell.
+//
+// 収束ロジック:
+//   - Visibility=Shown かつ observed.Focus.Window != scratch live window →
+//     KindShowScratchShell を emit
+//   - Visibility=Hidden かつ observed.Focus.Window == scratch live window →
+//     KindHideScratchShell を emit (Target.LiveWindow = PriorWindow)
+//   - それ以外は no-op (収束済)
+//
+// scratch ghostty が未存在 (observed に projwm-scratch-shell title が無い)
+// 場合は ShowScratchShell adapter 自身が spawn を担当するので、Visibility=Shown
+// のときは常に show op を発行する (adapter が冪等)。
+func planScratchOps(state w.WorldState, target w.DesiredWorld,
+	phaseLayout *[]op.Operation,
+	mkID func(string) w.OperationID,
+) {
+	var scratchSW *w.SystemWindow
+	for i := range target.SystemWindows {
+		if target.SystemWindows[i].Kind == w.WindowScratch {
+			scratchSW = &target.SystemWindows[i]
+			break
+		}
+	}
+	if scratchSW == nil {
+		return
+	}
+
+	// Resolve scratch live window from observed (by canonical title).
+	var scratchLive w.LiveWindowID
+	for id, ow := range state.Observed.Windows {
+		if ow.Title.Value == "projwm-scratch-shell" {
+			scratchLive = id
+			break
+		}
+	}
+	focusedOnScratch := scratchLive != "" && state.Observed.Focus.Window == scratchLive
+
+	switch scratchSW.Visibility {
+	case w.CockpitShown:
+		// 既に scratch にフォーカスがある場合は no-op (収束済)。
+		if focusedOnScratch {
+			return
+		}
+		*phaseLayout = append(*phaseLayout, op.Operation{
+			ID:             mkID("show-scratch-shell"),
+			Kind:           op.KindShowScratchShell,
+			Risk:           op.RiskLow,
+			IdempotencyKey: "show-scratch-shell",
+		})
+	case w.CockpitHidden:
+		// scratch がそもそも focus されていなければ何もしない。
+		if !focusedOnScratch {
+			return
+		}
+		opv := op.Operation{
+			ID:             mkID("hide-scratch-shell"),
+			Kind:           op.KindHideScratchShell,
+			Risk:           op.RiskLow,
+			IdempotencyKey: "hide-scratch-shell",
+		}
+		if scratchSW.PriorWindow != "" {
+			prior := scratchSW.PriorWindow
+			opv.Target.LiveWindow = &prior
+		}
+		*phaseLayout = append(*phaseLayout, opv)
 	}
 }

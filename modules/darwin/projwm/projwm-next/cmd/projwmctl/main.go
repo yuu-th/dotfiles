@@ -88,6 +88,12 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return nil, fmt.Errorf("projwmctl: accept-manual-layout removed; Tier 2 layout sync is automatic (requirements v2.3)")
 	case "validate-environment":
 		return intent.ValidateEnvironment{}, nil
+	case "show-scratch-shell":
+		// SSOT §4.1 OP11: 通常は shortcut から呼ばれるが、debug / script
+		// 経路として projwmctl からも発行可能にしておく。
+		return intent.ShowScratchShell{}, nil
+	case "hide-scratch-shell":
+		return intent.HideScratchShell{}, nil
 	default:
 		return nil, fmt.Errorf("unknown command %q", args[0])
 	}

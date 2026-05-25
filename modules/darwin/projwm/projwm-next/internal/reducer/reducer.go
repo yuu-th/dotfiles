@@ -333,6 +333,53 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 		}
 		d.SystemWindows = []w.SystemWindow{entry}
 
+	case intent.ShowScratchShell:
+		// SSOT §4.1 OP11: scratch shell を表示。冪等。
+		// scratch SystemWindow (kind=WindowScratch, Index=0) を必ず単一存在
+		// させ Visibility=Shown に設定。表示直前の focused window を PriorWindow
+		// に capture することで Hide で復帰できる (Hidden→Shown のときだけ capture、
+		// 既に Shown のときは上書きしないことで scratch 自身を prior にしない)。
+		idx := -1
+		for i := range d.SystemWindows {
+			if d.SystemWindows[i].Kind == w.WindowScratch {
+				idx = i
+				break
+			}
+		}
+		wasShown := false
+		if idx < 0 {
+			// 初期化: Hidden 状態で append し、下の遷移ロジックに任せる。
+			d.SystemWindows = append(d.SystemWindows, w.SystemWindow{
+				ID:         w.SystemWindowID{Kind: w.WindowScratch, Index: 0},
+				Kind:       w.WindowScratch,
+				DisplayIdx: 0,
+				Title:      "projwm-scratch-shell",
+				Visibility: w.CockpitHidden,
+			})
+			idx = len(d.SystemWindows) - 1
+		} else {
+			wasShown = d.SystemWindows[idx].Visibility == w.CockpitShown
+		}
+		if !wasShown {
+			// Hidden→Shown 遷移のときのみ PriorWindow を取り直す。
+			// 既に Shown のときは scratch 自身が focus を持っている可能性が
+			// あるので上書きしない。
+			if win := state.Observed.Focus.Window; win != "" {
+				d.SystemWindows[idx].PriorWindow = win
+			}
+			d.SystemWindows[idx].Visibility = w.CockpitShown
+		}
+
+	case intent.HideScratchShell:
+		// SSOT §4.1 OP11: scratch を隠す。Visibility=Hidden。PriorWindow は
+		// 残しておく (planner が hide op の Target.LiveWindow として消費する)。
+		for i := range d.SystemWindows {
+			if d.SystemWindows[i].Kind == w.WindowScratch {
+				d.SystemWindows[i].Visibility = w.CockpitHidden
+				break
+			}
+		}
+
 	default:
 		return d, fmt.Errorf("reducer: unknown intent %T", in)
 	}
