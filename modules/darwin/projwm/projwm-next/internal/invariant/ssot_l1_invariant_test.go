@@ -54,6 +54,64 @@ func TestSSOTInvariantCheck14SkipsViewerPairing(t *testing.T) {
 	}
 }
 
+// SSOT §3.4 INV-06: cockpit live window must always be on its ParkWorkspace.
+// Check15 fires when observed cockpit window drifted off ParkWorkspace.
+func TestSSOTInvariantCheck15CockpitOffParkWorkspaceFires(t *testing.T) {
+	state := w.WorldState{
+		Desired: w.DesiredWorld{
+			SystemWindows: []w.SystemWindow{{
+				ID:            w.SystemWindowID{Kind: w.WindowCockpit, Index: 0},
+				Kind:          w.WindowCockpit,
+				Title:         "projwm-cockpit-0",
+				ParkWorkspace: "CP1",
+			}},
+		},
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				"cockpit-1": {
+					ID:        "cockpit-1",
+					Kind:      w.WindowCockpit,
+					Title:     w.ObservedTitle{Value: "projwm-cockpit-0"},
+					Workspace: "8", // drifted off CP1
+				},
+			},
+		},
+	}
+	v := Check15CockpitOnParkWorkspace(state)
+	if v == nil {
+		t.Fatal("Check15 expected to fire on cockpit not on ParkWorkspace")
+	}
+	if v.ID != 15 {
+		t.Errorf("ID = %d, want 15", v.ID)
+	}
+}
+
+func TestSSOTInvariantCheck15CockpitOnParkWorkspaceIsSilent(t *testing.T) {
+	state := w.WorldState{
+		Desired: w.DesiredWorld{
+			SystemWindows: []w.SystemWindow{{
+				ID:            w.SystemWindowID{Kind: w.WindowCockpit, Index: 0},
+				Kind:          w.WindowCockpit,
+				Title:         "projwm-cockpit-0",
+				ParkWorkspace: "CP1",
+			}},
+		},
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				"cockpit-1": {
+					ID:        "cockpit-1",
+					Kind:      w.WindowCockpit,
+					Title:     w.ObservedTitle{Value: "projwm-cockpit-0"},
+					Workspace: "CP1", // on park
+				},
+			},
+		},
+	}
+	if v := Check15CockpitOnParkWorkspace(state); v != nil {
+		t.Fatalf("Check15 fired when cockpit is on park workspace: %s", v.Message)
+	}
+}
+
 func TestSSOTInvariantCheck14SkipsArchivedProject(t *testing.T) {
 	did := w.DesiredWindowID{Project: "archived", Kind: w.WindowShell, Index: 1}
 	state := w.WorldState{

@@ -76,7 +76,41 @@ func CheckAll(state w.WorldState, opts CheckOptions) []Violation {
 	if v := Check14DuplicateWindow(state); v != nil {
 		vs = append(vs, *v)
 	}
+	if v := Check15CockpitOnParkWorkspace(state); v != nil {
+		vs = append(vs, *v)
+	}
 	return vs
+}
+
+// Check15CockpitOnParkWorkspace realises SSOT §3.4 INV-06: 各 cockpit
+// SystemWindow に対し、対応する observed live window は常に SystemWindow
+// 自身の ParkWorkspace 上に存在する。違反時 [INVARIANT] card を出し、
+// transaction loop は MoveCockpitToParkWorkspace op で修復する。
+//
+// observed の cockpit live window は title (controller-owned) で識別する。
+func Check15CockpitOnParkWorkspace(state w.WorldState) *Violation {
+	for _, sw := range state.Desired.SystemWindows {
+		if sw.Kind != w.WindowCockpit {
+			continue
+		}
+		if sw.ParkWorkspace == "" {
+			continue
+		}
+		// observed.Windows から sw.Title と一致する cockpit ghostty を探す。
+		for _, ow := range state.Observed.Windows {
+			if ow.Kind != w.WindowCockpit {
+				continue
+			}
+			if ow.Title.Value != sw.Title {
+				continue
+			}
+			if ow.Workspace != sw.ParkWorkspace {
+				return &Violation{ID: 15, Name: "cockpit-park-workspace",
+					Message: fmt.Sprintf("cockpit %q is on workspace %q but should be on park workspace %q (INV-06)", sw.Title, ow.Workspace, sw.ParkWorkspace)}
+			}
+		}
+	}
+	return nil
 }
 
 // Check14DuplicateWindow realises SSOT §2.5 EC4 / §3.4 INV-01: the world should
