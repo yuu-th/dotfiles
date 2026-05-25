@@ -370,6 +370,13 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 			d.SystemWindows[idx].Visibility = w.CockpitShown
 		}
 
+	case intent.SwitchProject:
+		// SSOT §4.1 OP04: target slot の workspace に切替。reducer は
+		// DesiredWorld を変えない — planner が commandKey から target
+		// workspace を resolve して focus-workspace op を emit する
+		// (omniwm の per-workspace MRU が focus 復帰を担当)。
+		_ = v
+
 	case intent.SummonShell, intent.SummonEditor, intent.SummonBrowser:
 		// SSOT §4.1 OP01-03: slot 内の (shell/editor/browser) を summon。
 		// reducer は DesiredWorld を変えない — observed.Focus を見て cycle

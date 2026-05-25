@@ -463,6 +463,12 @@ func DecodeIntent(req IntentRequest) (intent.Intent, error) {
 			return nil, fmt.Errorf("ipc: decode sync-cockpit-system-windows: %w", err)
 		}
 		return v, nil
+	case intent.KindSwitchProject:
+		var v intent.SwitchProject
+		if err := json.Unmarshal(req.Payload, &v); err != nil {
+			return nil, fmt.Errorf("ipc: decode switch-project: %w", err)
+		}
+		return v, nil
 	case intent.KindSummonShell:
 		var v intent.SummonShell
 		if err := json.Unmarshal(req.Payload, &v); err != nil {

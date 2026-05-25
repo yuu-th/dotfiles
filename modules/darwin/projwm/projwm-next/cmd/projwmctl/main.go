@@ -94,6 +94,12 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return intent.ShowScratchShell{}, nil
 	case "hide-scratch-shell":
 		return intent.HideScratchShell{}, nil
+	case "switch-project":
+		// SSOT §4.1 OP04: target slot の workspace に切替。
+		if len(args) != 2 {
+			return nil, fmt.Errorf("usage: projwmctl switch-project <slot>")
+		}
+		return intent.SwitchProject{Slot: w.SlotID(args[1])}, nil
 	case "summon-shell":
 		// SSOT §4.1 OP01: slot の shell に jump + cycle。
 		if len(args) != 2 {

@@ -1421,6 +1421,10 @@ func commandKeyForIntent(in intent.Intent) string {
 	case intent.SummonBrowser:
 		s := in.(intent.SummonBrowser)
 		return "intent:summon-browser:" + string(s.Slot)
+	case intent.SwitchProject:
+		// SSOT §4.1 OP04: target slot key を suffix に encode。
+		s := in.(intent.SwitchProject)
+		return "intent:switch-project:" + string(s.Slot)
 	}
 	return ""
 }

@@ -567,6 +567,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	planScratchOps(state, target, &phaseLayout, mkID)
 	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
 	planSummonWindowOps(state, target, command, &phaseLayout, mkID)
+	planSwitchProjectOps(state, target, command, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
@@ -1491,6 +1492,54 @@ func planSummonWindowOps(state w.WorldState, target w.DesiredWorld, command Comm
 			IdempotencyKey:  "summon-window:focus-window:" + string(slotID) + ":" + string(kind),
 		})
 	}
+}
+
+// planSwitchProjectOps realises SSOT §4.1 OP04: target slot の workspace に
+// focus を移す。omniwm の per-workspace MRU が「直前 focused だった managed
+// window」への復帰を担当するので、ここでは focus-workspace op のみを emit。
+//
+// Slot が active profile で assign されていない場合、target project が
+// 居住する workspace が存在しないので no-op (no focus-workspace に).
+func planSwitchProjectOps(state w.WorldState, target w.DesiredWorld, command CommandKey,
+	phaseLayout *[]op.Operation, mkID func(string) w.OperationID,
+) {
+	cmd := string(command)
+	const prefix = "intent:switch-project:"
+	if !strings.HasPrefix(cmd, prefix) {
+		return
+	}
+	slotID := w.SlotID(strings.TrimPrefix(cmd, prefix))
+	if slotID == "" {
+		return
+	}
+	// Resolve slot → workspace via environment.
+	spec, ok := state.Environment.SlotByID(slotID)
+	if !ok || spec.Workspace == "" {
+		return
+	}
+	if state.Observed.Focus.Workspace == spec.Workspace {
+		return // already on target workspace
+	}
+	// Sanity: slot must be assigned in active profile (else nothing to switch to).
+	prof, ok := target.ActiveProfileObj()
+	if !ok {
+		return
+	}
+	if _, assigned := prof.Assignments[slotID]; !assigned {
+		return
+	}
+	wsCopy := spec.Workspace
+	*phaseLayout = append(*phaseLayout, op.Operation{
+		ID:     mkID("focus-switch-project"),
+		Kind:   op.KindFocusWorkspace,
+		Target: op.Target{Workspace: &wsCopy},
+		Preconditions: []op.Precondition{
+			{Kind: op.PreWorkspaceExists, Target: op.Target{Workspace: &wsCopy}},
+		},
+		ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWorkspace, FocusedWS: &wsCopy}},
+		Risk:            op.RiskLow,
+		IdempotencyKey:  "switch-project:focus-ws:" + string(slotID),
+	})
 }
 
 // planScratchOps emits show/hide ops for the scratch SystemWindow.
