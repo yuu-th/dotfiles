@@ -370,6 +370,13 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 			d.SystemWindows[idx].Visibility = w.CockpitShown
 		}
 
+	case intent.SummonShell, intent.SummonEditor, intent.SummonBrowser:
+		// SSOT §4.1 OP01-03: slot 内の (shell/editor/browser) を summon。
+		// reducer は DesiredWorld を変えない — observed.Focus を見て cycle
+		// する transient な focus 操作なので planner 側で resolve する
+		// (commandKey="intent:summon-shell:<slot>" 等で dispatch)。
+		_ = v
+
 	case intent.SummonViewer:
 		// SSOT §4.1 OP06: viewer に jump。reducer は DesiredWorld を変えない
 		// — 「どの viewer を focus するか」は observed.Focus に依存する

@@ -566,6 +566,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	planCockpitOps(state, target, &phaseRemovals, &phaseSpawns, &phaseLayout, mkID)
 	planScratchOps(state, target, &phaseLayout, mkID)
 	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
+	planSummonWindowOps(state, target, command, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
@@ -1363,6 +1364,131 @@ func planSummonViewerOps(state w.WorldState, target w.DesiredWorld, command Comm
 			ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWindow, FocusedWin: &liveCopy}},
 			Risk:            op.RiskLow,
 			IdempotencyKey:  "summon-viewer:focus-window",
+		})
+	}
+}
+
+// planSummonWindowOps realises SSOT §4.1 OP01-03 (summon-shell / summon-editor
+// / summon-browser). 共通ロジック:
+//
+//  1. commandKey "intent:summon-<kind>:<slot>" を parse して target kind + slot
+//     を取得する。
+//  2. slot に assigned された project を active profile から resolve。
+//  3. 既存 focus が同じ (project, kind) なら次の index に cycle (最後の index
+//     なら 1 にラップ)。それ以外は index=1 を target にする。
+//  4. target DesiredWindowID を observed.Windows.MatchedTo で LiveWindow に
+//     逆引きし、focus-workspace + focus-window op を emit。
+//  5. target window が未 spawn なら no-op (transaction loop の次の cycle で
+//     spawn が走る前提)。
+func planSummonWindowOps(state w.WorldState, target w.DesiredWorld, command CommandKey,
+	phaseLayout *[]op.Operation, mkID func(string) w.OperationID,
+) {
+	cmd := string(command)
+	var kind w.WindowKind
+	var prefix string
+	switch {
+	case strings.HasPrefix(cmd, "intent:summon-shell:"):
+		kind, prefix = w.WindowShell, "intent:summon-shell:"
+	case strings.HasPrefix(cmd, "intent:summon-editor:"):
+		kind, prefix = w.WindowEditor, "intent:summon-editor:"
+	case strings.HasPrefix(cmd, "intent:summon-browser:"):
+		kind, prefix = w.WindowBrowser, "intent:summon-browser:"
+	default:
+		return
+	}
+	slotID := w.SlotID(strings.TrimPrefix(cmd, prefix))
+	if slotID == "" {
+		return
+	}
+
+	// Step 2: resolve slot → project via active profile.
+	prof, ok := target.ActiveProfileObj()
+	if !ok {
+		return
+	}
+	projID, assigned := prof.Assignments[slotID]
+	if !assigned {
+		return
+	}
+	proj, ok := target.Projects[projID]
+	if !ok {
+		return
+	}
+
+	// Collect candidate window indices for the kind, sorted ascending.
+	indices := []int{}
+	for _, win := range proj.Windows {
+		if win.Kind == kind {
+			indices = append(indices, win.ID.Index)
+		}
+	}
+	if len(indices) == 0 {
+		return
+	}
+	sort.Ints(indices)
+
+	// Step 3: cycle resolution.
+	targetIndex := indices[0]
+	if focusedID := state.Observed.Focus.Window; focusedID != "" {
+		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil &&
+			ow.MatchedTo.Project == projID && ow.MatchedTo.Kind == kind {
+			// Currently focused is in target (project, kind). Cycle next.
+			currentIdx := ow.MatchedTo.Index
+			for i, idx := range indices {
+				if idx == currentIdx {
+					targetIndex = indices[(i+1)%len(indices)]
+					break
+				}
+			}
+		}
+	}
+	targetDesired := w.DesiredWindowID{Project: projID, Kind: kind, Index: targetIndex}
+
+	// Step 4: resolve target DesiredWindowID to LiveWindowID.
+	var targetLive w.LiveWindowID
+	var targetWS w.WorkspaceID
+	for id, ow := range state.Observed.Windows {
+		if ow.MatchedTo == nil {
+			continue
+		}
+		if *ow.MatchedTo == targetDesired {
+			targetLive = id
+			targetWS = ow.Workspace
+			break
+		}
+	}
+	if targetLive == "" {
+		// Target window not yet observed — let transaction loop spawn later.
+		return
+	}
+
+	// Step 5: emit focus-workspace + focus-window ops if not already there.
+	if targetWS != "" && state.Observed.Focus.Workspace != targetWS {
+		wsCopy := targetWS
+		*phaseLayout = append(*phaseLayout, op.Operation{
+			ID:     mkID("focus-summon-ws"),
+			Kind:   op.KindFocusWorkspace,
+			Target: op.Target{Workspace: &wsCopy},
+			Preconditions: []op.Precondition{
+				{Kind: op.PreWorkspaceExists, Target: op.Target{Workspace: &wsCopy}},
+			},
+			ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWorkspace, FocusedWS: &wsCopy}},
+			Risk:            op.RiskLow,
+			IdempotencyKey:  "summon-window:focus-ws:" + string(slotID),
+		})
+	}
+	if state.Observed.Focus.Window != targetLive {
+		liveCopy := targetLive
+		*phaseLayout = append(*phaseLayout, op.Operation{
+			ID:     mkID("focus-summon-window"),
+			Kind:   op.KindFocusWindow,
+			Target: op.Target{LiveWindow: &liveCopy},
+			Preconditions: []op.Precondition{
+				{Kind: op.PreWindowExists, Target: op.Target{LiveWindow: &liveCopy}},
+			},
+			ExpectedEffects: []op.Effect{{Kind: op.EffectFocusWindow, FocusedWin: &liveCopy}},
+			Risk:            op.RiskLow,
+			IdempotencyKey:  "summon-window:focus-window:" + string(slotID) + ":" + string(kind),
 		})
 	}
 }

@@ -1409,6 +1409,18 @@ func commandKeyForIntent(in intent.Intent) string {
 		return "intent:validate-environment"
 	case intent.SummonViewer:
 		return "intent:summon-viewer"
+	case intent.SummonShell:
+		// SSOT §4.1 OP01: slot を payload に持つので commandKey に encode して
+		// planner に伝える ("intent:summon-shell:<slot>")。planner は接頭辞で
+		// dispatch、接尾辞から slot を抜く。
+		s := in.(intent.SummonShell)
+		return "intent:summon-shell:" + string(s.Slot)
+	case intent.SummonEditor:
+		s := in.(intent.SummonEditor)
+		return "intent:summon-editor:" + string(s.Slot)
+	case intent.SummonBrowser:
+		s := in.(intent.SummonBrowser)
+		return "intent:summon-browser:" + string(s.Slot)
 	}
 	return ""
 }

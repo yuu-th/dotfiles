@@ -94,6 +94,22 @@ func parseIntent(args []string) (intent.Intent, error) {
 		return intent.ShowScratchShell{}, nil
 	case "hide-scratch-shell":
 		return intent.HideScratchShell{}, nil
+	case "summon-shell":
+		// SSOT §4.1 OP01: slot の shell に jump + cycle。
+		if len(args) != 2 {
+			return nil, fmt.Errorf("usage: projwmctl summon-shell <slot>")
+		}
+		return intent.SummonShell{Slot: w.SlotID(args[1])}, nil
+	case "summon-editor":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("usage: projwmctl summon-editor <slot>")
+		}
+		return intent.SummonEditor{Slot: w.SlotID(args[1])}, nil
+	case "summon-browser":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("usage: projwmctl summon-browser <slot>")
+		}
+		return intent.SummonBrowser{Slot: w.SlotID(args[1])}, nil
 	case "summon-viewer":
 		// SSOT §4.1 OP06: 直前にフォーカスしていた AI の viewer (または
 		// slot 順の最初の viewer) に focus を移して workspace A に切替。
