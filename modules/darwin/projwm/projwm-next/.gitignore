@@ -1,0 +1,17 @@
+# Locally-built Go binaries (produced by `go build`)
+# Production builds come from `pkgs.buildGoModule` in modules/darwin/projwm/default.nix
+/projwm
+/projwmctl
+/projwmd
+/projwmevent
+/projwm-cockpit
+/projwmstore-bootstrap
+
+# Test artifacts
+/coverage.out
+/coverage.html
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/

@@ -11,7 +11,7 @@
 { config, lib, pkgs, ... }:
 let cfg = config.myConfig.darwin.projwm;
 in {
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.next.enable {
     # nix-darwin の security.sudo.extraConfig は /etc/sudoers.d/10-nix-darwin-extra-config
     # に書き込まれる（root:wheel 0440、visudo 検証済）。
     security.sudo.extraConfig = ''

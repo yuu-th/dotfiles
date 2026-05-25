@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "authority": "nix",
+  "windowManager": { "backend": "omniwm" },
+  "workspaces": [
+    { "id": "8", "rawName": "8", "role": "general" },
+    { "id": "9", "rawName": "9", "role": "general" }
+  ],
+  "slots": [],
+  "apps": [
+    {
+      "bundleId": "com.mitchellh.ghostty",
+      "capability": "terminal",
+      "lifecycleRemoval": {
+        "method": "ax-close-guarded",
+        "allowed": true,
+        "allowedKinds": ["ai", "shell", "viewer"]
+      }
+    },
+    {
+      "bundleId": "dev.zed.Zed",
+      "capability": "editor",
+      "lifecycleRemoval": {
+        "method": "project-scoped-app",
+        "allowed": true,
+        "allowedKinds": ["editor"]
+      }
+    },
+    {
+      "bundleId": "com.vivaldi.Vivaldi",
+      "capability": "browser",
+      "lifecycleRemoval": {
+        "method": "browser-window-close",
+        "allowed": true,
+        "allowedKinds": ["browser"]
+      }
+    }
+  ],
+  "daemons": {}
+}

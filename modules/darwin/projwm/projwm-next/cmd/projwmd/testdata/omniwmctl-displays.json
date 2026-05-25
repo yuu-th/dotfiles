@@ -1,0 +1,92 @@
+{
+  "id" : "0CF0297C-D4E8-4BD5-ADEA-46C3679FC8ED",
+  "kind" : "query",
+  "ok" : true,
+  "result" : {
+    "kind" : "displays",
+    "payload" : {
+      "displays" : [
+        {
+          "activeWorkspace" : {
+            "displayName" : "3",
+            "id" : "18D2AA2E-A6FE-4C23-B3B5-29A132B68347",
+            "number" : 3,
+            "rawName" : "3"
+          },
+          "frame" : {
+            "height" : 1080,
+            "width" : 1920,
+            "x" : -1920,
+            "y" : -121
+          },
+          "hasNotch" : false,
+          "id" : "display:5",
+          "isCurrent" : true,
+          "isMain" : false,
+          "name" : "HP V27ie G5",
+          "orientation" : "horizontal",
+          "visibleFrame" : {
+            "height" : 1080,
+            "width" : 1920,
+            "x" : -1920,
+            "y" : -121
+          }
+        },
+        {
+          "activeWorkspace" : {
+            "displayName" : "Y",
+            "id" : "806BA199-8556-47F4-9F91-624605E9460A",
+            "number" : 18,
+            "rawName" : "18"
+          },
+          "frame" : {
+            "height" : 1080,
+            "width" : 1920,
+            "x" : -1920,
+            "y" : -1201
+          },
+          "hasNotch" : false,
+          "id" : "display:2",
+          "isCurrent" : false,
+          "isMain" : false,
+          "name" : "",
+          "orientation" : "horizontal",
+          "visibleFrame" : {
+            "height" : 1080,
+            "width" : 1920,
+            "x" : -1920,
+            "y" : -1201
+          }
+        },
+        {
+          "activeWorkspace" : {
+            "displayName" : "M",
+            "id" : "6C6EFB2B-F506-4E37-9A14-EE69851A901A",
+            "number" : 10,
+            "rawName" : "10"
+          },
+          "frame" : {
+            "height" : 900,
+            "width" : 1440,
+            "x" : 0,
+            "y" : 0
+          },
+          "hasNotch" : false,
+          "id" : "display:1",
+          "isCurrent" : false,
+          "isMain" : true,
+          "name" : "Built-in Retina Display",
+          "orientation" : "horizontal",
+          "visibleFrame" : {
+            "height" : 870,
+            "width" : 1440,
+            "x" : 0,
+            "y" : 0
+          }
+        }
+      ]
+    }
+  },
+  "status" : "success",
+  "version" : 4
+}
