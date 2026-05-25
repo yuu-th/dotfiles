@@ -73,7 +73,55 @@ func CheckAll(state w.WorldState, opts CheckOptions) []Violation {
 	if v := Check13NoUnprocessedDirty(state); v != nil {
 		vs = append(vs, *v)
 	}
+	if v := Check14DuplicateWindow(state); v != nil {
+		vs = append(vs, *v)
+	}
 	return vs
+}
+
+// Check14DuplicateWindow realises SSOT §2.5 EC4 / §3.4 INV-01: the world should
+// have at most ONE observed window per (project, kind, index). If multiple are
+// observed (typically: omniwm app-rule re-fire spawned an extra, or user
+// manually opened a second Ghostty with the same title), this is reported as
+// an invariant violation so the controller emits a [INVARIANT] card. The
+// planner separately uses focus-tiebreak to pick a winner and continue
+// converging — this invariant is the user-visible notification surface.
+func Check14DuplicateWindow(state w.WorldState) *Violation {
+	// Group observed windows by MatchedTo + observed.Kind. Both keys are
+	// required because viewers carry MatchedTo pointing to the source AI
+	// identity (kind=ai) per convention but are themselves kind=viewer;
+	// they are NOT duplicates of the AI. Genuine duplicates have identical
+	// MatchedTo AND matching observed.Kind.
+	type groupKey struct {
+		Desired w.DesiredWindowID
+		Kind    w.WindowKind
+	}
+	groups := map[groupKey][]w.LiveWindowID{}
+	for _, ow := range state.Observed.Windows {
+		if ow.MatchedTo == nil {
+			continue
+		}
+		// Only count windows whose observed.Kind matches the desired Kind
+		// (filters out viewer-pairing artifacts above).
+		if ow.Kind != ow.MatchedTo.Kind {
+			continue
+		}
+		k := groupKey{Desired: *ow.MatchedTo, Kind: ow.Kind}
+		groups[k] = append(groups[k], ow.ID)
+	}
+	for k, ids := range groups {
+		if len(ids) <= 1 {
+			continue
+		}
+		// Only flag for active (non-archived) projects.
+		pr, ok := state.Desired.Projects[k.Desired.Project]
+		if !ok || pr.Archived {
+			continue
+		}
+		return &Violation{ID: 14, Name: "duplicate-window",
+			Message: fmt.Sprintf("desired window %s/%s/%d has %d observed candidates: %v (INV-01 — orphan all but the most-recently-focused)", k.Desired.Project, k.Desired.Kind, k.Desired.Index, len(ids), ids)}
+	}
+	return nil
 }
 
 func Check1Manifest(state w.WorldState) *Violation {

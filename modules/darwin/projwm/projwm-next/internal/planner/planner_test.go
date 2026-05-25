@@ -40,7 +40,14 @@ func TestPlanDoesNotCloseLiveWindowWithoutDesiredIdentityEvidence(t *testing.T) 
 	}
 }
 
-func TestPlanRejectsAmbiguousActiveDesiredWindow(t *testing.T) {
+// TestPlanRejectsAmbiguousActiveDesiredWindow was renamed: SSOT §2.5 EC4 /
+// INV-01 mandates that the planner *does not* reject the plan on duplicates,
+// it picks the focus-tiebreak winner and continues. The duplicate is surfaced
+// as a Check14 invariant violation post-convergence (= [INVARIANT] card).
+//
+// Renamed to TestPlanAcceptsAmbiguousActiveDesiredWindowViaFocusTiebreak to
+// reflect the new behavior.
+func TestPlanAcceptsAmbiguousActiveDesiredWindowViaFocusTiebreak(t *testing.T) {
 	desiredID := w.DesiredWindowID{Project: "p1", Kind: w.WindowShell, Index: 1}
 	desiredWindow := w.DesiredWindow{
 		ID:   desiredID,
@@ -60,7 +67,7 @@ func TestPlanRejectsAmbiguousActiveDesiredWindow(t *testing.T) {
 			"p1": {ID: "p1", Windows: []w.DesiredWindow{desiredWindow}},
 		},
 	}
-	_, err := Plan(w.WorldState{
+	plan, err := Plan(w.WorldState{
 		Environment: w.ManagedEnvironment{
 			Workspaces: w.WorkspaceEnvironment{
 				Slots: []w.SlotSpec{{ID: "Q", Workspace: "Q", Order: 1}},
@@ -72,14 +79,21 @@ func TestPlanRejectsAmbiguousActiveDesiredWindow(t *testing.T) {
 				"live-1": {ID: "live-1", Kind: w.WindowShell, Workspace: "Q", App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p1"}},
 				"live-2": {ID: "live-2", Kind: w.WindowShell, Workspace: "Q", App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p1"}},
 			},
+			// "live-2" is focused — focus-tiebreak should pick it as winner.
+			Focus:   w.ObservedFocus{Window: "live-2", Workspace: "Q"},
 			Layouts: map[w.WorkspaceID]w.ObservedLayout{},
 		},
 	}, desired, "intent:reconcile", op.ReasonIntent)
-	if err == nil {
-		t.Fatalf("Plan succeeded, want ambiguous active desired identity rejection")
+	if err != nil {
+		t.Fatalf("Plan errored on duplicate (should focus-tiebreak): %v", err)
 	}
-	if !strings.Contains(err.Error(), "classified ambiguous") || !strings.Contains(err.Error(), "unique-strong") {
-		t.Fatalf("Plan error = %v, want unique-strong ambiguity evidence", err)
+	// Verify the planner identified live-2 (the focused one) as the winner —
+	// no close-window op is emitted for live-2; live-1 isn't auto-closed either
+	// (orphan handling is via Check14 invariant card, not planner removal).
+	for _, o := range plan.Operations {
+		if o.Kind == op.KindCloseWindow || o.Kind == op.KindKillSession {
+			t.Errorf("planner auto-closed candidate on duplicate (SSOT INV-01 forbids auto-close, must use [INVARIANT] card): %+v", o)
+		}
 	}
 }
 

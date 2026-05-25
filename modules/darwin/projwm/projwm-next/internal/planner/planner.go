@@ -166,7 +166,10 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				return windows[i].ID.Index < windows[j].ID.Index
 			})
 			for _, dw := range windows {
-				res := identity.Resolve(dw, state.Observed)
+				// SSOT §2.5 EC4 / INV-01: duplicate live windows are resolved by
+				// focus-tiebreak so the planner can continue converging; the
+				// duplicate is reported separately as a Check14 invariant card.
+				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{})
 				if res.Class == identity.ClassUniqueStrong {
 					// Window exists. May need to be moved to its slot workspace.
 					ow := state.Observed.Windows[res.Live]
@@ -269,7 +272,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 						allFound = false
 						break
 					}
-					res := identity.Resolve(*dw, state.Observed)
+					res := identity.ResolveWithFocusTiebreak(*dw, state.Observed, identity.ResolveOptions{})
 					if res.Class != identity.ClassUniqueStrong {
 						allFound = false
 						break
@@ -329,7 +332,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 			}
 			sort.Slice(ais, func(i, j int) bool { return ais[i].ID.Index < ais[j].ID.Index })
 			for _, dw := range ais {
-				if identity.Resolve(dw, state.Observed).Class != identity.ClassUniqueStrong {
+				if identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{}).Class != identity.ClassUniqueStrong {
 					continue
 				}
 				desiredViewerIDs = append(desiredViewerIDs, dw.ID)

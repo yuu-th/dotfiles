@@ -49,6 +49,51 @@ type ResolveOptions struct {
 	ExpectedWorkspace w.WorkspaceID
 }
 
+// IdentifyWinnerAndOrphans realises SSOT §2.5 EC4 / §3.4 INV-01: when multiple
+// live windows match the same desired identity, the most-recently-focused
+// one is the canonical "正" and the rest become orphan candidates for cockpit
+// [INVARIANT] card notification.
+//
+// Tiebreak policy (deterministic):
+//   1. If observed.Focus.Window is among candidates → it's the winner.
+//   2. Otherwise the lexicographically smallest LiveWindowID wins (candidates
+//      are already sorted by Resolve).
+//
+// orphans contains every candidate that is NOT the winner.
+func IdentifyWinnerAndOrphans(candidates []w.LiveWindowID, focused w.LiveWindowID) (winner w.LiveWindowID, orphans []w.LiveWindowID) {
+	if len(candidates) == 0 {
+		return "", nil
+	}
+	winner = candidates[0]
+	for _, c := range candidates {
+		if c == focused {
+			winner = c
+			break
+		}
+	}
+	for _, c := range candidates {
+		if c != winner {
+			orphans = append(orphans, c)
+		}
+	}
+	return winner, orphans
+}
+
+// ResolveWithFocusTiebreak applies INV-01 tiebreak after a normal Resolve:
+// converts ClassAmbiguous to ClassUniqueStrong by picking the focused (or
+// smallest) candidate as the live winner. The full candidate list remains
+// in res.Candidates so callers can compute the orphan set.
+func ResolveWithFocusTiebreak(desired w.DesiredWindow, observed w.ObservedWorld, opts ResolveOptions) Resolution {
+	res := ResolveWithOptions(desired, observed, opts)
+	if res.Class != ClassAmbiguous || len(res.Candidates) == 0 {
+		return res
+	}
+	winner, _ := IdentifyWinnerAndOrphans(res.Candidates, observed.Focus.Window)
+	res.Live = winner
+	res.Class = ClassUniqueStrong
+	return res
+}
+
 // Resolve classifies a DesiredWindowID against the ObservedWorld using TitleContract + match hints.
 // Pure function; iteration is sorted by LiveWindowID for determinism.
 func Resolve(desired w.DesiredWindow, observed w.ObservedWorld) Resolution {
