@@ -914,6 +914,27 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 		}
 		before = windowIDSet(wins)
 		hadZedEmptyBefore = hasZedEmptyProject(wins)
+		// SSOT §6.6 IDEMP / §4.4 ED-EXIST: "既存があれば focus、無ければ作る".
+		// Skip re-spawn when a live (PID>0) window already matches the
+		// controller-owned identity. For Editor we match by
+		// bundleID+title (SSOT §3.4 INV-07: Zed title==basename(cwd));
+		// Browser callers do not provide r.Title so we cannot match
+		// them here — Vivaldi's own pre-spawn dedup in
+		// browser.OpenInProfile handles that case.
+		if r.Kind == w.WindowEditor && r.Title != "" {
+			for _, win := range wins {
+				if win.PID <= 0 {
+					continue
+				}
+				if win.App.BundleID == r.BundleID && win.Title == r.Title {
+					// Already exists — focus and return the existing live ID.
+					if _, err := s.Exec.Run(ctx, "window", "focus", win.ID); err != nil {
+						return "", fmt.Errorf("sigwm.Spawn[%s]: focus existing %s: %w", r.Kind, win.ID, err)
+					}
+					return w.LiveWindowID(win.ID), nil
+				}
+			}
+		}
 	}
 	// Dispatch by Kind to the per-app contract helper.
 	var createdTmuxSession bool
@@ -968,7 +989,18 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 	}
 	var live w.LiveWindowID
 	var err error
-	if r.Kind == w.WindowBrowser {
+	// SSOT §4.4 ED-MULTI: "複数 editor は bundleId + title + workspace で識別".
+	// Zed window titles are basename(cwd), so generic names like "001"
+	// or "src" collide with whatever Zed projects the user has open in
+	// their daily work. Identifying a freshly-spawned Zed by title
+	// alone hits sigwm.settle "ambiguous (count=N)" failures. Switch
+	// Editor — like Browser — to the diff-based settle path: take a
+	// pre-spawn window-ID snapshot, then look for exactly one
+	// newly-appeared window with matching bundleID. Title equality is
+	// no longer required because (a) Zed's title may lag the actual
+	// window creation, and (b) the pre/post diff is itself enough to
+	// disambiguate a single new instance.
+	if r.Kind == w.WindowBrowser || r.Kind == w.WindowEditor {
 		live, err = s.settleNewWindowByDiff(ctx, r.BundleID, before, aliveFn)
 	} else {
 		live, err = s.settleNewWindow(ctx, r.BundleID, r.Title, aliveFn)

@@ -101,7 +101,7 @@ var ssotRealOps = []string{
 	"F4-focus-window-vanished",
 	"I1-identity-from-title",
 	"I2-identity-from-title-viewer",
-	"I3-identity-from-title-unknown",
+	"I3-identity-from-title-unknown", // shell test t.Skip — see TestIdentityFromTitleUnknown comment
 	"T1-tmux-ensure-session",
 	"T2-tmux-ensure-session-already-exists",
 	"T3-tmux-ensure-grouped-session",

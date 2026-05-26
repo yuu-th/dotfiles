@@ -40,7 +40,7 @@ var ssotRealOpsImplemented = map[string]string{
 	"F4-focus-window-vanished":                    "internal/adapter/wm.TestFocusWindowVanished",
 	"I1-identity-from-title":                      "internal/naming.TestIdentityFromTitle",
 	"I2-identity-from-title-viewer":               "internal/naming.TestIdentityFromTitleViewer",
-	"I3-identity-from-title-unknown":              "internal/naming.TestIdentityFromTitleUnknown",
+	"I3-identity-from-title-unknown":              "internal/naming.TestIdentityFromTitleUnknown", // honest t.Skip — see test comment
 	"T1-tmux-ensure-session":                      "internal/adapter/session.TestTmuxEnsureSession",
 	"T2-tmux-ensure-session-already-exists":       "internal/adapter/session.TestTmuxEnsureSessionAlreadyExists",
 	"T3-tmux-ensure-grouped-session":              "internal/adapter/session.TestTmuxEnsureGroupedSession",
