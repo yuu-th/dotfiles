@@ -66,6 +66,26 @@ func (a *privatePayloadAllocator) Allocate(project w.ProjectID, urls []string) (
 	return w.PrivatePayloadRef(token), len(clean), invalid, nil
 }
 
+// vivaldiInspectorAdapter bridges browser.VivaldiAdapter's
+// InspectTabsByWindow (which returns []browser.WindowTabs) to the
+// observer-package interface (which returns []observer.WindowSnapshot
+// to avoid an import cycle).
+type vivaldiInspectorAdapter struct {
+	v *browser.VivaldiAdapter
+}
+
+func (vi *vivaldiInspectorAdapter) InspectTabsByWindow(ctx context.Context) ([]observer.WindowSnapshot, error) {
+	wins, err := vi.v.InspectTabsByWindow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]observer.WindowSnapshot, len(wins))
+	for i, w := range wins {
+		out[i] = observer.WindowSnapshot{Title: w.Title, URLs: w.URLs}
+	}
+	return out, nil
+}
+
 // newBrowserTabsObserver constructs the Tier 3 observer with all the
 // daemon-side glue ready. Returns nil if pre-reqs are missing.
 func newBrowserTabsObserver(ctrl *controller.Controller, vivaldi *browser.VivaldiAdapter, privateStore browser.PrivatePayloadStore) *observer.BrowserTabsSync {
@@ -73,7 +93,7 @@ func newBrowserTabsObserver(ctrl *controller.Controller, vivaldi *browser.Vivald
 		return nil
 	}
 	return &observer.BrowserTabsSync{
-		Vivaldi:   vivaldi,
+		Vivaldi:   &vivaldiInspectorAdapter{v: vivaldi},
 		Submitter: &controllerIntentAdapter{ctrl: ctrl},
 		World:     &controllerWorldAdapter{ctrl: ctrl},
 		Allocator: &privatePayloadAllocator{store: privateStore},

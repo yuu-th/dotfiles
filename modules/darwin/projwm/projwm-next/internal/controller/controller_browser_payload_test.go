@@ -217,6 +217,94 @@ func TestControllerBrowserReorderTabs_NoPayloadStoreCalls(t *testing.T) {
 	}
 }
 
+// SSOT §4.4 BR-PRIV-NOSTORE + §4.5 ARCHIVE: archiving a project must
+// Forget every browser tab payload of its windows (orphan GC). The
+// orphan GC stage runs after reducer applies ArchiveProject.
+func TestControllerArchiveProject_ForgetsOrphanedBrowserPayloads(t *testing.T) {
+	ctrl, payloadStore, winID := newControllerWithPayloadStore(t)
+	ctx := context.Background()
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID, URL: "https://a"}); err != nil {
+		t.Fatalf("seed AddTab a: %v", err)
+	}
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID, URL: "https://b"}); err != nil {
+		t.Fatalf("seed AddTab b: %v", err)
+	}
+	tokensPriorToArchive := map[string]bool{}
+	for _, ref := range ctrl.state.Desired.Projects["p1"].Windows[0].Browser.URLPayloadRefs {
+		tokensPriorToArchive[string(ref)] = true
+	}
+	if len(tokensPriorToArchive) != 2 {
+		t.Fatalf("setup: expected 2 tokens prior to archive, got %d", len(tokensPriorToArchive))
+	}
+	forgetsBefore := len(payloadStore.forgets)
+
+	if _, err := ctrl.ApplyIntent(ctx, intent.ArchiveProject{Project: "p1"}); err != nil {
+		t.Fatalf("ArchiveProject: %v", err)
+	}
+
+	gotForgets := payloadStore.forgets[forgetsBefore:]
+	if len(gotForgets) != 2 {
+		t.Fatalf("Forget calls after archive = %d, want 2 (one per tab): %v", len(gotForgets), gotForgets)
+	}
+	for _, ft := range gotForgets {
+		if !tokensPriorToArchive[ft] {
+			t.Errorf("Forget called with unrecognised token %q", ft)
+		}
+	}
+}
+
+// Unaffected projects must NOT have their refs Forgotten when an
+// unrelated project is archived. (Important: orphan GC must be a SET
+// DIFFERENCE, not "everything pre-archive".)
+func TestControllerArchiveProject_DoesNotForgetUnrelatedProjectRefs(t *testing.T) {
+	env, desired := browserProjectFixture()
+	// Add a second project + browser window so refs can be cross-tested.
+	winID2 := w.DesiredWindowID{Project: "p2", Kind: w.WindowBrowser, Index: 1}
+	desired.Projects["p2"] = w.DesiredProject{
+		ID: "p2",
+		Windows: []w.DesiredWindow{{
+			ID:      winID2,
+			Kind:    w.WindowBrowser,
+			Browser: &w.DesiredBrowserSession{},
+		}},
+	}
+	// p2 is intentionally NOT assigned in the profile — it sits in park
+	// state. This keeps invariant 4 (active-desired-present) from
+	// asking the fake adapter to spawn a p2 browser window. The orphan
+	// GC contract under test only cares about whether refs are touched
+	// or not — slot assignment is orthogonal.
+	st := store.NewMemoryStore(desired)
+	ctrl := New(env, desired, wm.NewFake(env), st)
+	payloadStore := newFakePrivatePayloadStore()
+	ctrl.PayloadStore = payloadStore
+	winID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowBrowser, Index: 1}
+
+	ctx := context.Background()
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID1, URL: "https://p1-tab"}); err != nil {
+		t.Fatalf("seed p1: %v", err)
+	}
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p2", WindowID: winID2, URL: "https://p2-tab"}); err != nil {
+		t.Fatalf("seed p2: %v", err)
+	}
+	p2Token := string(ctrl.state.Desired.Projects["p2"].Windows[0].Browser.URLPayloadRefs[0])
+	forgetsBefore := len(payloadStore.forgets)
+
+	if _, err := ctrl.ApplyIntent(ctx, intent.ArchiveProject{Project: "p1"}); err != nil {
+		t.Fatalf("ArchiveProject p1: %v", err)
+	}
+
+	gotForgets := payloadStore.forgets[forgetsBefore:]
+	for _, ft := range gotForgets {
+		if ft == p2Token {
+			t.Errorf("orphan GC Forgot unrelated project p2's token %q on archive of p1", p2Token)
+		}
+	}
+	// p2 ref must still exist in DesiredWorld.
+	if got := ctrl.state.Desired.Projects["p2"].Windows[0].Browser.URLPayloadRefs; len(got) != 1 || string(got[0]) != p2Token {
+		t.Errorf("p2 URLPayloadRefs corrupted: %v", got)
+	}
+}
+
 // PayloadStore=nil is the S14 第一段階 fallback: URLs go in literal.
 // This keeps existing tests / migration path working until the daemon wires
 // a real store. Promoting OP-14-17 ledger requires that the daemon wires

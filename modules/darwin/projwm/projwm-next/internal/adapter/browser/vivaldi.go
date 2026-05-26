@@ -531,6 +531,95 @@ func (a *VivaldiAdapter) disappearTimeout() time.Duration {
 
 var _ BrowserCapabilityAdapter = (*VivaldiAdapter)(nil)
 
+// WindowTabs pairs a Vivaldi window's title with its tab URLs in order.
+// Used by the browser tab observer (SSOT §4.4 BR-TAB-OBS) to attribute
+// user-driven tab changes to a specific managed window — the flat
+// URL list returned by InspectTabs loses window boundaries.
+type WindowTabs struct {
+	// Title is the Vivaldi window's title (e.g., "browser-1:dotfiles").
+	// Managed automation-profile windows carry the controller-owned
+	// title; user-profile windows have arbitrary titles and are
+	// classified as External by naming.IdentityFromTitle.
+	Title string
+	// URLs preserve Vivaldi tab order (left-to-right).
+	URLs []string
+}
+
+// InspectTabsByWindow enumerates every Vivaldi window with its title and
+// per-window tab URL list. Used by the BrowserTabsSync observer so it
+// can map a tab change to the right managed DesiredWindow (SSOT §4.1
+// OP14-17 take a WindowID, not a flat tab index).
+//
+// The AppleScript uses an explicit separator (`\x1f` ASCII unit-separator
+// between title and URLs, `\x1e` record-separator between windows) so
+// titles containing newlines or colons do not corrupt the parse.
+func (a *VivaldiAdapter) InspectTabsByWindow(ctx context.Context) ([]WindowTabs, error) {
+	const script = `tell application "Vivaldi"
+	set out to ""
+	set unit to (ASCII character 31)
+	set record_sep to (ASCII character 30)
+	repeat with w in windows
+		set wt to ""
+		try
+			set wt to title of w
+		end try
+		set out to out & wt & unit
+		set urlList to {}
+		repeat with t in tabs of w
+			set end of urlList to URL of t
+		end repeat
+		set AppleScript's text item delimiters to (ASCII character 29)
+		set out to out & (urlList as text) & record_sep
+		set AppleScript's text item delimiters to ""
+	end repeat
+	return out
+end tell`
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("browser/vivaldi: osascript inspect tabs by window: %w", err)
+	}
+	return parseInspectTabsByWindow(string(out)), nil
+}
+
+// parseInspectTabsByWindow splits the osascript output produced by
+// InspectTabsByWindow into structured WindowTabs. Exported indirectly
+// for test purposes — keeps the AppleScript-free parsing logic unit
+// testable.
+func parseInspectTabsByWindow(raw string) []WindowTabs {
+	const (
+		groupSep  = "\x1d" // between URLs within one window
+		fieldSep  = "\x1f" // between title and url-list
+		recordSep = "\x1e" // between windows
+	)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	records := strings.Split(raw, recordSep)
+	var out []WindowTabs
+	for _, rec := range records {
+		rec = strings.TrimSpace(rec)
+		if rec == "" {
+			continue
+		}
+		parts := strings.SplitN(rec, fieldSep, 2)
+		if len(parts) != 2 {
+			continue
+		}
+		title := strings.TrimSpace(parts[0])
+		var urls []string
+		for _, u := range strings.Split(parts[1], groupSep) {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				urls = append(urls, u)
+			}
+		}
+		out = append(out, WindowTabs{Title: title, URLs: urls})
+	}
+	return out
+}
+
 // InspectTabs enumerates the URLs of every tab in every Vivaldi window via
 // AppleScript. Returned URLs preserve the order produced by the Vivaldi tab
 // AppleScript dictionary; callers must treat them as opaque (the canary URL

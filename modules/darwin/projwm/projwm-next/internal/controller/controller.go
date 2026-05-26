@@ -156,6 +156,7 @@ func (c *Controller) ApplyIntent(ctx context.Context, in intent.Intent) (Transac
 	}
 
 	// 3. Reduce intent → new DesiredWorld.
+	preReduceDesired := c.state.Desired
 	newDesired, err := reducer.ReduceIntent(c.state, in)
 	if err != nil {
 		result, recordErr := c.recordEarlyNoCommitTrace(ctx, trace, "reducer-error", err, false)
@@ -189,8 +190,15 @@ func (c *Controller) ApplyIntent(ctx context.Context, in intent.Intent) (Transac
 			c.markGlobalDirty("observation-refresh-failed")
 		}
 	}
-	if err == nil && ackUserEvents != nil {
-		ackUserEvents()
+	if err == nil {
+		// Commit succeeded — safe to GC orphan PrivatePayloadStore refs
+		// (SSOT §4.4 BR-PRIV-NOSTORE + §4.5 ARCHIVE). Done post-commit so a
+		// rollback (executor failure) does not leave Forget-only files +
+		// re-instated DesiredWorld out of sync.
+		c.forgetOrphanedBrowserPayloads(ctx, preReduceDesired, c.state.Desired)
+		if ackUserEvents != nil {
+			ackUserEvents()
+		}
 	}
 	return result, err
 }
@@ -1513,6 +1521,59 @@ func (c *Controller) prepareBrowserIntent(ctx context.Context, in intent.Intent)
 	default:
 		return in, nil
 	}
+}
+
+// forgetOrphanedBrowserPayloads computes (pre-reduce refs) \ (post-reduce refs)
+// and calls PayloadStore.Forget for each opaque token in the difference.
+// Triggers when RemoveWindow / ArchiveProject / SwitchProfile (with InactivePolicyRemove)
+// closes a browser window: the DesiredBrowserSession is gone from new Desired
+// but its tokens point at PrivatePayloadStore files that would otherwise leak.
+//
+// Literal-URL refs (S14 fallback) are not Forget()ed — IsPayloadToken returns
+// false for them, so they are silently filtered out.
+func (c *Controller) forgetOrphanedBrowserPayloads(ctx context.Context, pre, post w.DesiredWorld) {
+	if c.PayloadStore == nil {
+		return
+	}
+	preTokens := collectBrowserRefs(pre)
+	if len(preTokens) == 0 {
+		return
+	}
+	postTokens := collectBrowserRefs(post)
+	for t := range preTokens {
+		if postTokens[t] {
+			continue
+		}
+		if !browser.IsPayloadToken(t) {
+			continue
+		}
+		if err := c.PayloadStore.Forget(ctx, t); err != nil {
+			log.Printf("controller: payload-store forget (orphan GC): %v", err)
+		}
+	}
+}
+
+// collectBrowserRefs returns the set of every URLPayloadRefs entry across
+// all LIVE projects + windows in d. Archived projects are excluded so
+// archive (SSOT §4.5) becomes a GC trigger: archived browser refs are no
+// longer reachable by UnarchiveProject (SSOT §4.5 park-state, no auto
+// restore) and would otherwise leak in PrivatePayloadStore forever.
+func collectBrowserRefs(d w.DesiredWorld) map[string]bool {
+	out := map[string]bool{}
+	for _, pr := range d.Projects {
+		if pr.Archived {
+			continue
+		}
+		for _, win := range pr.Windows {
+			if win.Kind != w.WindowBrowser || win.Browser == nil {
+				continue
+			}
+			for _, ref := range win.Browser.URLPayloadRefs {
+				out[string(ref)] = true
+			}
+		}
+	}
+	return out
 }
 
 // lookupBrowserRef returns the URLPayloadRefs entry at 1-based tab index for
