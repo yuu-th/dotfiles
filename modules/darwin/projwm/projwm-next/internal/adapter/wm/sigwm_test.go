@@ -998,6 +998,10 @@ func TestSigWM_SpawnCockpit_Idempotent(t *testing.T) {
 		 "app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"},
 		 "isFocused":true,"workspace":{"id":"omni-cp1","rawName":"CP1","displayName":"CP1","number":21}}
 	]}`))
+	// SSOT §6.6 IDEMP: existing-window summon focuses the existing
+	// cockpit window instead of no-op'ing — so the test must also stub
+	// out the `window focus <id>` call.
+	m.set("window focus", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
 
 	l := &mockLauncher{}
 	sw := NewSigWM(env, m, l)
@@ -1011,6 +1015,17 @@ func TestSigWM_SpawnCockpit_Idempotent(t *testing.T) {
 	}
 	if len(l.calls) != 0 {
 		t.Fatalf("expected no launcher calls on idempotent spawn, got %d", len(l.calls))
+	}
+	// Verify the SSOT §6.6 IDEMP focus call was issued.
+	wantFocus := false
+	for _, c := range m.calls {
+		if strings.Contains(strings.Join(c.args, " "), "window focus cw-D0") {
+			wantFocus = true
+			break
+		}
+	}
+	if !wantFocus {
+		t.Fatalf("idempotent SpawnCockpit must focus existing window per SSOT §6.6; calls=%v", m.calls)
 	}
 }
 

@@ -2253,6 +2253,17 @@ func (s *SigWM) SpawnCockpit(ctx context.Context, displayIdx int, title string) 
 		}
 	}
 	if omniwmHasTitle && processAlive() {
+		// SSOT §6.6 IDEMP: existing-window summon must focus, not no-op.
+		// Without this an already-spawned cockpit stays hidden behind the
+		// caller's prior focus (TestSpawnCockpitAlreadyExists guards this).
+		for _, win := range wins {
+			if win.App.BundleID == "com.mitchellh.ghostty" && win.Title == title {
+				if _, err := s.Exec.Run(ctx, "window", "focus", win.ID); err != nil {
+					return fmt.Errorf("sigwm.SpawnCockpit: focus existing %s: %w", win.ID, err)
+				}
+				break
+			}
+		}
 		return nil
 	}
 	if !omniwmHasTitle && processAlive() {
