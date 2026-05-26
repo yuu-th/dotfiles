@@ -627,7 +627,7 @@ func cardTypeStyle(t w.CardType) lipgloss.Style {
 	switch t {
 	case w.CardTypeNew, w.CardTypeOrphan:
 		return styleCardNew
-	case w.CardTypeMoved, w.CardTypeClosed:
+	case w.CardTypeMoved, w.CardTypeClosed, w.CardTypeOmniwmRecovery:
 		return styleWarn
 	case w.CardTypeReplan, w.CardTypeInvariant, w.CardTypeManifest:
 		return styleErr

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	w "github.com/yuu-th/projwm-next/internal/world"
@@ -27,10 +30,40 @@ func cmdStatus(gf globalFlags, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if *asJSON {
-		return emitStatusJSON(snap, stdout)
+		return emitStatusJSON(snap, gf, stdout)
 	}
 	renderHuman(snap, stdout)
 	return nil
+}
+
+// convergenceFromCheckpoint maps the store-recorded DirtyScopes to the
+// SSOT §5.6 convergence vocabulary. REPLAN_FAILED is a daemon-runtime
+// signal not derivable from the store alone — we surface the
+// store-level interpretation honestly: empty scopes ⇒ CONVERGED;
+// otherwise CONVERGING. The daemon-aware status path may overwrite
+// this when daemon contact is enabled.
+func convergenceFromCheckpoint(dirtyScopes []w.DirtyScope) string {
+	if len(dirtyScopes) == 0 {
+		return "CONVERGED"
+	}
+	return "CONVERGING"
+}
+
+// manifestDigestCheck compares the manifest file at gf.manifestPath
+// against gf.manifestDigest. SSOT §5.6 item #9.
+func manifestDigestCheck(gf globalFlags) string {
+	if gf.manifestPath == "" || gf.manifestDigest == "" {
+		return "UNCHECKED"
+	}
+	data, err := os.ReadFile(gf.manifestPath)
+	if err != nil {
+		return "UNCHECKED"
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) == gf.manifestDigest {
+		return "OK"
+	}
+	return "MISMATCH"
 }
 
 // statusJSON is the public schema for `projwm status --json`.
@@ -48,6 +81,20 @@ type statusJSON struct {
 	Slots            []slotJSON                                        `json:"slots"`
 	Parked           []w.ProjectID                                     `json:"parked"`
 	Archived         []w.ProjectID                                     `json:"archived"`
+
+	// Convergence is the store-derived convergence status (SSOT §5.6
+	// item #8). CONVERGED when no DirtyScopes are pending; CONVERGING
+	// when the controller has recorded outstanding work. REPLAN_FAILED
+	// requires daemon runtime signal and is not derivable from the
+	// store alone — when this command runs daemon-free, the value is
+	// reported honestly as the store-level state.
+	Convergence string `json:"convergence,omitempty"`
+
+	// ManifestDigest reports the manifest digest comparison (SSOT §5.6
+	// item #9). "OK" when the manifest at --managed-environment hashes
+	// to the digest in --manifest-digest; "MISMATCH" otherwise;
+	// "UNCHECKED" when either argument was omitted.
+	ManifestDigest string `json:"manifestDigest,omitempty"`
 }
 
 type profileJSON struct {
@@ -73,7 +120,7 @@ type slotJSON struct {
 	Order     int           `json:"order"`
 }
 
-func emitStatusJSON(snap WorldSnapshot, out io.Writer) error {
+func emitStatusJSON(snap WorldSnapshot, gf globalFlags, out io.Writer) error {
 	resp := statusJSON{
 		Generation:      snap.Generation,
 		ParentGeneration: snap.ParentGeneration,
@@ -84,6 +131,8 @@ func emitStatusJSON(snap WorldSnapshot, out io.Writer) error {
 		AcceptedLayouts: snap.AcceptedLayouts,
 		Parked:          snap.parkedProjects(),
 		Archived:        snap.archivedProjects(),
+		Convergence:     convergenceFromCheckpoint(snap.Checkpoint.DirtyScopes),
+		ManifestDigest:  manifestDigestCheck(gf),
 	}
 	// Alias field-tagged backref: statusJSON.Parent is the marshal name,
 	// statusJSON.ParentGeneration is the internal name; renaming below.

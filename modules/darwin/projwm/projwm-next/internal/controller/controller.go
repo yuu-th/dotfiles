@@ -1059,6 +1059,33 @@ func (c *Controller) appendActiveCards(cards []w.Card) {
 	}
 }
 
+// EmitOmniwmRecoveryCard surfaces a [OMNIWM-RECOVERY] card when the
+// daemon's self-heal ladder (Lv1-Lv4) takes an action — restart
+// omniwmctl, restart omniwm, redeploy rules. SSOT §5.4 cards 6 種
+// requires this surface (alongside NEW / CLOSED / MOVED / INVARIANT /
+// MANIFEST). Action key Enter dismisses; the card is informational.
+func (c *Controller) EmitOmniwmRecoveryCard(level, action, detail string) {
+	c.wmMutationLock.Lock()
+	defer c.wmMutationLock.Unlock()
+	subject := fmt.Sprintf("OmniWM self-heal %s: %s", level, action)
+	ctx := map[string]string{
+		"level":  level,
+		"action": action,
+	}
+	if detail != "" {
+		ctx["detail"] = detail
+	}
+	c.appendActiveCards([]w.Card{{
+		Type:    w.CardTypeOmniwmRecovery,
+		Subject: subject,
+		Context: ctx,
+		Actions: []w.CardAction{
+			{Key: "Enter", Label: "acknowledge"},
+			{Key: "Esc", Label: "dismiss"},
+		},
+	}})
+}
+
 // EmitManifestMismatchCard surfaces a [MANIFEST] card when the daemon
 // detects that the runtime manifest digest no longer matches the digest
 // it was started with (requirements E2.1).

@@ -96,6 +96,17 @@ func TestCmdStatus_JSON(t *testing.T) {
 	if !containsProject(resp.Archived, "old") {
 		t.Errorf("Archived should contain old, got %v", resp.Archived)
 	}
+
+	// SSOT §5.6 status #8: convergence MUST appear (store-derived).
+	// Empty DirtyScopes in the test fixture → CONVERGED.
+	if resp.Convergence != "CONVERGED" {
+		t.Errorf("SSOT §5.6 #8: Convergence = %q, want CONVERGED for clean checkpoint", resp.Convergence)
+	}
+	// SSOT §5.6 status #9: manifest digest. Fixture leaves digest
+	// unconfigured → UNCHECKED honest value.
+	if resp.ManifestDigest == "" {
+		t.Errorf("SSOT §5.6 #9: ManifestDigest must be populated (got empty), want UNCHECKED/OK/MISMATCH")
+	}
 }
 
 func containsProject(in []w.ProjectID, want w.ProjectID) bool {

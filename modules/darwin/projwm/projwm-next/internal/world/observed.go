@@ -87,13 +87,14 @@ type ObservedWorkspace struct {
 type CardType string
 
 const (
-	CardTypeNew       CardType = "NEW"
-	CardTypeClosed    CardType = "CLOSED"
-	CardTypeMoved     CardType = "MOVED"
-	CardTypeReplan    CardType = "REPLAN"
-	CardTypeInvariant CardType = "INVARIANT"
-	CardTypeManifest  CardType = "MANIFEST"
-	CardTypeOrphan    CardType = "ORPHAN"
+	CardTypeNew            CardType = "NEW"
+	CardTypeClosed         CardType = "CLOSED"
+	CardTypeMoved          CardType = "MOVED"
+	CardTypeReplan         CardType = "REPLAN"
+	CardTypeInvariant      CardType = "INVARIANT"
+	CardTypeManifest       CardType = "MANIFEST"
+	CardTypeOrphan         CardType = "ORPHAN"
+	CardTypeOmniwmRecovery CardType = "OMNIWM-RECOVERY"
 )
 
 // CardID is an in-memory identifier for a Card. Not persisted across

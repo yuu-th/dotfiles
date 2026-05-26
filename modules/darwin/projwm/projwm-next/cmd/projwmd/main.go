@@ -859,7 +859,7 @@ func main() {
 	// restart) are staged later. Best-effort: failures are logged but do
 	// not block startup.
 	if healer, ok := adapter.(wm.OmniwmSelfHealer); ok {
-		runOmniwmRecovery(ctx, healer, env)
+		runOmniwmRecovery(ctx, healer, env, ctrl)
 	}
 
 	startupResult, startupErr := ctrl.ApplyEvent(ctx, event.Event{Source: event.SourceSystem, Kind: event.KindStartup})
@@ -896,7 +896,7 @@ func main() {
 		if r, ok2 := adapter.(wm.CockpitReaper); ok2 {
 			reaper = r
 		}
-		go runOmniwmRecoveryTicker(ctx, healer, env, reaper)
+		go runOmniwmRecoveryTicker(ctx, healer, env, reaper, ctrl)
 	}
 
 	// Tier 1 5-second grace ticker (design v3 §3.6): polls PendingOrphans
@@ -974,7 +974,12 @@ func main() {
 // by app-level relaunch.
 var lv2RelaunchEnabled = true
 
-func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.ManagedEnvironment) {
+func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.ManagedEnvironment, ctrl *controller.Controller) {
+	emitRecoveryCard := func(level, action, detail string) {
+		if ctrl != nil {
+			ctrl.EmitOmniwmRecoveryCard(level, action, detail)
+		}
+	}
 	probe := healer.ProbeOmniwmHealth(ctx)
 	if !probe.Reachable {
 		// Lv3: omniwm unreachable — kickstart -k restart. This has side
@@ -984,6 +989,7 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 		// future stage adds an interactive Esc via cockpit modal; for
 		// now the grace is non-cancellable but documented.
 		fmt.Fprintln(os.Stderr, "projwmd: [OMNIWM-RECOVERY] Lv3: omniwmctl unreachable, restarting omniwm in 5 seconds (side effect: all app workspace assignments reset)")
+		emitRecoveryCard("Lv3", "restart omniwm", "omniwmctl unreachable, restarting in 5s")
 		select {
 		case <-ctx.Done():
 			return
@@ -992,12 +998,14 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 		if err := healer.RestartOmniwm(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "projwmd: [OMNIWM-RECOVERY-FAILED] Lv3 restart failed: %v\n", err)
 			fmt.Fprintln(os.Stderr, "projwmd: [OMNIWM-RECOVERY-FAILED] please check macOS System Settings > Privacy > Accessibility for omniwm permission, or run `sudo darwin-rebuild switch --flake .#yuta` to reinstall")
+			emitRecoveryCard("Lv3", "restart-failed", err.Error())
 			return
 		}
 		fmt.Fprintln(os.Stderr, "projwmd: [OMNIWM-RECOVERY] Lv3 succeeded, omniwm is back; re-probing")
 		probe = healer.ProbeOmniwmHealth(ctx)
 		if !probe.Reachable {
 			fmt.Fprintln(os.Stderr, "projwmd: [OMNIWM-RECOVERY-FAILED] omniwm restart returned but ping still fails — manual intervention required")
+			emitRecoveryCard("Lv3", "restart-recovery-failed", "ping still fails after restart")
 			return
 		}
 	}
@@ -1007,8 +1015,10 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 	const minExpectedRules = 5
 	if probe.RuleCount < minExpectedRules {
 		fmt.Fprintf(os.Stderr, "projwmd: omniwm-recovery Lv1: rule count %d < %d, re-pushing\n", probe.RuleCount, minExpectedRules)
+		emitRecoveryCard("Lv1", "redeploy rules", fmt.Sprintf("rule count %d below floor %d", probe.RuleCount, minExpectedRules))
 		if err := healer.RedeployOmniwmRules(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "projwmd: omniwm-recovery Lv1 failed: %v\n", err)
+			emitRecoveryCard("Lv1", "redeploy-failed", err.Error())
 		} else {
 			// Re-probe after rule push.
 			probe = healer.ProbeOmniwmHealth(ctx)
@@ -1032,8 +1042,10 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 			}
 			appName := strings.TrimSuffix(filepath.Base(app.AppPath), ".app")
 			fmt.Fprintf(os.Stderr, "projwmd: omniwm-recovery Lv2: relaunching %s (%s) to re-register with omniwm\n", appName, app.BundleID)
+			emitRecoveryCard("Lv2", "relaunch managed app", fmt.Sprintf("%s (%s) missing from omniwm tracking", appName, app.BundleID))
 			if err := healer.RelaunchManagedApp(ctx, appName, app.AppPath); err != nil {
 				fmt.Fprintf(os.Stderr, "projwmd: omniwm-recovery Lv2 failed for %s: %v\n", app.BundleID, err)
+				emitRecoveryCard("Lv2", "relaunch-failed", fmt.Sprintf("%s: %v", app.BundleID, err))
 			}
 		}
 		lv2RelaunchEnabled = false
@@ -1044,7 +1056,7 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 // the lifetime of ctx. Realises requirements v2.8 §8.9 continuous
 // monitoring: omniwm crashes / tracking drops / rule list resets that
 // happen after daemon startup are caught and remediated automatically.
-func runOmniwmRecoveryTicker(ctx context.Context, healer wm.OmniwmSelfHealer, env w.ManagedEnvironment, reaper wm.CockpitReaper) {
+func runOmniwmRecoveryTicker(ctx context.Context, healer wm.OmniwmSelfHealer, env w.ManagedEnvironment, reaper wm.CockpitReaper, ctrl *controller.Controller) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
@@ -1052,7 +1064,7 @@ func runOmniwmRecoveryTicker(ctx context.Context, healer wm.OmniwmSelfHealer, en
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runOmniwmRecovery(ctx, healer, env)
+			runOmniwmRecovery(ctx, healer, env, ctrl)
 			// v2.8 §8.10: collapse any duplicate cockpit ghostty
 			// processes that appeared since the last tick. Cheap (one
 			// pgrep + per-pid pgrep + selective kill), and the only

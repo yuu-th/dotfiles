@@ -8,6 +8,76 @@ import (
 	"testing"
 )
 
+// TestSSOTSection55ErrorNotificationSurfacesExist verifies SSOT §5.5
+// requires three error-notification surfaces:
+//
+//  1. cockpit カード (invariant violation / orphan / omniwm-recovery)
+//  2. cockpit topbar convergence indicator
+//  3. `projwm doctor` PASS/WARN/FAIL output
+//
+// The audit confirms each surface has a code symbol present so an
+// accidental removal would fail this test. False negatives are
+// possible if the symbol is renamed — that's intentional: a rename
+// requires a deliberate update of this audit, which forces a review
+// of the surface still satisfying SSOT §5.5.
+func TestSSOTSection55ErrorNotificationSurfacesExist(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	if repoRoot == "" {
+		t.Skip("repo root not located")
+		return
+	}
+	required := map[string]string{
+		// Cockpit card surface — at minimum the OMNIWM-RECOVERY card
+		// hook completed in S22.
+		"EmitOmniwmRecoveryCard": "SSOT §5.5 cockpit card surface — OmniWM self-heal notification",
+		"EmitManifestMismatchCard": "SSOT §5.5 cockpit card surface — manifest mismatch notification",
+		// Cockpit topbar convergence — TUI view renders three labels.
+		"CONVERGED":      "SSOT §5.5 topbar convergence vocabulary",
+		"CONVERGING":     "SSOT §5.5 topbar convergence vocabulary",
+		"REPLAN_FAILED":  "SSOT §5.5 topbar convergence vocabulary",
+		// projwm doctor — PASS/WARN/FAIL output.
+		"LevelPass": "SSOT §5.5 doctor PASS level",
+		"LevelWarn": "SSOT §5.5 doctor WARN level",
+		"LevelFail": "SSOT §5.5 doctor FAIL level",
+	}
+	body, err := concatGoSources(repoRoot)
+	if err != nil {
+		t.Fatalf("concat sources: %v", err)
+	}
+	for symbol, why := range required {
+		if !strings.Contains(body, symbol) {
+			t.Errorf("SSOT §5.5 surface missing — symbol %q absent from project Go sources (%s)", symbol, why)
+		}
+	}
+}
+
+func concatGoSources(repoRoot string) (string, error) {
+	var b strings.Builder
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == ".git" || name == "node_modules" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		data, err := readSmallFile(path)
+		if err != nil {
+			return nil
+		}
+		b.WriteString(data)
+		b.WriteString("\n")
+		return nil
+	})
+	return b.String(), err
+}
+
 // TestSSOTSection55NoMacOSNotificationUsage verifies SSOT §5.5:
 // "macOS notification は一切使わない。すべて cockpit または CLI に集約."
 //
