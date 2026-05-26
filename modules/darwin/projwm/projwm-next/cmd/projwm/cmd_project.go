@@ -105,6 +105,9 @@ func cmdAddShell(gf globalFlags, args []string, stdout, stderr io.Writer) error 
 func cmdAddEditor(gf globalFlags, args []string, stdout, stderr io.Writer) error {
 	return cmdAddKind(gf, args, stdout, stderr, w.WindowEditor, "add-editor")
 }
+func cmdAddBrowser(gf globalFlags, args []string, stdout, stderr io.Writer) error {
+	return cmdAddKind(gf, args, stdout, stderr, w.WindowBrowser, "add-browser")
+}
 
 func cmdAddKind(gf globalFlags, args []string, stdout, stderr io.Writer, kind w.WindowKind, fsName string) error {
 	fs := flag.NewFlagSet(fsName, flag.ContinueOnError)

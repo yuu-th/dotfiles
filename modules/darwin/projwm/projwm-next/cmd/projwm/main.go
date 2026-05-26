@@ -25,6 +25,7 @@ Usage:
   projwm add-ai --ai <name> [--project <P>]
   projwm add-shell [--project <P>]
   projwm add-editor [--project <P>]
+  projwm add-browser [--project <P>]
   projwm remove --window <KIND-N> [--project <P>]
   projwm profile create <NAME> [--description <TEXT>] [--inactive-policy remove|keep]
   projwm profile switch <NAME>
@@ -131,6 +132,8 @@ func runSubcommand(gf globalFlags, sub string, args []string, stdout, stderr io.
 		return cmdAddShell(gf, args, stdout, stderr)
 	case "add-editor":
 		return cmdAddEditor(gf, args, stdout, stderr)
+	case "add-browser":
+		return cmdAddBrowser(gf, args, stdout, stderr)
 	case "remove":
 		return cmdRemove(gf, args, stdout, stderr)
 	case "profile":
