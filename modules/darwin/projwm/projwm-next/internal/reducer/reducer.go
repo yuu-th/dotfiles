@@ -383,13 +383,13 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 		_ = v
 
 	case intent.BrowserAddTab:
-		// SSOT §4.1 OP14: browser window に URL タブを追加する。
-		// 注意 (S14 honest gap): SSOT 650 では URL 本文を PrivatePayloadStore
-		// に保存し DesiredWorld には opaque ref と URLCount だけ残す設計だが、
-		// S14 第一段階では reducer 純粋性を保つため URLPayloadRefs に URL を
-		// literal で格納する一時実装。S20 (browser tab observer + proper
-		// PrivatePayloadStore wiring) で controller-level の Put/Forget に
-		// 置き換える。
+		// SSOT §4.1 OP14 + §4.4 BR-PRIV-NOSTORE: browser window に URL タブを追加。
+		// reducer は純粋関数なので I/O を持たない: URL → opaque token への
+		// 変換 (PrivatePayloadStore.Put) は controller.prepareBrowserIntent で
+		// 先行実施され、v.URL は controller 経由なら token、CLI / test が
+		// payloadStore=nil で呼ぶ場合は literal URL 文字列が入る。reducer は
+		// どちらでも同じ動作 (URLPayloadRefs に append) — SSOT §6.4 に従い
+		// DesiredWorld への書き込みは reducer 専権、payload 実体は store 側。
 		if err := mutateBrowserSession(&d, v.Project, v.WindowID, func(b *w.DesiredBrowserSession) error {
 			b.URLPayloadRefs = append(b.URLPayloadRefs, w.PrivatePayloadRef(v.URL))
 			b.URLCount = len(b.URLPayloadRefs)

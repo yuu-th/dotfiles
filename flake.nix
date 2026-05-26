@@ -33,6 +33,28 @@
     # GitHub Copilot CLI - updated 4x/day by numtide bot
     llm-agents.url = "github:numtide/llm-agents.nix";
 
+    # vast.ai CLI - upstream の最新 master を darwin-up で追従
+    # uv.lock は modules/common/vast-cli/uv.lock に commit、darwin-up が再生成
+    vast-cli-src = {
+      url = "github:vast-ai/vast-cli";
+      flake = false;
+    };
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # VS Code Insiders feeds - tracked in flake.lock
     vsci-feed-darwin-arm64 = { url = "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"; flake = false; };
     vsci-feed-darwin-x64   = { url = "https://update.code.visualstudio.com/api/update/darwin/insider/latest"; flake = false; };

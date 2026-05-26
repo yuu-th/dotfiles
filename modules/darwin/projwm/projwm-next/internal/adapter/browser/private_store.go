@@ -70,10 +70,18 @@ func (s *FilePrivatePayloadStore) Forget(ctx context.Context, token string) erro
 }
 
 func (s *FilePrivatePayloadStore) pathForToken(token string) string {
-	if !validPayloadToken(token) {
+	if !IsPayloadToken(token) {
 		return filepath.Join(s.root, "__invalid_token__")
 	}
 	return filepath.Join(s.root, token+".json")
+}
+
+// IsPayloadToken reports whether s is a syntactically valid PrivatePayloadStore
+// token (`browser-payload-v1-<32 hex>`). Controller uses this to distinguish
+// "literal URL" (S14 第一段階 fallback) from "stored opaque ref" so it knows
+// whether to Forget on tab removal / URL change.
+func IsPayloadToken(s string) bool {
+	return validPayloadToken(s)
 }
 
 func newPayloadToken() (string, error) {

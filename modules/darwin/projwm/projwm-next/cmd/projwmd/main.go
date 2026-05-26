@@ -767,6 +767,10 @@ func main() {
 		os.Exit(1)
 	}
 	ctrl := controller.NewFromGeneration(env, current, adapter, st)
+	// SSOT §4.1 OP14-17 + §4.4 BR-PRIV-NOSTORE: route browser tab URLs
+	// through PrivatePayloadStore so DesiredWorld only carries opaque tokens
+	// (controller.prepareBrowserIntent reads ctrl.PayloadStore).
+	ctrl.PayloadStore = privateStore
 	if vivaldiAdapter != nil {
 		// Wire the Vivaldi browser-window-close lifecycle path. The Executor
 		// uses this only when an op's lifecycleRemoval method is

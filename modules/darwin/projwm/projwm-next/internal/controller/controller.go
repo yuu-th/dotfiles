@@ -5,9 +5,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/yuu-th/projwm-next/internal/adapter/browser"
 	"github.com/yuu-th/projwm-next/internal/adapter/wm"
 	"github.com/yuu-th/projwm-next/internal/event"
 	"github.com/yuu-th/projwm-next/internal/executor"
@@ -34,6 +36,14 @@ type Controller struct {
 	Settler          *settler.Settler
 	Store            store.PersistentStore
 	RuntimeValidator RuntimeValidator
+
+	// PayloadStore holds URL bodies / cookies for browser tab CRUD (SSOT
+	// §4.1 OP14-17 + §4.4 BR-PRIV-NOSTORE). When set, ApplyIntent
+	// rewrites BrowserAddTab.URL / BrowserChangeTabURL.URL into opaque
+	// tokens before reducer runs, and Forgets refs on BrowserRemoveTab /
+	// BrowserChangeTabURL. When nil, falls back to literal storage in
+	// URLPayloadRefs (S14 第一段階 — keeps existing tests compiling).
+	PayloadStore browser.PrivatePayloadStore
 
 	// State (owned by Controller).
 	state w.WorldState
@@ -133,6 +143,17 @@ func (c *Controller) ApplyIntent(ctx context.Context, in intent.Intent) (Transac
 	// SSOT N-12: AcceptManualLayout / ManualLayoutCandidate are deprecated;
 	// Tier 2 layout sync is handled via AutoSyncLayout intent emitted by
 	// applyTier2AutoSyncLayout after reduce.
+
+	// 2b. Browser tab CRUD: Put URL into PrivatePayloadStore and replace
+	// intent.URL with the opaque token before reducer (SSOT §4.1 OP14-17 +
+	// §4.4 BR-PRIV-NOSTORE). On BrowserRemoveTab / BrowserChangeTabURL also
+	// Forget the old ref. Reducer stays pure (no store I/O).
+	in, err = c.prepareBrowserIntent(ctx, in)
+	if err != nil {
+		result, recordErr := c.recordEarlyNoCommitTrace(ctx, trace, "payload-store-error", err, false)
+		c.restoreRollbackState(rollback)
+		return result, recordErr
+	}
 
 	// 3. Reduce intent → new DesiredWorld.
 	newDesired, err := reducer.ReduceIntent(c.state, in)
@@ -1438,4 +1459,78 @@ func commandKeyForLifecycle(k w.LifecycleTransactionKind) string {
 		return "event:external"
 	}
 	return "lifecycle:" + string(k)
+}
+
+// prepareBrowserIntent enforces SSOT §4.1 OP14-17 + §4.4 BR-PRIV-NOSTORE:
+// URL bodies must live in PrivatePayloadStore, DesiredWorld only holds opaque
+// refs. Called before reducer so reducer stays pure (no I/O, no store access).
+//
+// Behavior:
+//   - PayloadStore == nil: returns in unchanged (S14 第一段階 fallback —
+//     URLPayloadRefs holds literal URL strings; existing tests rely on this).
+//   - BrowserAddTab: Put(URL) → token, returns BrowserAddTab{URL: token}.
+//   - BrowserChangeTabURL: Forget(old ref at Tab-1) + Put(new URL) → token,
+//     returns BrowserChangeTabURL{URL: token}.
+//   - BrowserRemoveTab: Forget(ref at Tab-1), returns in unchanged
+//     (reducer removes the ref).
+//   - BrowserReorderTabs: returns in unchanged (Put/Forget not needed).
+//
+// Failure modes (堅牢性 stance): Put failure aborts the transaction so the
+// user sees an error. Forget failure is logged but does not abort — an
+// orphan payload file is recoverable (next profile switch / restart clears
+// it) and is preferable to losing the user-visible mutation.
+func (c *Controller) prepareBrowserIntent(ctx context.Context, in intent.Intent) (intent.Intent, error) {
+	if c.PayloadStore == nil {
+		return in, nil
+	}
+	switch v := in.(type) {
+	case intent.BrowserAddTab:
+		token, err := c.PayloadStore.Put(ctx, browser.PrivatePayload{URLs: []string{v.URL}})
+		if err != nil {
+			return nil, fmt.Errorf("controller: payload-store put (browser-add-tab): %w", err)
+		}
+		v.URL = token
+		return v, nil
+	case intent.BrowserChangeTabURL:
+		if ref, ok := c.lookupBrowserRef(v.Project, v.WindowID, v.Tab); ok && browser.IsPayloadToken(ref) {
+			if err := c.PayloadStore.Forget(ctx, ref); err != nil {
+				log.Printf("controller: payload-store forget (browser-change-tab-url): %v", err)
+			}
+		}
+		token, err := c.PayloadStore.Put(ctx, browser.PrivatePayload{URLs: []string{v.URL}})
+		if err != nil {
+			return nil, fmt.Errorf("controller: payload-store put (browser-change-tab-url): %w", err)
+		}
+		v.URL = token
+		return v, nil
+	case intent.BrowserRemoveTab:
+		if ref, ok := c.lookupBrowserRef(v.Project, v.WindowID, v.Tab); ok && browser.IsPayloadToken(ref) {
+			if err := c.PayloadStore.Forget(ctx, ref); err != nil {
+				log.Printf("controller: payload-store forget (browser-remove-tab): %v", err)
+			}
+		}
+		return in, nil
+	default:
+		return in, nil
+	}
+}
+
+// lookupBrowserRef returns the URLPayloadRefs entry at 1-based tab index for
+// the given project/window. Used by prepareBrowserIntent to read the old ref
+// before reducer mutates DesiredWorld.
+func (c *Controller) lookupBrowserRef(project w.ProjectID, windowID w.DesiredWindowID, tab int) (string, bool) {
+	pr, ok := c.state.Desired.Projects[project]
+	if !ok {
+		return "", false
+	}
+	for _, win := range pr.Windows {
+		if win.ID != windowID || win.Kind != w.WindowBrowser || win.Browser == nil {
+			continue
+		}
+		if tab < 1 || tab > len(win.Browser.URLPayloadRefs) {
+			return "", false
+		}
+		return string(win.Browser.URLPayloadRefs[tab-1]), true
+	}
+	return "", false
 }

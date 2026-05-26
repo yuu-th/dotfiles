@@ -48,6 +48,7 @@ let
   nextStateDir = cfg.next.stateDir;
   nextStoreDir = cfg.next.storeDir;
   nextPrivatePayloadDir = "${nextStateDir}/private-payloads";
+  nextEventQueueDir = "${nextStateDir}/event-queue";
   nextSocketPath = cfg.next.socketPath;
   nextLogDir = "${nextStateDir}/logs";
   nextStartupProvenancePath = "${nextStateDir}/startup-provenance.json";
@@ -229,6 +230,7 @@ let
       --socket-path ${lib.escapeShellArg nextSocketPath} \
       --managed-environment ${lib.escapeShellArg "${nextManifestFile}"} \
       --manifest-digest ${lib.escapeShellArg nextManifestDigest} \
+      --queue-dir ${lib.escapeShellArg nextEventQueueDir} \
       "$@"
   '';
 
@@ -320,7 +322,7 @@ in {
         PROJWM_NEXT_STORE_DIR = nextStoreDir;
       };
       home.activation.projwmNextDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        mkdir -p ${lib.escapeShellArg nextStateDir} ${lib.escapeShellArg nextLogDir} ${lib.escapeShellArg nextStoreDir}
+        mkdir -p ${lib.escapeShellArg nextStateDir} ${lib.escapeShellArg nextLogDir} ${lib.escapeShellArg nextStoreDir} ${lib.escapeShellArg nextEventQueueDir}
       '';
     };
 
