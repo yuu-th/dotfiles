@@ -273,6 +273,18 @@ func (a *VivaldiAdapter) OpenInProfile(ctx context.Context, profile string, payl
 	// by diff. WindowQuerier is optional: when absent, we fall back to the
 	// pre-Open behaviour (no BrowserWindowID), so the legacy Spawn path stays
 	// compatible with mocks that don't wire WM observation.
+	//
+	// HONEST GAP (SSOT §4.4 BR-EXIST): the production Vivaldi window title
+	// is "<page-title> - Vivaldi" — it does NOT encode which Chromium
+	// profile the window belongs to. Production omniwmctl observations
+	// therefore cannot disambiguate "same automation profile, different
+	// window" from "different automation profile, same page" via title
+	// alone. To realise BR-EXIST we need the WindowQuerier to return the
+	// profile per window (probably by reading the Vivaldi process
+	// `--profile-directory` argv). That extension lives in a later slice;
+	// for now OpenInProfile always opens a new window, and the
+	// scenarios-level test (TestSpawnBrowserAlreadyExists) is allowed to
+	// document the duplication.
 	var beforeIDs map[w.LiveWindowID]VivaldiOmniWMWindow
 	if a.WindowQuerier != nil {
 		beforeIDs, err = a.snapshotWindows(ctx)
