@@ -502,6 +502,47 @@ func TestSubscription_CardAddedEntersProposalMode(t *testing.T) {
 	}
 }
 
+// SSOT §5.4 Proposal mode: "応答後、元の visibility 状態へ復帰". When
+// the user was on Slots tab and a card arrives, the cockpit auto-hops
+// to Cards. When all cards are dismissed, it must return to Slots (the
+// previousTab) and the mode must drop back to Idle. This guards the
+// auto-restore path that the unit test infrastructure has never
+// exercised before — without it, future refactors could silently
+// strand the user on an empty Cards tab.
+func TestProposalMode_ReturnsToPreviousTabAfterAllCardsDismissed(t *testing.T) {
+	m := newTestModel(t)
+	if m.activeTab != TabSlots {
+		t.Fatalf("setup: activeTab = %s, want Slots", m.activeTab)
+	}
+
+	// Drive into Proposal mode via the same card-added push that the
+	// production daemon uses.
+	updated, _ := m.Update(subscriptionMsg{Push: pushFor("card-added")})
+	m = updated.(Model)
+	if m.UIMode() != ModeProposal {
+		t.Fatalf("after card-added, mode = %s, want Proposal", m.UIMode())
+	}
+	if m.activeTab != TabCards {
+		t.Fatalf("after card-added, activeTab = %s, want Cards (auto-hop)", m.activeTab)
+	}
+	if m.previousTab != TabSlots {
+		t.Fatalf("previousTab not preserved across auto-hop: got %s, want Slots", m.previousTab)
+	}
+
+	// Simulate "all cards dismissed" by emptying ActiveCards and
+	// pumping any key — the Cards-modal branch checks len(cards)==0
+	// and triggers the restore.
+	m.snap.ActiveCards = nil
+	m = sendKey(t, m, "esc")
+
+	if m.UIMode() != ModeIdle {
+		t.Errorf("after all dismissed, mode = %s, want Idle (SSOT §5.4 Proposal exit)", m.UIMode())
+	}
+	if m.activeTab != TabSlots {
+		t.Errorf("after all dismissed, activeTab = %s, want Slots (SSOT §5.4 'visibility 復帰')", m.activeTab)
+	}
+}
+
 // §10.4 — confirm-clear with "y" submits DismissAllCards (we can't
 // observe the intent locally without a client, but the prompt should
 // close).

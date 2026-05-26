@@ -625,11 +625,11 @@ func (m Model) cardsView() string {
 
 func cardTypeStyle(t w.CardType) lipgloss.Style {
 	switch t {
-	case w.CardTypeNew, w.CardTypeOrphan:
+	case w.CardTypeNew:
 		return styleCardNew
 	case w.CardTypeMoved, w.CardTypeClosed, w.CardTypeOmniwmRecovery:
 		return styleWarn
-	case w.CardTypeReplan, w.CardTypeInvariant, w.CardTypeManifest:
+	case w.CardTypeInvariant, w.CardTypeManifest:
 		return styleErr
 	}
 	return styleBold

@@ -86,14 +86,17 @@ type ObservedWorkspace struct {
 // CardType discriminates ActiveCards. Mirrors requirements §10.
 type CardType string
 
+// SSOT §5.4 cards 6 種: NEW / CLOSED / MOVED / INVARIANT / MANIFEST /
+// OMNIWM-RECOVERY. SSOT §7.1 specifies max-replans-exceeded SHOULD
+// surface as a [INVARIANT] card, not a separate REPLAN type. SSOT §4.3
+// orphan suggestions are emitted as CardTypeNew with Zed-specific
+// action sets — there is no separate CardTypeOrphan.
 const (
 	CardTypeNew            CardType = "NEW"
 	CardTypeClosed         CardType = "CLOSED"
 	CardTypeMoved          CardType = "MOVED"
-	CardTypeReplan         CardType = "REPLAN"
 	CardTypeInvariant      CardType = "INVARIANT"
 	CardTypeManifest       CardType = "MANIFEST"
-	CardTypeOrphan         CardType = "ORPHAN"
 	CardTypeOmniwmRecovery CardType = "OMNIWM-RECOVERY"
 )
 

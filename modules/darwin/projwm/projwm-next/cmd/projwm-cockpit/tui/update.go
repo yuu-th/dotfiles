@@ -500,10 +500,10 @@ func (m Model) actionTraceTab(r rune) (tea.Model, tea.Cmd) {
 func (m Model) activateCardAction(it listItem, key string) (tea.Model, tea.Cmd) {
 	_ = key // reserved for explicit letter actions
 	switch it.CardType {
-	case w.CardTypeMoved, w.CardTypeClosed, w.CardTypeInvariant, w.CardTypeManifest, w.CardTypeReplan, w.CardTypeOmniwmRecovery:
+	case w.CardTypeMoved, w.CardTypeClosed, w.CardTypeInvariant, w.CardTypeManifest, w.CardTypeOmniwmRecovery:
 		m.uiMode = ModeManagement
 		return m, submitIntentCmd(m.cfg.Client, intent.DismissCard{CardID: intent.CardID(it.CardID)})
-	case w.CardTypeNew, w.CardTypeOrphan:
+	case w.CardTypeNew:
 		liveID := ""
 		bundleID := ""
 		kindHint := ""
