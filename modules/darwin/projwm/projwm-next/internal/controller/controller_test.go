@@ -197,8 +197,27 @@ func TestControllerRollsBackMemoryOnInvariantFailure(t *testing.T) {
 	if !reflect.DeepEqual(beforeDesired, ctrl.state.Desired) {
 		t.Fatalf("DesiredWorld changed after invariant failure\nbefore=%+v\nafter=%+v", beforeDesired, ctrl.state.Desired)
 	}
-	if !reflect.DeepEqual(beforeMeta, ctrl.state.Meta) {
-		t.Fatalf("ControllerMeta changed after invariant failure\nbefore=%+v\nafter=%+v", beforeMeta, ctrl.state.Meta)
+	// SSOT §7.1 step 3+4 carve-out: rollback restores most ControllerMeta
+	// fields but preserves ActiveCards (user notification) and grows
+	// DirtyScopes (next-retry trigger). Compare only the rollback-target
+	// fields here.
+	if ctrl.state.Meta.Epoch != beforeMeta.Epoch {
+		t.Fatalf("Epoch changed across rollback: before=%d after=%d", beforeMeta.Epoch, ctrl.state.Meta.Epoch)
+	}
+	if ctrl.state.Meta.Transaction != nil {
+		t.Fatalf("Transaction not cleared after rollback: %+v", ctrl.state.Meta.Transaction)
+	}
+	// ActiveCards MUST have grown by exactly the [INVARIANT] card
+	// emitted by failNoCommitTrace (SSOT §7.1 step 3).
+	if len(ctrl.state.Meta.ActiveCards) != len(beforeMeta.ActiveCards)+1 {
+		t.Fatalf("expected one INVARIANT card after rollback (SSOT §7.1 step 3); cards before=%d after=%d", len(beforeMeta.ActiveCards), len(ctrl.state.Meta.ActiveCards))
+	}
+	if ctrl.state.Meta.ActiveCards[len(ctrl.state.Meta.ActiveCards)-1].Type != w.CardTypeInvariant {
+		t.Errorf("post-rollback card type = %s, want INVARIANT", ctrl.state.Meta.ActiveCards[len(ctrl.state.Meta.ActiveCards)-1].Type)
+	}
+	// DirtyScopes MUST have grown by the markGlobalDirty entry (SSOT §7.1 step 4).
+	if len(ctrl.state.Meta.DirtyScopes) <= len(beforeMeta.DirtyScopes) {
+		t.Fatalf("expected new DirtyScope after rollback (SSOT §7.1 step 4); scopes before=%d after=%d", len(beforeMeta.DirtyScopes), len(ctrl.state.Meta.DirtyScopes))
 	}
 	gen, err := st.LoadCurrentGeneration(context.Background())
 	if err != nil {
@@ -353,10 +372,11 @@ func TestControllerMarksDirtyWhenFailureRefreshObserveFails(t *testing.T) {
 	}
 	wantDirty := []w.DirtyScope{
 		{Kind: "project", Key: "p1"},
-		{Kind: "global", Key: "observation-refresh-failed"},
+		{Kind: "global", Key: "commit-fail:executor-error"}, // SSOT §7.1 step 4 — fail path marks dirty
+		{Kind: "global", Key: "observation-refresh-failed"}, // observe failure after rollback also marks dirty
 	}
 	if !reflect.DeepEqual(wantDirty, ctrl.state.Meta.DirtyScopes) {
-		t.Fatalf("rollback should preserve prior dirty scopes and add refresh failure dirty scope\nwant=%+v\ngot=%+v", wantDirty, ctrl.state.Meta.DirtyScopes)
+		t.Fatalf("rollback should preserve prior dirty scopes and add fail-path + refresh-failure dirty scopes\nwant=%+v\ngot=%+v", wantDirty, ctrl.state.Meta.DirtyScopes)
 	}
 }
 

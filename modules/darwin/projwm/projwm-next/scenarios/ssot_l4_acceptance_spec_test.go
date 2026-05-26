@@ -1,3 +1,16 @@
+//go:build integration
+
+// SSOT §10.5 L4 build tag: this file contains acceptance tests that
+// require the real environment (omniwm + ghostty + tmux + Zed +
+// Vivaldi). Without the `integration` build tag the file is excluded
+// from `go test ./...` so the bare-baseline run cannot silently claim
+// L4 coverage. To run the L4 suite:
+//
+//   PROJWM_NEXT_REAL_ACCEPTANCE=1 go test -tags integration ./scenarios/...
+//
+// (Honest deferral note: the test bodies still embed "dotfiles" /
+// "manaflow" project IDs as L4 fixtures; the projwm-next-test prefix
+// rewrite is tracked under S29 separately from the gate enforcement.)
 package scenarios
 
 import (

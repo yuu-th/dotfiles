@@ -516,7 +516,11 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 	}
 
 	if !converged || len(lastUnacceptable.Entries) > 0 {
-		// Specs §2-C: do not commit; surface to caller.
+		// Specs §2-C / SSOT §7.1 max replans 超過時の 4 挙動:
+		//   1. commit されない (here)
+		//   2. ApplyIntent caller が rollback (restoreRollbackState)
+		//   3. cockpit に [INVARIANT] カード通知 (emit below)
+		//   4. dirty scope 記録 + 次 intent で再挑戦 (markGlobalDirty)
 		trace.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		trace.VerifierDiffEntries = len(lastDiff.Entries)
 		trace.LastUnacceptableDiffEntries = len(lastUnacceptable.Entries)
@@ -525,6 +529,27 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			trace.NoCommitReason = "verifier-diff-unacceptable"
 			lastDiff = lastUnacceptable
 		}
+		// SSOT §7.1 step 3: surface a [INVARIANT] card so the user
+		// sees why the transaction did not commit. Subject mentions
+		// the transaction command + replan exhaustion so the cockpit
+		// modal carries actionable context.
+		c.appendActiveCards([]w.Card{{
+			Type:    w.CardTypeInvariant,
+			Subject: fmt.Sprintf("transaction %q did not converge after %d replans", command, maxIter),
+			Context: map[string]string{
+				"reason":      trace.NoCommitReason,
+				"command":     command,
+				"diffEntries": fmt.Sprintf("%d", len(lastDiff.Entries)),
+				"maxReplans":  fmt.Sprintf("%d", maxIter),
+			},
+			Actions: []w.CardAction{
+				{Key: "Enter", Label: "acknowledge"},
+				{Key: "Esc", Label: "dismiss"},
+			},
+		}})
+		// SSOT §7.1 step 4: record a global dirty scope so the next
+		// intent / event forces a fresh observe + plan cycle.
+		c.markGlobalDirty("max-replans-exceeded")
 		if gen, err := c.currentGeneration(ctx); err == nil {
 			trace.CurrentGeneration = gen
 			trace.ParentGeneration = gen
@@ -648,6 +673,26 @@ func (c *Controller) failNoCommitTrace(ctx context.Context, trace store.Transact
 		trace.CurrentGeneration = gen
 		trace.ParentGeneration = gen
 	}
+	// SSOT §7.1 fail 時の user 通知 + 次回 retry trigger:
+	//   step 3 — surface an [INVARIANT] card with the fail reason
+	//   step 4 — record a global dirty scope so the next intent retries
+	// The card and scope ride out of the rollback via the
+	// restoreRollbackState carve-out (ActiveCards + DirtyScopes are
+	// preserved across rollback).
+	c.appendActiveCards([]w.Card{{
+		Type:    w.CardTypeInvariant,
+		Subject: fmt.Sprintf("transaction did not commit: %s", reason),
+		Context: map[string]string{
+			"reason":      reason,
+			"diffEntries": fmt.Sprintf("%d", len(lastDiff.Entries)),
+			"cause":       cause.Error(),
+		},
+		Actions: []w.CardAction{
+			{Key: "Enter", Label: "acknowledge"},
+			{Key: "Esc", Label: "dismiss"},
+		},
+	}})
+	c.markGlobalDirty("commit-fail:" + reason)
 	if err := c.recordTransactionTrace(ctx, trace); err != nil {
 		return TransactionResult{TransactionID: trace.TransactionID, Trace: trace}, fmt.Errorf("%w; additionally failed to record no-commit trace: %v", cause, err)
 	}
@@ -714,7 +759,21 @@ func (c *Controller) snapshotRollbackState() rollbackState {
 
 func (c *Controller) restoreRollbackState(s rollbackState) {
 	c.state.Desired = cloneDesiredWorld(s.desired)
+	// SSOT §7.1 carve-out: rollback restores Desired + most Meta
+	// fields, but it MUST NOT erase user-facing notifications or the
+	// post-failure work record:
+	//   - ActiveCards: emitted by the failed transaction to inform the
+	//     user (max-replans [INVARIANT] card, manifest-mismatch card,
+	//     omniwm-recovery card). Wiping them on rollback would hide
+	//     the very signal the user needs to act on.
+	//   - DirtyScopes: SSOT §7.1 step 4 demands the next intent/event
+	//     re-tries the same scope. Erasing the scope on rollback
+	//     defeats that contract.
+	preservedCards := append([]w.Card(nil), c.state.Meta.ActiveCards...)
+	preservedDirty := append([]w.DirtyScope(nil), c.state.Meta.DirtyScopes...)
 	c.state.Meta = cloneControllerMeta(s.meta)
+	c.state.Meta.ActiveCards = preservedCards
+	c.state.Meta.DirtyScopes = preservedDirty
 }
 
 func cloneControllerMeta(meta w.ControllerMeta) w.ControllerMeta {

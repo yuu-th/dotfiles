@@ -21,8 +21,10 @@ import (
 // false-green claims.
 var gateAuditAllowlist = map[string]string{
 	"INV-07": "L3 zed_test.go runs against fake adapter; real_ops promotion needs Zed-spawn S29 work",
-	"OP-08":  "L4 ssot_l4_acceptance_spec_test.go lacks integration tag; promotion blocked on S29 hardcode 解消",
-	"OP-10":  "L4 ssot_l4_acceptance_spec_test.go lacks integration tag; same as OP-08",
+	// OP-08 / OP-10: promoted out of the allowlist in Phase 5 S29 partial
+	// when ssot_l4_acceptance_spec_test.go gained `//go:build integration`.
+	// Enforcement now active; if either ledger row re-loses its integration
+	// tag the audit catches it.
 }
 
 // SSOT §10.2 / §10.5 / GAP-25: L3 real_ops tests MUST be gated by the

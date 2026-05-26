@@ -128,8 +128,18 @@ func TestTransactionContractS8C_VerifierReplanGating(t *testing.T) {
 	if !reflect.DeepEqual(preDesired, cloneDesiredForCompare(b.Controller.State().Desired)) {
 		t.Fatal("S8.C: failed transaction leaked DesiredWorld into controller memory")
 	}
-	if len(preDirty) != len(b.Controller.State().Meta.DirtyScopes) || (len(preDirty) > 0 && !reflect.DeepEqual(preDirty, b.Controller.State().Meta.DirtyScopes)) {
-		t.Fatalf("S8.C: failed transaction changed dirty scopes: pre=%+v post=%+v", preDirty, b.Controller.State().Meta.DirtyScopes)
+	// SSOT §7.1 step 4: max-replans-exceeded MUST add a "max-replans-exceeded"
+	// global dirty scope so the next intent / event retries. The post-fail
+	// scope set is therefore the pre-fail set + 1 new entry. (Verifier-diff-
+	// unacceptable path emits the same scope via failNoCommitTrace with the
+	// reason in the key.)
+	postDirty := b.Controller.State().Meta.DirtyScopes
+	if len(postDirty) != len(preDirty)+1 {
+		t.Fatalf("S8.C: SSOT §7.1 step 4 requires one new dirty scope after fail; pre=%+v post=%+v", preDirty, postDirty)
+	}
+	newScope := postDirty[len(postDirty)-1]
+	if newScope.Kind != "global" {
+		t.Errorf("S8.C: new dirty scope must be global, got %+v", newScope)
 	}
 	traces := b.Store.TransactionTraces()
 	if len(traces) == 0 {
