@@ -2,6 +2,7 @@ package reducer
 
 import (
 	"testing"
+	"time"
 
 	"github.com/yuu-th/projwm-next/internal/event"
 	w "github.com/yuu-th/projwm-next/internal/world"
@@ -209,5 +210,55 @@ func TestReactToEvent_Tier4_ClosedCardEmit(t *testing.T) {
 	}
 	if len(r.NewCards) != 1 || r.NewCards[0].Type != w.CardTypeClosed {
 		t.Errorf("expected one CLOSED card, got %+v", r.NewCards)
+	}
+}
+
+// TestReactToEvent_Tier4_GracePeriodSuppressesAndWarns is the owner test for
+// SSOT §4.3 grace period (previously §10.9 GAP-04 — grace-period half): when
+// the SAME managed window has already been closed twice within 60 seconds, a
+// third close must (1) emit a CLOSED card flagged rateLimited=true (the
+// warning surface) and (2) record a `user-close-suppress` DirtyScope so the
+// planner short-circuits the respawn (the "修正停止" half is owned by
+// planner T4.4 tests). This proves the reducer side of the grace period.
+func TestReactToEvent_Tier4_GracePeriodSuppressesAndWarns(t *testing.T) {
+	s := tierState()
+	dwid := w.DesiredWindowID{Project: "dotfiles", Kind: w.WindowShell, Index: 1}
+	win := w.LiveWindowID("live-1")
+	ws := w.WorkspaceID("Q")
+	// The closed window must resolve to a DesiredWindowID via MatchedTo so the
+	// reducer can look up its close history.
+	s.Observed.Windows[win] = w.ObservedWindow{
+		ID: win, Kind: w.WindowShell, Workspace: ws,
+		App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"},
+		Title:     w.ObservedTitle{Value: "shell-1:dotfiles"},
+		MatchedTo: &dwid,
+	}
+	// Two prior closes within the last 60s → this 3rd close trips the limit.
+	now := time.Now().UnixNano()
+	s.Meta.UserCloseHistory = map[w.DesiredWindowID][]int64{
+		dwid: {now - int64(20*time.Second), now - int64(5*time.Second)},
+	}
+
+	r, err := ReactToEvent(s, event.Event{
+		Kind: event.KindUserClosedWindow,
+		Data: event.Data{Window: &win, Workspace: &ws},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.NewCards) != 1 || r.NewCards[0].Type != w.CardTypeClosed {
+		t.Fatalf("expected one CLOSED card, got %+v", r.NewCards)
+	}
+	if got := r.NewCards[0].Context["rateLimited"]; got != "true" {
+		t.Errorf("SSOT §4.3: grace-tripped CLOSED card must set rateLimited=true, got %q (ctx=%v)", got, r.NewCards[0].Context)
+	}
+	hasSuppress := false
+	for _, ds := range r.DirtyScopes {
+		if ds.Kind == "user-close-suppress" && ds.Key != "" {
+			hasSuppress = true
+		}
+	}
+	if !hasSuppress {
+		t.Errorf("SSOT §4.3: grace period must record a user-close-suppress DirtyScope, got %+v", r.DirtyScopes)
 	}
 }
