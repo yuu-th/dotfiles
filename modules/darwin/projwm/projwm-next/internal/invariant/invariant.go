@@ -536,15 +536,12 @@ func desiredColumns(pr w.DesiredProject, ws w.WorkspaceID, accepted map[w.Projec
 }
 
 func semanticEq(obs []w.ObservedColumn, want []w.DesiredColumn, pr w.DesiredProject, ws w.WorkspaceID, world w.ObservedWorld) bool {
-	if len(obs) != len(want) {
-		return false
-	}
-	for i := range obs {
-		if len(obs[i].Windows) != len(want[i].Windows) {
-			return false
-		}
-		wantLive := make([]w.LiveWindowID, 0, len(want[i].Windows))
-		for _, dwid := range want[i].Windows {
+	// Resolve desired columns to their live window IDs (the managed set).
+	wantLiveCols := make([][]w.LiveWindowID, 0, len(want))
+	managed := map[w.LiveWindowID]bool{}
+	for _, col := range want {
+		live := make([]w.LiveWindowID, 0, len(col.Windows))
+		for _, dwid := range col.Windows {
 			dw := findDesiredWindow(pr, dwid)
 			if dw == nil {
 				return false
@@ -553,19 +550,41 @@ func semanticEq(obs []w.ObservedColumn, want []w.DesiredColumn, pr w.DesiredProj
 			if res.Class != identity.ClassUniqueStrong {
 				return false
 			}
-			wantLive = append(wantLive, res.Live)
+			live = append(live, res.Live)
+			managed[res.Live] = true
 		}
-		if len(wantLive) == 1 {
-			if obs[i].Windows[0] != wantLive[0] {
-				return false
+		wantLiveCols = append(wantLiveCols, live)
+	}
+	// SSOT §6.3 L3 / §4.3: external (unmanaged) windows that have drifted into
+	// the slot are NOT part of DesiredLayout.Columns. Filter them out of the
+	// observed columns (dropping any column that becomes empty) before
+	// comparing, so a drifted external window does not raise a false
+	// layout-semantics violation. Mirrors planner.managedObservedColumns /
+	// wm.managedOrderSettled.
+	filtered := make([][]w.LiveWindowID, 0, len(obs))
+	for _, col := range obs {
+		kept := make([]w.LiveWindowID, 0, len(col.Windows))
+		for _, id := range col.Windows {
+			if managed[id] {
+				kept = append(kept, id)
 			}
-			continue
+		}
+		if len(kept) > 0 {
+			filtered = append(filtered, kept)
+		}
+	}
+	if len(filtered) != len(wantLiveCols) {
+		return false
+	}
+	for i := range filtered {
+		if len(filtered[i]) != len(wantLiveCols[i]) {
+			return false
 		}
 		seen := map[w.LiveWindowID]int{}
-		for _, id := range obs[i].Windows {
+		for _, id := range filtered[i] {
 			seen[id]++
 		}
-		for _, id := range wantLive {
+		for _, id := range wantLiveCols[i] {
 			seen[id]--
 		}
 		for _, n := range seen {
