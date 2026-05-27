@@ -1491,9 +1491,24 @@ func planSummonWindowOps(state w.WorldState, target w.DesiredWorld, command Comm
 	}
 	sort.Ints(indices)
 
-	// Step 3: cycle resolution.
+	// Step 3: cycle resolution. The "am I already on this (project,kind) →
+	// cycle to the next index" decision must be anchored to the focus as it
+	// was when the user pressed the key (transaction start), NOT the live
+	// focus — the converge loop replans against the focus this very op sets,
+	// so reading live focus here would advance the target every replan and
+	// alternate forever across 2+ windows (max-replans fail). Meta.Summon
+	// FocusAnchor carries the frozen transaction-start focus; outside a
+	// transaction (planner unit tests) it is empty and we fall back to live
+	// observed focus.
 	targetIndex := indices[0]
-	if focusedID := state.Observed.Focus.Window; focusedID != "" {
+	// In a transaction the anchor is authoritative (frozen at start, may be
+	// empty if the user had no focus); only standalone planner unit tests
+	// (no Transaction) fall back to live observed focus.
+	focusedID := state.Observed.Focus.Window
+	if state.Meta.Transaction != nil {
+		focusedID = state.Meta.SummonFocusAnchor
+	}
+	if focusedID != "" {
 		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil &&
 			ow.MatchedTo.Project == projID && ow.MatchedTo.Kind == kind {
 			// Currently focused is in target (project, kind). Cycle next.
@@ -1657,8 +1672,15 @@ func planCycleSlotWindowOps(state w.WorldState, target w.DesiredWorld, command C
 	}
 	sort.Ints(indices)
 
+	// Cycle anchored to transaction-start focus (see planSummonWindowOps):
+	// reading live focus here would re-cycle off the focus we just set and
+	// alternate forever across 2+ candidates inside the replan loop.
 	targetIndex := indices[0]
-	if focusedID := state.Observed.Focus.Window; focusedID != "" {
+	focusedID := state.Observed.Focus.Window
+	if state.Meta.Transaction != nil {
+		focusedID = state.Meta.SummonFocusAnchor
+	}
+	if focusedID != "" {
 		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil &&
 			ow.MatchedTo.Project == projID && ow.MatchedTo.Kind == kind {
 			currentIdx := ow.MatchedTo.Index

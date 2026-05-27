@@ -28,6 +28,18 @@ type ControllerMeta struct {
 	// user-close for that window. Older entries are pruned by the
 	// controller's grace evaluator.
 	UserCloseHistory map[DesiredWindowID][]int64
+	// SummonFocusAnchor freezes the focused window as observed at the START
+	// of the current transaction. summon/jump/cycle (§4.1 OP01-05) decide
+	// "am I already on a window of this (project,kind) → cycle to the next
+	// one" — a STATEFUL decision relative to where the user was when they
+	// pressed the key. The converge loop replans against live observation,
+	// and each replan would otherwise re-read the focus WE just set and
+	// cycle again, alternating forever across 2+ candidate windows (never
+	// reaching 0 ops → max-replans fail). The planner's cycle decision reads
+	// this frozen anchor instead of the live focus; the "do I still need to
+	// emit a focus op" decision keeps using live focus. Empty outside a
+	// transaction (planner unit tests fall back to Observed.Focus).
+	SummonFocusAnchor LiveWindowID
 }
 
 // WorldState is the controller's view. design.md §8.

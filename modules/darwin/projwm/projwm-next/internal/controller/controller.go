@@ -385,6 +385,10 @@ func (e *ReplanExceededError) Error() string {
 func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason op.PlanReason, trace store.TransactionTrace) (TransactionResult, error) {
 	txn := w.TransactionID(fmt.Sprintf("txn-%d", time.Now().UnixNano()))
 	c.state.Meta.Transaction = &txn
+	// Freeze the focus as observed when this transaction began. summon/jump/
+	// cycle planning reads this anchor for its "cycle to the next window"
+	// decision so replans don't keep re-cycling off the focus we just set.
+	c.state.Meta.SummonFocusAnchor = c.state.Observed.Focus.Window
 	trace.TransactionID = txn
 	if trace.Command == "" {
 		trace.Command = command
@@ -399,6 +403,7 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 	}
 	defer func() {
 		c.state.Meta.Transaction = nil
+		c.state.Meta.SummonFocusAnchor = ""
 	}()
 
 	maxIter := c.MaxReplans
