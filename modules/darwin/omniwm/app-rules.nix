@@ -84,6 +84,17 @@ let
       layout     = "tile";
       minWidth   = 480.0;
       minHeight  = 240.0; }
+
+    # ── Ghostty scratch shell (SSOT §2.2 / §4.1 op11 / §7.3 SCRATCH-TITLE) ──
+    # Global system-level scratch shell, title=`projwm-scratch-shell` (exact).
+    # MUST sit before the catch-all Ghostty rule below so OmniWM matches it by
+    # titleRegex and catalogs it — otherwise ShowScratchShell cannot observe the
+    # window and falls back to an empty LiveWindowID (L3 U1 fail).
+    { bundleId   = "com.mitchellh.ghostty";
+      titleRegex = "^projwm-scratch-shell$";
+      layout     = "tile";
+      minWidth   = 480.0;
+      minHeight  = 240.0; }
     # Ghostty 一般 (projwm 管理外、最小サイズだけ確保)
     { bundleId  = "com.mitchellh.ghostty";
       minWidth  = 480.0;

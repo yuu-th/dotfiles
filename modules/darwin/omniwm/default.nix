@@ -5,7 +5,7 @@ let
   # ── 設定ソース ───────────────────────────────────────────────────────────
   common       = import ./common.nix     { inherit pkgs; };
   hotkeys      = import ./hotkeys.nix    { inherit pkgs; };
-  appRules     = import ./app-rules.nix  { inherit pkgs; };
+  appRules     = import ./app-rules.nix  { inherit pkgs lib; };
   helpers      = import ./workspace-builder.nix { inherit pkgs; };
   wsAssignment = import ./workspace-assignment.nix;
 
@@ -86,8 +86,37 @@ let
   startupSort = mkScript "omniwm-startup-sort" ./scripts/startup-sort.sh
     (baseEnv // { WS_MAP_JSON = builtins.toJSON wsAssignment; });
 
+  # projwm wrapper used by space+letter shell_commands. PATH-resolved
+  # so we don't take a direct dependency on the projwm-next derivation
+  # — both modules are installed by home-manager, and `projwm` ends up
+  # on PATH for the user session.
+  #
+  # IMPORTANT: karabiner-elements runs shell_command from a launchd-spawned
+  # shell with a minimal PATH (typically /usr/bin:/bin). Neither
+  # /run/current-system/sw/bin nor ~/.nix-profile/bin exist on darwin (nix-
+  # darwin installs user binaries under /etc/profiles/per-user/$USER/bin).
+  # We must explicitly look there or karabiner space+f fails silently with
+  # exit 127.
+  projwmCli = pkgs.writeShellScriptBin "projwm" ''
+    if command -v projwm >/dev/null 2>&1; then
+      exec projwm "$@"
+    fi
+    for candidate in /etc/profiles/per-user/"$USER"/bin/projwm \
+                     /etc/profiles/per-user/yuta/bin/projwm \
+                     /run/current-system/sw/bin/projwm \
+                     "$HOME/.nix-profile/bin/projwm" \
+                     /opt/homebrew/bin/projwm; do
+      if [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+      fi
+    done
+    echo "projwm: binary not found on PATH" >&2
+    exit 127
+  '';
+
   karabinerRules = import ./karabiner-rules.nix {
-    inherit wsLaunch moveWindowToNamedWS setupMedia focusMonitorDir omniwmctl;
+    inherit wsLaunch moveWindowToNamedWS setupMedia focusMonitorDir omniwmctl
+      projwmCli;
   };
 in {
   imports = [ ../homebrew.nix ];

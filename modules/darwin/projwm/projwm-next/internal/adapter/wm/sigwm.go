@@ -1932,7 +1932,7 @@ func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.
 		if err != nil {
 			return err
 		}
-		if sameLiveOrder(got, want) {
+		if managedOrderSettled(got, want) {
 			return nil
 		}
 		time.Sleep(120 * time.Millisecond)
@@ -1943,7 +1943,7 @@ func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.
 	// a "did not settle" error when the layout actually settled within
 	// the deadline + grace window.
 	time.Sleep(300 * time.Millisecond)
-	if got, err := s.liveOrderInWorkspace(ctx, ws); err == nil && sameLiveOrder(got, want) {
+	if got, err := s.liveOrderInWorkspace(ctx, ws); err == nil && managedOrderSettled(got, want) {
 		return nil
 	}
 	got, _ := s.liveOrderInWorkspace(ctx, ws)
@@ -2068,6 +2068,28 @@ func sameLiveOrder(got, want []w.LiveWindowID) bool {
 		}
 	}
 	return true
+}
+
+// managedOrderSettled reports whether every window in want is present in got
+// in the desired relative order, ignoring any windows in got that are not in
+// want. SSOT §6.3 L3 reorder targets only the managed (desired) windows; an
+// external window (§4.3 / INV-11) that has drifted into the workspace is not
+// part of DesiredLayout.Columns and must not block the reorder from settling.
+// We therefore filter got down to the want set (preserving got's order) and
+// require an exact match — i.e. the managed windows are correctly ordered
+// relative to each other regardless of interspersed externals.
+func managedOrderSettled(got, want []w.LiveWindowID) bool {
+	wantSet := make(map[w.LiveWindowID]bool, len(want))
+	for _, id := range want {
+		wantSet[id] = true
+	}
+	filtered := make([]w.LiveWindowID, 0, len(want))
+	for _, id := range got {
+		if wantSet[id] {
+			filtered = append(filtered, id)
+		}
+	}
+	return sameLiveOrder(filtered, want)
 }
 
 func (s *SigWM) FocusWorkspace(ctx context.Context, ws w.WorkspaceID) error {

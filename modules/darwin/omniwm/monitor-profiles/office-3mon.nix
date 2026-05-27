@@ -40,6 +40,10 @@ in {
       "I" = unnamedDisplay;
       "O" = unnamedDisplay;
       "P" = unnamedDisplay;
+      # ── cockpit park workspace (requirements v2.4 §8.1) ──────────────────
+      # CP1 goes to unnamedDisplay — same monitor as workspace A (projwm-managed).
+      # CP2-CP6 removed (requirements v2.4: 1 cockpit only).
+      "CP1" = unnamedDisplay;
     };
     layoutMap = {
       # projwm では E は niri、旧 Editor の dwindle 設定は不要

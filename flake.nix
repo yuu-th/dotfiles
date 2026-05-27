@@ -30,6 +30,16 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Helium browser (imput 製、Chromium ベース、プライバシー重視)
+    # - 公式に nixpkgs 未収録、amaanq の community flake で供給
+    # - 対応: x86_64/aarch64 × linux/darwin
+    # - 自動更新: 上流リリース後 15 分以内に GitHub Actions が hash 更新
+    # - 設定 / policy は modules/common/helium.nix で管理
+    helium-flake = {
+      url = "github:amaanq/helium-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # GitHub Copilot CLI - updated 4x/day by numtide bot
     llm-agents.url = "github:numtide/llm-agents.nix";
 

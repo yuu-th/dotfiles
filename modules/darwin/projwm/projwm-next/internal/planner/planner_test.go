@@ -998,6 +998,69 @@ func TestPlanPhaseOrderRemovalBarrierSpawnBarrierLayout(t *testing.T) {
 	}
 }
 
+// TestPlanIgnoresExternalWindowInManagedReorder is the owner test for the
+// reorder external-tolerance fix (SSOT §6.3 L3 / §4.3): when an active
+// project's two managed windows are already in the desired column order but a
+// drifted external window also sits in the workspace, the planner must NOT
+// emit a reorder — the external is not part of DesiredLayout.Columns. The old
+// exact-length comparison would re-emit reorder every iteration and burn
+// MaxReplans; this test guards against that regression.
+func TestPlanIgnoresExternalWindowInManagedReorder(t *testing.T) {
+	mk := func(project string, idx int) w.DesiredWindow {
+		return w.DesiredWindow{
+			ID:   w.DesiredWindowID{Project: w.ProjectID(project), Kind: w.WindowShell, Index: idx},
+			Kind: w.WindowShell,
+			App:  w.AppRequirement{BundleID: "com.mitchellh.ghostty"},
+			TitleContract: w.TitleContract{Authority: w.TitleControllerOwned, Expected: "shell-" + itoa(idx) + ":" + project},
+		}
+	}
+	desired := w.DesiredWorld{
+		ActiveProfile: "work",
+		Profiles: map[w.ProfileID]w.DesiredProfile{
+			"work": {ID: "work", Assignments: map[w.SlotID]w.ProjectID{"Q": "p1"}},
+		},
+		Projects: map[w.ProjectID]w.DesiredProject{
+			"p1": {ID: "p1", Windows: []w.DesiredWindow{mk("p1", 1), mk("p1", 2)}},
+		},
+	}
+	plan, err := Plan(w.WorldState{
+		Environment: w.ManagedEnvironment{
+			WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+			Workspaces: w.WorkspaceEnvironment{
+				Slots: []w.SlotSpec{{ID: "Q", Workspace: "Q", Order: 1}},
+			},
+		},
+		Desired: desired,
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				"live-1": {ID: "live-1", Kind: w.WindowShell, Workspace: "Q",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p1"}},
+				"live-2": {ID: "live-2", Kind: w.WindowShell, Workspace: "Q",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-2:p1"}},
+				// External window drifted into the managed slot — NOT desired,
+				// kind=external so the close loop leaves it in place.
+				"live-ext": {ID: "live-ext", Kind: w.WindowExternal, Workspace: "Q",
+					App: w.ObservedAppRef{BundleID: "com.vivaldi.Vivaldi"}, Title: w.ObservedTitle{Value: "something - Vivaldi"}},
+			},
+			// Managed windows already in desired order [live-1],[live-2]; the
+			// external occupies a third column.
+			Layouts: map[w.WorkspaceID]w.ObservedLayout{
+				"Q": {Columns: []w.ObservedColumn{
+					{Windows: []w.LiveWindowID{"live-1"}},
+					{Windows: []w.LiveWindowID{"live-2"}},
+					{Windows: []w.LiveWindowID{"live-ext"}},
+				}},
+			},
+		},
+	}, desired, "intent:reconcile", op.ReasonIntent)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if hasOperationKind(plan.Operations, op.KindReorderColumns) {
+		t.Errorf("SSOT §6.3/§4.3: planner must not emit reorder when managed windows are already ordered and only an external window differs; plan=%+v", plan.Operations)
+	}
+}
+
 func hasOperationKind(ops []op.Operation, kind op.Kind) bool {
 	for _, operation := range ops {
 		if operation.Kind == kind {

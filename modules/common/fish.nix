@@ -380,12 +380,22 @@ let cfg = config.myConfig.fish; in {
           # 前回の nix flake update が途中失敗して flake.lock が dirty になっていても続行できるよう破棄
           git checkout -- flake.lock 2>/dev/null || true
           git pull --rebase origin main
-          nix flake update llm-agents
+          nix flake update llm-agents vast-cli-src
+          # vast-cli の pyproject.toml が変わってる可能性があるので uv.lock を再生成する。
+          # poetry-dynamic-versioning が .git を要求するので bypass する。
+          VAST_SRC=$(nix eval --raw .#inputs.vast-cli-src.outPath 2>/dev/null || nix flake metadata --json | ${pkgs.jq}/bin/jq -r '.locks.nodes."vast-cli-src".locked | "github:" + .owner + "/" + .repo + "/" + .rev' | xargs nix flake prefetch --json | ${pkgs.jq}/bin/jq -r .storePath)
+          TMP=$(mktemp -d)
+          cp -r "$VAST_SRC"/. "$TMP/"
+          chmod -R u+w "$TMP"
+          rm -f "$TMP/uv.lock" "$TMP/poetry.lock"
+          (cd "$TMP" && POETRY_DYNAMIC_VERSIONING_BYPASS=0.0.0 ${pkgs.uv}/bin/uv lock)
+          cp "$TMP/uv.lock" modules/common/vast-cli/uv.lock
+          rm -rf "$TMP"
           sudo darwin-rebuild switch --flake .#yuta
           sudo chown -R "$(whoami)" .git/objects 2>/dev/null || true
-          if ! git diff --quiet flake.lock; then
-            git add flake.lock
-            git commit -m "chore: update llm-agents ($(date +%Y-%m-%d))"
+          if ! git diff --quiet flake.lock modules/common/vast-cli/uv.lock; then
+            git add flake.lock modules/common/vast-cli/uv.lock
+            git commit -m "chore: update llm-agents & vast-cli-src ($(date +%Y-%m-%d))"
             git push
           fi
         '';

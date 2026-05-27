@@ -31,6 +31,10 @@ in {
       "I" = main;
       "O" = main;
       "P" = main;
+      # ── cockpit park workspace (requirements v2.4 §8.1) ──────────────────
+      # CP1 goes to main — same monitor as workspace A (projwm-managed monitor).
+      # CP2-CP6 removed (requirements v2.4: 1 cockpit only).
+      "CP1" = main;
     };
     layoutMap = {
       # E は projwm では niri に戻す（旧 Editor 用の dwindle は projwm では不要）

@@ -287,9 +287,21 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 			if !allFound {
 				continue // spawn ops above will run first; layout settles next round
 			}
-			// Compare against observed.
+			// Compare against observed. SSOT §6.3 L3 / §4.3: external windows
+			// (kind=external; the close loop above deliberately leaves them in
+			// place) are NOT part of DesiredLayout.Columns. Filter them out of
+			// the observed columns before comparing, so a drifted external
+			// window does not make the planner perpetually re-emit a reorder
+			// that can never match — which would burn MaxReplans and fail the
+			// transaction. Mirrors the adapter-side managedOrderSettled.
+			managed := map[w.LiveWindowID]bool{}
+			for _, col := range liveCols {
+				for _, id := range col {
+					managed[id] = true
+				}
+			}
 			obs := state.Observed.Layouts[ws]
-			if !sameSemanticLayout(obs.Columns, liveCols) {
+			if !sameSemanticLayout(managedObservedColumns(obs.Columns, managed), liveCols) {
 				wsCopy := ws
 				phaseLayout = append(phaseLayout, op.Operation{
 					ID:     mkID("reorder"),
@@ -969,6 +981,26 @@ func projectDesiredColumns(pr w.DesiredProject, ws w.WorkspaceID, accepted map[w
 	out := make([]w.DesiredColumn, 0, len(all))
 	for _, dw := range all {
 		out = append(out, w.DesiredColumn{Windows: []w.DesiredWindowID{dw.ID}, Mode: w.ColumnSolo})
+	}
+	return out
+}
+
+// managedObservedColumns filters external/unmanaged windows out of the observed
+// columns, keeping only windows in the managed set and dropping any column that
+// becomes empty. SSOT §6.3 L3 reorder concerns only managed (desired) windows;
+// the adapter-side counterpart is managedOrderSettled in the wm adapter.
+func managedObservedColumns(cols []w.ObservedColumn, managed map[w.LiveWindowID]bool) []w.ObservedColumn {
+	out := make([]w.ObservedColumn, 0, len(cols))
+	for _, col := range cols {
+		kept := make([]w.LiveWindowID, 0, len(col.Windows))
+		for _, id := range col.Windows {
+			if managed[id] {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) > 0 {
+			out = append(out, w.ObservedColumn{Windows: kept, Mode: col.Mode})
+		}
 	}
 	return out
 }

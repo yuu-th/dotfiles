@@ -28,14 +28,12 @@
         "9" = { rawName = "9";  displayName = null; };
         "M" = { rawName = "10"; displayName = "M"; };
         "B" = { rawName = "11"; displayName = "B"; };
-        "E" = { rawName = "12"; displayName = "E"; };
-        # ── projwm slots (queue/projwm-design.md §4.1) ─────────────────────
-        # A = AI Viewer, Q-P = AI project slot 1〜10。
-        # E は既存だが projwm では「AI slot 3」として再利用される（per-project Zed
-        # 配置は projwm が動的に行うので、appRule の dev.zed.Zed=12 は不要）。
-        "A" = { rawName = "13"; displayName = "A"; };
-        "Q" = { rawName = "14"; displayName = "Q"; };
-        "W" = { rawName = "15"; displayName = "W"; };
+        # ── projwm slots (queue/projwm-spec.md §4.1) ──────────────────────
+        # A = AI Viewer, Q-P = AI project slot 1〜10 (QWERTY 行順)。
+        "A" = { rawName = "12"; displayName = "A"; };
+        "Q" = { rawName = "13"; displayName = "Q"; };
+        "W" = { rawName = "14"; displayName = "W"; };
+        "E" = { rawName = "15"; displayName = "E"; };
         "R" = { rawName = "16"; displayName = "R"; };
         "T" = { rawName = "17"; displayName = "T"; };
         "Y" = { rawName = "18"; displayName = "Y"; };
@@ -43,11 +41,16 @@
         "I" = { rawName = "20"; displayName = "I"; };
         "O" = { rawName = "21"; displayName = "O"; };
         "P" = { rawName = "22"; displayName = "P"; };
+        # ── cockpit park workspace (projwm-next requirements v2.4 §8.1) ────────
+        # Exactly one cockpit on the projwm-managed monitor (workspace A / Q-P).
+        # CP2-CP6 removed per v2.4 縮退: other monitors get no cockpit.
+        "CP1" = { rawName = "23"; displayName = "CP1"; };
       };
 
       order = [
-        "1" "2" "3" "4" "5" "6" "7" "8" "9" "M" "B" "E"
-        "A" "Q" "W" "R" "T" "Y" "U" "I" "O" "P"
+        "1" "2" "3" "4" "5" "6" "7" "8" "9" "M" "B"
+        "A" "Q" "W" "E" "R" "T" "Y" "U" "I" "O" "P"
+        "CP1"
       ];
 
       uuids = {
@@ -72,7 +75,8 @@
         "U" = "a0000013-0000-4000-8000-000000000013";
         "I" = "a0000014-0000-4000-8000-000000000014";
         "O" = "a0000015-0000-4000-8000-000000000015";
-        "P" = "a0000016-0000-4000-8000-000000000016";
+        "P"   = "a0000016-0000-4000-8000-000000000016";
+        "CP1" = "a0000017-0000-4000-8000-000000000017";
       };
 
       mk = key:

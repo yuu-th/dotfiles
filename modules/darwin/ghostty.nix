@@ -26,7 +26,9 @@ let cfg = config.myConfig.darwin.ghostty; in {
     homebrew.casks = [ "ghostty" ];
 
     home-manager.users.${config.myConfig.primaryUser} = {
-      home.file.".config/ghostty/config".text = ''
+      home.file.".config/ghostty/config" = {
+        force = true;
+        text = ''
         # ── フォント ─────────────────────────────────────────────────────
         # フォントの変更は profiles/fav_fonts.nix を編集（ここは自動反映）
         font-family = ${cfg.fontFamily}
@@ -79,7 +81,8 @@ let cfg = config.myConfig.darwin.ghostty; in {
         # 使わない組み合わせを割当：global+ctrl+opt+cmd+shift+F19=ignore は
         # 物理的に押されにくく副作用がない。
         keybind = global:ctrl+option+command+shift+f19=ignore
-      '';
+        '';
+      };
     };
   };
 }
