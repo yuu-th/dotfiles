@@ -969,6 +969,31 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 			}
 		}
 	}
+	// SSOT §6.6 IDEMP "既存があれば focus、無ければ作る" — applies to ALL kinds,
+	// not just the editor handled above. Ghostty windows (shell / AI / viewer)
+	// carry a controller-owned --title (e.g. "shell-1:proj") that uniquely
+	// identifies the managed window, but spawnGhostty always issues
+	// `open -na ghostty` which forks a NEW window every call. Without a
+	// pre-spawn dedup, a redundant Spawn (e.g. a summon racing the planner, or
+	// a replan that re-emits before observation settles) produces a duplicate
+	// window — violating INV-01. Mirror the editor dedup: if a live (PID>0)
+	// ghostty window already carries this exact bundleID+title, focus it and
+	// return its live ID instead of spawning again.
+	if (r.Kind == w.WindowShell || r.Kind == w.WindowAI || r.Kind == w.WindowViewer) && r.Title != "" {
+		if wins, qerr := s.queryWindows(ctx); qerr == nil {
+			for _, win := range wins {
+				if win.PID <= 0 {
+					continue
+				}
+				if win.App.BundleID == r.BundleID && win.Title == r.Title {
+					if _, ferr := s.Exec.Run(ctx, "window", "focus", win.ID); ferr != nil {
+						return "", fmt.Errorf("sigwm.Spawn[%s]: focus existing %s: %w", r.Kind, win.ID, ferr)
+					}
+					return w.LiveWindowID(win.ID), nil
+				}
+			}
+		}
+	}
 	// Dispatch by Kind to the per-app contract helper.
 	var createdTmuxSession bool
 	switch r.Kind {
