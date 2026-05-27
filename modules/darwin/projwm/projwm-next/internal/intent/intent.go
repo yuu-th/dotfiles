@@ -104,6 +104,8 @@ const (
 
 	// AutoSyncLayout: Tier 2 same-workspace column reorder feedback.
 	KindAutoSyncLayout Kind = "auto-sync-layout"
+	// ReconstructFromObserved: startup re-registration of managed windows.
+	KindReconstructFromObserved Kind = "reconstruct-from-observed"
 
 	// SyncCockpitSystemWindows: display-topology bookkeeping for §3.4 INV-06.
 	KindSyncCockpitSystemWindows Kind = "sync-cockpit-system-windows"
@@ -394,6 +396,17 @@ type AutoSyncLayout struct {
 }
 
 func (AutoSyncLayout) Kind() Kind { return KindAutoSyncLayout }
+
+// ReconstructFromObserved — startup recovery (SSOT §3.5 case B/D, INV-10).
+// Internal intent the controller dispatches on the Bootstrap lifecycle:
+// observed windows whose controller-owned title parses to a managed identity
+// absent from DesiredWorld are re-registered (project + window recreated,
+// project assigned to the slot whose workspace the window occupies). Preserves
+// single-writer: external startup event emits the signal, controller converts
+// to this intent, reducer mutates DesiredWorld.
+type ReconstructFromObserved struct{}
+
+func (ReconstructFromObserved) Kind() Kind { return KindReconstructFromObserved }
 
 // SyncCockpitSystemWindows — display-topology refresh. Keeps
 // DesiredWorld.SystemWindows length at 1 cockpit entry on the

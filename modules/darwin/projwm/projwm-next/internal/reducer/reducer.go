@@ -4,6 +4,8 @@ package reducer
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yuu-th/projwm-next/internal/event"
@@ -239,6 +241,11 @@ func ReduceIntent(state w.WorldState, in intent.Intent) (w.DesiredWorld, error) 
 			Columns:   append([]w.DesiredColumn(nil), v.Columns...),
 			Source:    w.LayoutAuthorityAcceptedManual,
 		}
+
+	case intent.ReconstructFromObserved:
+		// SSOT §3.5 case B/D / INV-10: re-register managed windows observed
+		// at startup whose identity is absent from DesiredWorld.
+		reconstructFromObserved(&d, state)
 
 	case intent.DismissCard, intent.DismissAllCards:
 		// Pure ControllerMeta mutation — applied at the controller level
@@ -533,6 +540,99 @@ func windowExists(wins []w.DesiredWindow, kind w.WindowKind, idx int) bool {
 		}
 	}
 	return false
+}
+
+// parseManagedTitle parses a projwm controller-owned Ghostty title of the form
+// "<kind>-<id>:<project>" (SSOT §7.3) into its identity components. Returns
+// ok=false for titles that do not match the managed convention (e.g. a Zed
+// basename title or an arbitrary user window). Viewer titles
+// ("ai-view-<id>:<project>") parse to Kind=viewer.
+func parseManagedTitle(title string) (w.WindowKind, int, w.ProjectID, bool) {
+	colon := strings.IndexByte(title, ':')
+	if colon <= 0 {
+		return "", 0, "", false
+	}
+	prefix, project := title[:colon], title[colon+1:]
+	if project == "" {
+		return "", 0, "", false
+	}
+	var kindStr, idxStr string
+	if strings.HasPrefix(prefix, "ai-view-") {
+		kindStr, idxStr = "ai-view", strings.TrimPrefix(prefix, "ai-view-")
+	} else {
+		dash := strings.LastIndexByte(prefix, '-')
+		if dash <= 0 || dash == len(prefix)-1 {
+			return "", 0, "", false
+		}
+		kindStr, idxStr = prefix[:dash], prefix[dash+1:]
+	}
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 1 {
+		return "", 0, "", false
+	}
+	switch kindStr {
+	case "ai":
+		return w.WindowAI, idx, w.ProjectID(project), true
+	case "shell":
+		return w.WindowShell, idx, w.ProjectID(project), true
+	case "browser":
+		return w.WindowBrowser, idx, w.ProjectID(project), true
+	case "ai-view":
+		return w.WindowViewer, idx, w.ProjectID(project), true
+	default:
+		return "", 0, "", false
+	}
+}
+
+// reconstructFromObserved implements SSOT §3.5 case B/D / INV-10: re-register
+// managed windows from the observed world when their identity is absent from
+// DesiredWorld (state lost / corrupted with no backup, or an orphan with a
+// parseable title at startup). For each observed window whose controller-owned
+// title parses to a managed identity not already desired, the project + window
+// are recreated and the project is assigned to the slot whose workspace the
+// window currently occupies (if that slot is free in the active profile).
+// Viewer windows are skipped — they are derived mirrors of AI windows, so the
+// AI window drives reconstruction. Unparseable titles are left for the
+// orphan-card path (PromoteOrphans).
+func reconstructFromObserved(d *w.DesiredWorld, state w.WorldState) {
+	for _, ow := range state.Observed.Windows {
+		kind, idx, pid, ok := parseManagedTitle(ow.Title.Value)
+		if !ok || kind == w.WindowViewer {
+			continue
+		}
+		pr, exists := d.Projects[pid]
+		if exists && windowExists(pr.Windows, kind, idx) {
+			continue // identity already desired — nothing to reconstruct
+		}
+		if !exists {
+			pr = w.DesiredProject{ID: pid}
+		}
+		pr.Windows = append(pr.Windows, defaultWindowForKind(pid, kind, idx, ""))
+		if d.Projects == nil {
+			d.Projects = map[w.ProjectID]w.DesiredProject{}
+		}
+		d.Projects[pid] = pr
+
+		// Assign to the slot whose workspace this window occupies, in the
+		// active profile, when that slot is currently unassigned.
+		prof, ok := d.Profiles[d.ActiveProfile]
+		if !ok {
+			continue
+		}
+		for _, slot := range state.Environment.Workspaces.Slots {
+			if slot.Workspace != ow.Workspace {
+				continue
+			}
+			if prof.Assignments == nil {
+				prof.Assignments = map[w.SlotID]w.ProjectID{}
+			}
+			if _, taken := prof.Assignments[slot.ID]; !taken {
+				prof.Assignments[slot.ID] = pid
+				d.Profiles[d.ActiveProfile] = prof
+			}
+			break
+		}
+	}
 }
 
 // DefaultProjectWindows returns the canonical (ai-1 + shell-1 + editor-1)

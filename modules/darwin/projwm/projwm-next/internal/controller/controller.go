@@ -269,6 +269,15 @@ func (c *Controller) ApplyEvent(ctx context.Context, ev event.Event) (Transactio
 	// toggle, and stops the planner from re-emitting ShowCockpit ops
 	// that fight the user.
 	c.applyCockpitVisibilitySync()
+	// SSOT §3.5 case B/D / INV-10: on Bootstrap, re-register managed windows
+	// observed in the live world whose identity is absent from DesiredWorld
+	// (state lost/corrupted with no backup, or a parseable-title orphan).
+	// Single-writer: the startup event signals Bootstrap; the controller
+	// converts it into the internal ReconstructFromObserved intent so only
+	// the controller writes DesiredWorld.
+	if r.Lifecycle == w.LifecycleBootstrap {
+		c.applyStartupReconstruction()
+	}
 
 	commandKey := commandKeyForLifecycle(r.Lifecycle)
 	reason := op.ReasonEvent
@@ -850,6 +859,17 @@ func (c *Controller) absorbUserCloseRecords(recs []event.UserCloseRecord) {
 // (i.e., already in the required state). DisplayCount is intentionally
 // ignored for the skip decision per requirements v2.4 §8.1 —
 // the number of physical displays does not affect how many cockpits we want.
+// applyStartupReconstruction converts the Bootstrap lifecycle into the
+// internal ReconstructFromObserved intent (SSOT §3.5 case B/D, INV-10),
+// updating DesiredWorld in place under the single-writer lock.
+func (c *Controller) applyStartupReconstruction() {
+	newDesired, err := reducer.ReduceIntent(c.state, intent.ReconstructFromObserved{})
+	if err != nil {
+		return
+	}
+	c.state.Desired = newDesired
+}
+
 func (c *Controller) applyCockpitSync() {
 	if len(c.state.Meta.DirtyScopes) == 0 {
 		return
