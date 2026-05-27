@@ -71,6 +71,27 @@ func TestCmdStatus_Human(t *testing.T) {
 	}
 }
 
+// TestStatusConvergenceVocabularyReflectsState is an owner test for SSOT §3.1
+// / §5.6 #8 (previously §10.9 GAP-02 convergence half): the user-visible
+// convergence string is the store-level signal that distinguishes the
+// "正常稼働" state (no outstanding work → CONVERGED) from the "復旧中" /
+// pending-work state (DirtyScopes recorded → CONVERGING). This is what the
+// user sees in `projwm status` / cockpit topbar to tell those states apart.
+func TestStatusConvergenceVocabularyReflectsState(t *testing.T) {
+	if got := convergenceFromCheckpoint(nil); got != "CONVERGED" {
+		t.Errorf("§5.6 #8: no outstanding work must read CONVERGED, got %q", got)
+	}
+	if got := convergenceFromCheckpoint([]w.DirtyScope{}); got != "CONVERGED" {
+		t.Errorf("§5.6 #8: empty scopes must read CONVERGED, got %q", got)
+	}
+	if got := convergenceFromCheckpoint([]w.DirtyScope{{Kind: "global"}}); got != "CONVERGING" {
+		t.Errorf("§5.6 #8/§3.1 復旧中: outstanding DirtyScopes must read CONVERGING (user sees pending recovery), got %q", got)
+	}
+	if got := convergenceFromCheckpoint([]w.DirtyScope{{Kind: "layout-sync", Key: "dotfiles|Q"}, {Kind: "global"}}); got != "CONVERGING" {
+		t.Errorf("§5.6 #8: multiple outstanding scopes must read CONVERGING, got %q", got)
+	}
+}
+
 func TestCmdStatus_JSON(t *testing.T) {
 	gf, _ := newProjectStore(t)
 	var stdout, stderr bytes.Buffer
