@@ -852,6 +852,152 @@ func TestPlanner_Viewer_StaleViewerAtWrongWorkspaceRemoved(t *testing.T) {
 	t.Fatalf("planner should remove stale viewer at wrong workspace: %+v", plan.Operations)
 }
 
+// opPhase classifies an op.Kind into one of the SSOT §6.10 / §7.1 planner
+// phases (removal → barrier → spawn → barrier → layout). Returns "" for
+// kinds that are not phase-classified here.
+func opPhase(k op.Kind) string {
+	switch k {
+	case op.KindKillSession, op.KindCloseWindow, op.KindCloseCockpit:
+		return "removal"
+	case op.KindSpawnTerminal, op.KindSpawnEditor, op.KindSpawnBrowser,
+		op.KindSpawnViewer, op.KindSpawnCockpit, op.KindEnsureSession:
+		return "spawn"
+	case op.KindMoveWindowToWorkspace, op.KindReorderColumns, op.KindMoveColumn,
+		op.KindMoveStackMember, op.KindToggleTabbed, op.KindFocusWorkspace,
+		op.KindFocusWindow, op.KindMoveCockpitToParkWorkspace,
+		op.KindShowCockpit, op.KindHideCockpit:
+		return "layout"
+	default:
+		return ""
+	}
+}
+
+// TestPlanPhaseOrderRemovalBarrierSpawnBarrierLayout is the owner test for
+// SSOT §6.10 (operation order) / §7.1 (planner phase separation) — previously
+// §10.9 GAP-18. A single reconcile that simultaneously requires a removal, a
+// spawn, AND a layout move must emit them in the order:
+//
+//	removals… → observe-barrier → spawns… → observe-barrier → layout…
+//
+// so that closed slots are vacated (and observed gone) before new windows are
+// spawned, and spawned windows are observed before being moved/reordered.
+func TestPlanPhaseOrderRemovalBarrierSpawnBarrierLayout(t *testing.T) {
+	shell := func(project string) w.DesiredWindow {
+		return w.DesiredWindow{
+			ID:   w.DesiredWindowID{Project: w.ProjectID(project), Kind: w.WindowShell, Index: 1},
+			Kind: w.WindowShell,
+			App:  w.AppRequirement{BundleID: "com.mitchellh.ghostty"},
+			TitleContract: w.TitleContract{
+				Authority: w.TitleControllerOwned,
+				Expected:  "shell-1:" + project,
+			},
+		}
+	}
+	desired := w.DesiredWorld{
+		ActiveProfile: "work",
+		Profiles: map[w.ProfileID]w.DesiredProfile{
+			// p_new and p_drift are active; p_old is NOT assigned → inactive.
+			"work": {ID: "work", Assignments: map[w.SlotID]w.ProjectID{"Q": "p_new", "W": "p_drift"}},
+		},
+		Projects: map[w.ProjectID]w.DesiredProject{
+			"p_new":   {ID: "p_new", Windows: []w.DesiredWindow{shell("p_new")}},
+			"p_drift": {ID: "p_drift", Windows: []w.DesiredWindow{shell("p_drift")}},
+			"p_old":   {ID: "p_old", Windows: []w.DesiredWindow{shell("p_old")}},
+		},
+	}
+	plan, err := Plan(w.WorldState{
+		Environment: w.ManagedEnvironment{
+			WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+			Apps: w.AppEnvironment{ManagedApps: []w.ManagedAppPolicy{{
+				Capability: w.CapabilityTerminal,
+				BundleID:   "com.mitchellh.ghostty",
+				LifecycleRemoval: w.LifecycleRemovalPolicy{
+					Allowed:      true,
+					Method:       w.LifecycleRemovalAXCloseGuarded,
+					AllowedKinds: []w.WindowKind{w.WindowAI, w.WindowShell, w.WindowViewer},
+				},
+			}}},
+			Workspaces: w.WorkspaceEnvironment{
+				Slots: []w.SlotSpec{{ID: "Q", Workspace: "Q", Order: 1}, {ID: "W", Workspace: "W", Order: 2}},
+			},
+		},
+		Desired: desired,
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				// p_old (inactive) live window → must be removed.
+				"live-old": {ID: "live-old", Kind: w.WindowShell, Workspace: "Q",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p_old"}},
+				// p_drift's window exists but on the wrong workspace ("3" ≠ "W") → must be moved (layout).
+				"live-drift": {ID: "live-drift", Kind: w.WindowShell, Workspace: "3",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p_drift"}},
+				// p_new's window is absent → must be spawned.
+			},
+			Layouts: map[w.WorkspaceID]w.ObservedLayout{},
+		},
+	}, desired, "intent:reconcile", op.ReasonIntent)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	// Collect the index of each phase op + barriers.
+	lastRemoval, firstSpawn, lastSpawn, firstLayout := -1, -1, -1, -1
+	var barrierIdx []int
+	sawPhase := map[string]bool{}
+	for i, oper := range plan.Operations {
+		if oper.Kind == op.KindObserveBarrier {
+			barrierIdx = append(barrierIdx, i)
+			continue
+		}
+		switch opPhase(oper.Kind) {
+		case "removal":
+			lastRemoval = i
+			sawPhase["removal"] = true
+		case "spawn":
+			if firstSpawn == -1 {
+				firstSpawn = i
+			}
+			lastSpawn = i
+			sawPhase["spawn"] = true
+		case "layout":
+			if firstLayout == -1 {
+				firstLayout = i
+			}
+			sawPhase["layout"] = true
+		}
+	}
+
+	// The fixture is designed to exercise all three phases at once.
+	for _, p := range []string{"removal", "spawn", "layout"} {
+		if !sawPhase[p] {
+			t.Fatalf("fixture failed to produce a %q-phase op; plan=%+v", p, plan.Operations)
+		}
+	}
+
+	// §6.10: every removal precedes every spawn, every spawn precedes every layout.
+	if lastRemoval >= firstSpawn {
+		t.Errorf("SSOT §6.10: removal (idx %d) must precede spawn (idx %d)", lastRemoval, firstSpawn)
+	}
+	if lastSpawn >= firstLayout {
+		t.Errorf("SSOT §6.10: spawn (idx %d) must precede layout (idx %d)", lastSpawn, firstLayout)
+	}
+
+	// §7.1: an observe-barrier separates removal→spawn and spawn→layout.
+	hasBarrierBetween := func(lo, hi int) bool {
+		for _, b := range barrierIdx {
+			if b > lo && b < hi {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasBarrierBetween(lastRemoval, firstSpawn) {
+		t.Errorf("SSOT §7.1: observe-barrier required between removal (idx %d) and spawn (idx %d); barriers=%v", lastRemoval, firstSpawn, barrierIdx)
+	}
+	if !hasBarrierBetween(lastSpawn, firstLayout) {
+		t.Errorf("SSOT §7.1: observe-barrier required between spawn (idx %d) and layout (idx %d); barriers=%v", lastSpawn, firstLayout, barrierIdx)
+	}
+}
+
 func hasOperationKind(ops []op.Operation, kind op.Kind) bool {
 	for _, operation := range ops {
 		if operation.Kind == kind {
