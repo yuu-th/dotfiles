@@ -1095,6 +1095,17 @@ func realSpecUnsafeCloseTitle(ctx context.Context, sw *SigWM, title string) erro
 			_ = sw.unsafeCloseForDiagnostics(ctx, id)
 		}
 	}
+	// Backstop: the AX/omniwm close above only acts on windows omniwm has
+	// already cataloged. A window spawned moments before cleanup (or one
+	// omniwm dropped from its catalog) would be missed and LEAK into the next
+	// real_ops test, which then sees a duplicate (ambiguous count=2) or a
+	// stale focus target — the inter-test flakiness observed when the suite
+	// runs as a batch. pkill the ghostty process by its exact controller-owned
+	// --title so the leak cannot survive omniwm observation timing. The title
+	// is unique to this test (e.g. "shell-1:dup-<ns>"), so the user's own
+	// ghostty windows (different titles) are never matched. Pattern mirrors the
+	// scratch-shell cleanup precedent (no ERE anchoring — titles are unique).
+	_ = exec.Command("pkill", "-TERM", "-f", "ghostty.*--title="+title).Run()
 	return nil
 }
 
