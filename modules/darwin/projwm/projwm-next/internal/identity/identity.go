@@ -148,6 +148,22 @@ func ResolveWithOptions(desired w.DesiredWindow, observed w.ObservedWorld, opts 
 			evidence = append(evidence, MatchEvidence{Kind: "bundle-id", Strength: w.MatchStrong, Window: k, Value: ow.App.BundleID})
 			missing = removeRequired(missing, RequiredBundleID)
 		}
+		// SSOT §4.4 / known-issue B-05: a Vivaldi browser window carries the
+		// page title (e.g. "<page> - Vivaldi"), not a projwm-controlled title,
+		// and OmniWM exposes no browser-profile field. The adapter already
+		// reclassifies only the automation-profile ("projwm-next") Vivaldi
+		// window as WindowBrowser (vivaldiManaged, via process args) — every
+		// other Vivaldi window is WindowExternal. So a managed browser cannot
+		// be matched by title; identify it by kind + bundleID + workspace
+		// instead. With one managed browser per project workspace this is
+		// unambiguous (the planner passes ExpectedWorkspace for browser); a
+		// title-based contract would never match and the planner would
+		// re-emit spawn-browser every reconcile (never converging).
+		if desired.Kind == w.WindowBrowser {
+			strong = append(strong, k)
+			evidence = append(evidence, MatchEvidence{Kind: "browser-kind-workspace", Strength: w.MatchStrong, Window: k, Value: string(ow.Workspace)})
+			continue
+		}
 		if desired.TitleContract.Authority == w.TitleControllerOwned &&
 			desired.TitleContract.Expected != "" {
 			if ow.Title.Value != desired.TitleContract.Expected {

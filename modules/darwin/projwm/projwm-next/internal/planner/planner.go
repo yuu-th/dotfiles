@@ -169,7 +169,14 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				// SSOT §2.5 EC4 / INV-01: duplicate live windows are resolved by
 				// focus-tiebreak so the planner can continue converging; the
 				// duplicate is reported separately as a Check14 invariant card.
-				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{})
+				// B-05: browser windows are matched by kind+bundleID+workspace
+				// (Vivaldi can't carry a projwm title), so the slot workspace
+				// is the disambiguator and must be supplied.
+				resolveOpts := identity.ResolveOptions{}
+				if dw.Kind == w.WindowBrowser {
+					resolveOpts.ExpectedWorkspace = workspace
+				}
+				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, resolveOpts)
 				if res.Class == identity.ClassUniqueStrong {
 					// Window exists. May need to be moved to its slot workspace.
 					ow := state.Observed.Windows[res.Live]
@@ -272,7 +279,11 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 						allFound = false
 						break
 					}
-					res := identity.ResolveWithFocusTiebreak(*dw, state.Observed, identity.ResolveOptions{})
+					layoutOpts := identity.ResolveOptions{}
+					if dw.Kind == w.WindowBrowser {
+						layoutOpts.ExpectedWorkspace = ws
+					}
+					res := identity.ResolveWithFocusTiebreak(*dw, state.Observed, layoutOpts)
 					if res.Class != identity.ClassUniqueStrong {
 						allFound = false
 						break
