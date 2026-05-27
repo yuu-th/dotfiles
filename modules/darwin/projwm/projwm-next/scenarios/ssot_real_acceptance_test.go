@@ -25,27 +25,27 @@ func TestHumanE2ESSOTUnarchiveProjectParkStateSteps(t *testing.T) {
 	h.reconcileIdeal()
 
 	archivedMatchers := []e2eWindowMatcher{
-		{Title: "ai-1:dotfiles"},
-		{Title: "shell-1:dotfiles"},
-		{Title: "shell-2:dotfiles"},
-		{Title: "ai-view-1:dotfiles"},
+		{Title: "ai-1:projwm-test-main"},
+		{Title: "shell-1:projwm-test-main"},
+		{Title: "shell-2:projwm-test-main"},
+		{Title: "ai-view-1:projwm-test-main"},
 	}
-	h.run("archive", "dotfiles")
+	h.run("archive", "projwm-test-main")
 	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 
-	out, err := h.runOutput("unarchive", "dotfiles")
+	out, err := h.runOutput("unarchive", "projwm-test-main")
 	if err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-S3/unarchive-park-cli",
 			fmt.Sprintf("SSOT §4.5/§9.1 requires unarchive to return a project to park state without a target slot; projwmctl rejected `unarchive dotfiles`: %v\n%s", err, out))
 	}
 	desired := readCurrentDesiredWorld(t, h.storeDir)
-	project := desired.Projects["dotfiles"]
+	project := desired.Projects["projwm-test-main"]
 	if project.Archived {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-S3/project-archived", "unarchive left dotfiles archived")
 	}
 	active := desired.Profiles[desired.ActiveProfile]
 	for slot, projectID := range active.Assignments {
-		if projectID == "dotfiles" {
+		if projectID == "projwm-test-main" {
 			failAcceptance(t, scenario.FailInvariant, "SSOT-S3/park-state",
 				fmt.Sprintf("unarchive assigned dotfiles to slot %s; SSOT requires park state with no slot assignment", slot))
 		}
@@ -102,7 +102,7 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 			fmt.Sprintf("OmniWM restart recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
 	}
 	afterSessions := tmuxListSessions(t)
-	for _, name := range []string{"ai-1/dotfiles", "shell-1/dotfiles", "shell-2/dotfiles"} {
+	for _, name := range []string{"ai-1/projwm-test-main", "shell-1/projwm-test-main", "shell-2/projwm-test-main"} {
 		if slices.Contains(beforeSessions, name) && !slices.Contains(afterSessions, name) {
 			failAcceptance(t, scenario.FailInvariant, "SSOT-S7/tmux-survives",
 				fmt.Sprintf("OmniWM restart must reuse live tmux session %q; before=%v after=%v", name, beforeSessions, afterSessions))
@@ -114,10 +114,10 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 func TestHumanE2ESSOTSummonIdempotencySteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
-	before := countWindowsByTitleBundleWorkspace(t, h.ctx, "shell-1:dotfiles", "com.mitchellh.ghostty", "Q")
+	before := countWindowsByTitleBundleWorkspace(t, h.ctx, "shell-1:projwm-test-main", "com.mitchellh.ghostty", "Q")
 	if before != 1 {
 		failAcceptance(t, scenario.FailFixtureInvalid, "SSOT-S8/precondition",
-			fmt.Sprintf("expected one shell-1:dotfiles before summon, got %d", before))
+			fmt.Sprintf("expected one shell-1:projwm-test-main before summon, got %d", before))
 	}
 
 	for i := 0; i < 3; i++ {
@@ -127,10 +127,10 @@ func TestHumanE2ESSOTSummonIdempotencySteps(t *testing.T) {
 				fmt.Sprintf("SSOT §2.3/§9.1 requires summon-shell identity reuse; projwmctl rejected summon-shell Q on iteration %d: %v\n%s", i+1, err, out))
 		}
 	}
-	after := countWindowsByTitleBundleWorkspace(t, h.ctx, "shell-1:dotfiles", "com.mitchellh.ghostty", "Q")
+	after := countWindowsByTitleBundleWorkspace(t, h.ctx, "shell-1:projwm-test-main", "com.mitchellh.ghostty", "Q")
 	if after != 1 {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-S8/no-duplicates",
-			fmt.Sprintf("summon-shell duplicated shell-1:dotfiles: before=%d after=%d", before, after))
+			fmt.Sprintf("summon-shell duplicated shell-1:projwm-test-main: before=%d after=%d", before, after))
 	}
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S8")
 }
@@ -146,10 +146,10 @@ func TestHumanE2ESSOTJumpOperationsFocusExpectedWindowsSteps(t *testing.T) {
 		bundleID  string
 		workspace string
 	}{
-		{step: "SSOT-OP01/shell-jump", args: []string{"summon-shell", "Q"}, title: "shell-1:dotfiles", bundleID: "com.mitchellh.ghostty", workspace: "Q"},
-		{step: "SSOT-OP02/editor-jump", args: []string{"summon-editor", "Q"}, title: "dotfiles", bundleID: "dev.zed.Zed", workspace: "Q"},
-		{step: "SSOT-OP03/browser-jump", args: []string{"summon-browser", "Q"}, title: "browser-1:dotfiles", bundleID: "com.vivaldi.Vivaldi", workspace: "Q"},
-		{step: "SSOT-OP06/viewer-jump", args: []string{"summon-viewer"}, title: "ai-view-1:dotfiles", bundleID: "com.mitchellh.ghostty", workspace: "A"},
+		{step: "SSOT-OP01/shell-jump", args: []string{"summon-shell", "Q"}, title: "shell-1:projwm-test-main", bundleID: "com.mitchellh.ghostty", workspace: "Q"},
+		{step: "SSOT-OP02/editor-jump", args: []string{"summon-editor", "Q"}, title: "projwm-test-main", bundleID: "dev.zed.Zed", workspace: "Q"},
+		{step: "SSOT-OP03/browser-jump", args: []string{"summon-browser", "Q"}, title: "browser-1:projwm-test-main", bundleID: "com.vivaldi.Vivaldi", workspace: "Q"},
+		{step: "SSOT-OP06/viewer-jump", args: []string{"summon-viewer"}, title: "ai-view-1:projwm-test-main", bundleID: "com.mitchellh.ghostty", workspace: "A"},
 	}
 	for _, tc := range cases {
 		out, err := h.runOutput(tc.args...)
@@ -170,10 +170,10 @@ func TestHumanE2ESSOTProjectSwitchAndSameSlotWindowSwitchSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	wShell := liveWindowByTitle(t, h.ctx, "W", "shell-1:projwm-jtest")
+	wShell := liveWindowByTitle(t, h.ctx, "W", "shell-1:projwm-test-alt")
 	runOmni(t, h.ctx, "window", "focus", wShell.ID)
 	waitForFocusedLiveWindowID(t, h.ctx, wShell.ID, 5*time.Second)
-	qShell := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	qShell := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	runOmni(t, h.ctx, "window", "focus", qShell.ID)
 	waitForFocusedLiveWindowID(t, h.ctx, qShell.ID, 5*time.Second)
 
@@ -181,7 +181,7 @@ func TestHumanE2ESSOTProjectSwitchAndSameSlotWindowSwitchSteps(t *testing.T) {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP04/switch-project-intent",
 			fmt.Sprintf("SSOT §4.1 operation 4 requires switch-project intent with target slot payload; daemon rejected it: %v", err))
 	}
-	focusedW := waitForFocusedWindowTitleBundle(t, h.ctx, "shell-1:projwm-jtest", "com.mitchellh.ghostty", 30*time.Second)
+	focusedW := waitForFocusedWindowTitleBundle(t, h.ctx, "shell-1:projwm-test-alt", "com.mitchellh.ghostty", 30*time.Second)
 	if focusedW.Workspace != "W" {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP04/final-focus",
 			fmt.Sprintf("switch-project focused workspace %s, want W: %+v", focusedW.Workspace, focusedW))
@@ -193,7 +193,7 @@ func TestHumanE2ESSOTProjectSwitchAndSameSlotWindowSwitchSteps(t *testing.T) {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP05/cycle-slot-window-intent",
 			fmt.Sprintf("SSOT §4.1 operation 5 requires cycle-slot-window intent without workspace change; daemon rejected it: %v", err))
 	}
-	focusedEditor := waitForFocusedWindowTitleBundle(t, h.ctx, "dotfiles", "dev.zed.Zed", 30*time.Second)
+	focusedEditor := waitForFocusedWindowTitleBundle(t, h.ctx, "projwm-test-main", "dev.zed.Zed", 30*time.Second)
 	if focusedEditor.Workspace != "Q" {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP05/same-workspace",
 			fmt.Sprintf("cycle-slot-window focused workspace %s, want Q: %+v", focusedEditor.Workspace, focusedEditor))
@@ -205,7 +205,7 @@ func TestHumanE2ESSOTScratchShellOpenCloseSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	prior := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	prior := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	runOmni(t, h.ctx, "window", "focus", prior.ID)
 	waitForFocusedLiveWindowID(t, h.ctx, prior.ID, 5*time.Second)
 
@@ -271,18 +271,18 @@ func TestHumanE2ESSOTAddWindowCreatesNextShellAndPlacesItSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	out, err := h.runOutput("add-shell", "--project", "dotfiles")
+	out, err := h.runOutput("add-shell", "--project", "projwm-test-main")
 	if err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP12/add-shell",
 			fmt.Sprintf("SSOT §4.1 operation 12 requires add-shell to append the next shell window and place it in the active project slot: %v\n%s", err, out))
 	}
-	waitForWindowTitleInWorkspace(t, h.ctx, "shell-3:dotfiles", "Q", 90*time.Second)
+	waitForWindowTitleInWorkspace(t, h.ctx, "shell-3:projwm-test-main", "Q", 90*time.Second)
 	desired := readCurrentDesiredWorld(t, h.storeDir)
-	if !desiredProjectHasWindow(desired, "dotfiles", w.WindowShell, 3) {
+	if !desiredProjectHasWindow(desired, "projwm-test-main", w.WindowShell, 3) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP12/desired-window",
 			"add-shell did not append shell-3 DesiredWindow to dotfiles")
 	}
-	if !desiredProjectHasWindow(desired, "dotfiles", w.WindowShell, 1) || !desiredProjectHasWindow(desired, "dotfiles", w.WindowShell, 2) {
+	if !desiredProjectHasWindow(desired, "projwm-test-main", w.WindowShell, 1) || !desiredProjectHasWindow(desired, "projwm-test-main", w.WindowShell, 2) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP12/no-id-rewrite",
 			"add-shell rewrote or removed existing shell-1/shell-2 identities")
 	}
@@ -293,18 +293,18 @@ func TestHumanE2ESSOTRemoveWindowClosesAndKillsSessionSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	out, err := h.runOutput("remove", "--window", "shell-2", "--project", "dotfiles")
+	out, err := h.runOutput("remove", "--window", "shell-2", "--project", "projwm-test-main")
 	if err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP13/remove-window",
 			fmt.Sprintf("SSOT §4.1 operation 13 requires remove-window to remove desired identity, close the window, and kill its tmux session: %v\n%s", err, out))
 	}
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-2:dotfiles"}})
-	if sessions := tmuxListSessions(t); slices.Contains(sessions, "shell-2/dotfiles") {
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-2:projwm-test-main"}})
+	if sessions := tmuxListSessions(t); slices.Contains(sessions, "shell-2/projwm-test-main") {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP13/tmux-session-killed",
-			fmt.Sprintf("remove-window left shell-2/dotfiles tmux session alive: %v", sessions))
+			fmt.Sprintf("remove-window left shell-2/projwm-test-main tmux session alive: %v", sessions))
 	}
 	desired := readCurrentDesiredWorld(t, h.storeDir)
-	if desiredProjectHasWindow(desired, "dotfiles", w.WindowShell, 2) {
+	if desiredProjectHasWindow(desired, "projwm-test-main", w.WindowShell, 2) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP13/desired-window-removed",
 			"remove-window left shell-2 DesiredWindow in dotfiles")
 	}
@@ -315,42 +315,42 @@ func TestHumanE2ESSOTBrowserTabOperationsUpdatePrivateMetadataSteps(t *testing.T
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	before := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "dotfiles")
-	if _, err := h.submitRawIntent("browser-add-tab", json.RawMessage(`{"project":"dotfiles","window":"browser-1","url":"https://example.com/ssot-op14"}`)); err != nil {
+	before := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "projwm-test-main")
+	if _, err := h.submitRawIntent("browser-add-tab", json.RawMessage(`{"project":"projwm-test-main","window":"browser-1","url":"https://example.com/ssot-op14"}`)); err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP14/browser-add-tab",
 			fmt.Sprintf("SSOT §4.1 operation 14 requires browser-add-tab to append a tab through private payload metadata: %v", err))
 	}
-	afterAdd := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "dotfiles")
+	afterAdd := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "projwm-test-main")
 	if afterAdd.URLCount != before.URLCount+1 || slices.Equal(afterAdd.URLPayloadRefs, before.URLPayloadRefs) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP14/browser-add-tab-metadata",
 			fmt.Sprintf("browser-add-tab metadata before=%+v after=%+v", before, afterAdd))
 	}
 
-	if _, err := h.submitRawIntent("browser-change-tab-url", json.RawMessage(`{"project":"dotfiles","window":"browser-1","tab":1,"url":"https://example.com/ssot-op16"}`)); err != nil {
+	if _, err := h.submitRawIntent("browser-change-tab-url", json.RawMessage(`{"project":"projwm-test-main","window":"browser-1","tab":1,"url":"https://example.com/ssot-op16"}`)); err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP16/browser-change-tab-url",
 			fmt.Sprintf("SSOT §4.1 operation 16 requires browser-change-tab-url to update private payload metadata: %v", err))
 	}
-	afterChange := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "dotfiles")
+	afterChange := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "projwm-test-main")
 	if afterChange.URLCount != afterAdd.URLCount || slices.Equal(afterChange.URLPayloadRefs, afterAdd.URLPayloadRefs) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP16/browser-change-tab-url-metadata",
 			fmt.Sprintf("browser-change-tab-url metadata before=%+v after=%+v", afterAdd, afterChange))
 	}
 
-	if _, err := h.submitRawIntent("browser-reorder-tabs", json.RawMessage(`{"project":"dotfiles","window":"browser-1","from":2,"to":1}`)); err != nil {
+	if _, err := h.submitRawIntent("browser-reorder-tabs", json.RawMessage(`{"project":"projwm-test-main","window":"browser-1","from":2,"to":1}`)); err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP17/browser-reorder-tabs",
 			fmt.Sprintf("SSOT §4.1 operation 17 requires browser-reorder-tabs to update private payload metadata: %v", err))
 	}
-	afterReorder := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "dotfiles")
+	afterReorder := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "projwm-test-main")
 	if afterReorder.URLCount != afterChange.URLCount || slices.Equal(afterReorder.URLPayloadRefs, afterChange.URLPayloadRefs) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP17/browser-reorder-tabs-metadata",
 			fmt.Sprintf("browser-reorder-tabs metadata before=%+v after=%+v", afterChange, afterReorder))
 	}
 
-	if _, err := h.submitRawIntent("browser-remove-tab", json.RawMessage(`{"project":"dotfiles","window":"browser-1","tab":2}`)); err != nil {
+	if _, err := h.submitRawIntent("browser-remove-tab", json.RawMessage(`{"project":"projwm-test-main","window":"browser-1","tab":2}`)); err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "SSOT-OP15/browser-remove-tab",
 			fmt.Sprintf("SSOT §4.1 operation 15 requires browser-remove-tab to remove a tab through private payload metadata: %v", err))
 	}
-	afterRemove := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "dotfiles")
+	afterRemove := desiredBrowserSession(t, readCurrentDesiredWorld(t, h.storeDir), "projwm-test-main")
 	if afterRemove.URLCount != afterReorder.URLCount-1 || slices.Equal(afterRemove.URLPayloadRefs, afterReorder.URLPayloadRefs) {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-OP15/browser-remove-tab-metadata",
 			fmt.Sprintf("browser-remove-tab metadata before=%+v after=%+v", afterReorder, afterRemove))
@@ -363,9 +363,9 @@ func TestHumanE2ESSOTCrashRecoverySteps(t *testing.T) {
 	h.reconcileIdeal()
 	before := currentDesiredWorldKey(t, h.storeDir)
 
-	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	terminateLiveWindowProcess(t, victim)
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:dotfiles"}})
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:projwm-test-main"}})
 	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 

@@ -148,23 +148,23 @@ type externalWorkspaceSnapshot []string
 
 var humanIdealSlots = map[string]e2eLayout{
 	"A": {
-		colTitle("ai-view-1:dotfiles"),
-		colTitle("ai-view-1:projwm-jtest"),
-		colTitle("ai-view-1:MyEmmoWorld"),
+		colTitle("ai-view-1:projwm-test-main"),
+		colTitle("ai-view-1:projwm-test-alt"),
+		colTitle("ai-view-1:projwm-test-emmo"),
 	},
 	"Q": {
-		colTitle("dotfiles"),
-		colTitle("ai-1:dotfiles"),
-		{{Title: "shell-1:dotfiles"}, {Title: "shell-2:dotfiles"}},
+		colTitle("projwm-test-main"),
+		colTitle("ai-1:projwm-test-main"),
+		{{Title: "shell-1:projwm-test-main"}, {Title: "shell-2:projwm-test-main"}},
 		colBundle("com.vivaldi.Vivaldi"), // B-05: browser matched by bundle id, not title
 	},
 	"W": {
-		colTitle("projwm-jtest"),
-		colTitle("ai-1:projwm-jtest"),
-		colTitle("shell-1:projwm-jtest"),
+		colTitle("projwm-test-alt"),
+		colTitle("ai-1:projwm-test-alt"),
+		colTitle("shell-1:projwm-test-alt"),
 	},
 	"E": {
-		colTitle("ai-1:MyEmmoWorld"),
+		colTitle("ai-1:projwm-test-emmo"),
 	},
 }
 
@@ -217,28 +217,28 @@ func TestHumanE2ECanonicalStory(t *testing.T) {
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S1.1")
 
 	// S2.1 / S2.2: archive removes managed windows, repeat reconcile is stable.
-	h.run("archive", "dotfiles")
-	waitForManagedGhosttyMissing(t, h.ctx, dotfilesGhosttyMatchers())
+	h.run("archive", "projwm-test-main")
+	waitForManagedGhosttyMissing(t, h.ctx, testMainGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S2.1")
 	h.run("reconcile")
-	waitForManagedGhosttyMissing(t, h.ctx, dotfilesGhosttyMatchers())
+	waitForManagedGhosttyMissing(t, h.ctx, testMainGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S2.2")
 
 	// S3.1 / S3.2: unarchive into target slot and idempotent re-unarchive.
-	h.run("unarchive", "dotfiles", "Q")
+	h.run("unarchive", "projwm-test-main", "Q")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S3.1")
-	h.run("unarchive", "dotfiles", "Q")
+	h.run("unarchive", "projwm-test-main", "Q")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S3.2")
 
 	// S4.1: unassign drops the slot's managed window set.
 	h.run("unassign", "W")
-	waitForManagedGhosttyMissing(t, h.ctx, jtestGhosttyMatchers())
+	waitForManagedGhosttyMissing(t, h.ctx, testAltGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S4.1")
 
 	// S4.2: assign re-establishes the slot.
-	h.run("assign", "W", "projwm-jtest")
+	h.run("assign", "W", "projwm-test-alt")
 	waitForLayout(t, h.ctx, "W", humanIdealSlots["W"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S4.2")
 
@@ -287,15 +287,15 @@ func TestHumanE2EFullInvariantAuditSteps(t *testing.T) {
 	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.1")
 
-	h.run("archive", "dotfiles")
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "dotfiles"}, {Title: "ai-1:dotfiles"}, {Title: "shell-1:dotfiles"}, {Title: "shell-2:dotfiles"}, {Title: "browser-1:dotfiles"}})
+	h.run("archive", "projwm-test-main")
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "projwm-test-main"}, {Title: "ai-1:projwm-test-main"}, {Title: "shell-1:projwm-test-main"}, {Title: "shell-2:projwm-test-main"}, {Title: "browser-1:projwm-test-main"}})
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.1")
 
 	h.run("reconcile")
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "dotfiles"}, {Title: "ai-1:dotfiles"}, {Title: "shell-1:dotfiles"}, {Title: "shell-2:dotfiles"}, {Title: "browser-1:dotfiles"}})
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "projwm-test-main"}, {Title: "ai-1:projwm-test-main"}, {Title: "shell-1:projwm-test-main"}, {Title: "shell-2:projwm-test-main"}, {Title: "browser-1:projwm-test-main"}})
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.2")
 
-	h.run("unarchive", "dotfiles", "Q")
+	h.run("unarchive", "projwm-test-main", "Q")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.1")
 
@@ -303,7 +303,7 @@ func TestHumanE2EFullInvariantAuditSteps(t *testing.T) {
 	assertWorkspacesEmpty(t, h.ctx, "W")
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S4.1")
 
-	h.run("assign", "W", "projwm-jtest")
+	h.run("assign", "W", "projwm-test-alt")
 	waitForLayout(t, h.ctx, "W", humanIdealSlots["W"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S4.2")
 
@@ -314,12 +314,12 @@ func TestHumanE2EFullInvariantAuditSteps(t *testing.T) {
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.3")
 
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "dotfiles")
+	h.run("accept-manual-layout", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.1")
 
 	h.run("switch-profile", "empty")
-	waitForManagedGhosttyMissing(t, h.ctx, dotfilesGhosttyMatchers())
+	waitForManagedGhosttyMissing(t, h.ctx, testMainGhosttyMatchers())
 	h.run("switch-profile", "work")
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.2")
@@ -352,12 +352,12 @@ func TestHumanE2EArchiveUnarchiveSteps(t *testing.T) {
 	h.reconcileIdeal()
 
 	archivedMatchers := []e2eWindowMatcher{
-		{Title: "ai-1:dotfiles"},
-		{Title: "shell-1:dotfiles"},
-		{Title: "shell-2:dotfiles"},
-		{Title: "ai-view-1:dotfiles"},
+		{Title: "ai-1:projwm-test-main"},
+		{Title: "shell-1:projwm-test-main"},
+		{Title: "shell-2:projwm-test-main"},
+		{Title: "ai-view-1:projwm-test-main"},
 	}
-	h.run("archive", "dotfiles")
+	h.run("archive", "projwm-test-main")
 	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.1")
 
@@ -365,11 +365,11 @@ func TestHumanE2EArchiveUnarchiveSteps(t *testing.T) {
 	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.2")
 
-	h.run("unarchive", "dotfiles", "Q")
+	h.run("unarchive", "projwm-test-main", "Q")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.1")
 
-	h.run("unarchive", "dotfiles", "Q")
+	h.run("unarchive", "projwm-test-main", "Q")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.2")
 }
@@ -378,13 +378,13 @@ func TestHumanE2EGhosttyLifecycleRemovalTraceSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	out, err := h.runOutput("archive", "MyEmmoWorld")
+	out, err := h.runOutput("archive", "projwm-test-emmo")
 	if err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "S2/ghostty-lifecycle-removal",
 			fmt.Sprintf("archive of Ghostty-only project did not complete through production lifecycle removal: %v\n%s", err, tailString(out, 6000)))
 	}
-	waitForWorkspaceMissing(t, h.ctx, "E", []e2eWindowMatcher{{Title: "ai-1:MyEmmoWorld"}})
-	waitForWorkspaceMissing(t, h.ctx, "A", []e2eWindowMatcher{{Title: "ai-view-1:MyEmmoWorld"}})
+	waitForWorkspaceMissing(t, h.ctx, "E", []e2eWindowMatcher{{Title: "ai-1:projwm-test-emmo"}})
+	waitForWorkspaceMissing(t, h.ctx, "A", []e2eWindowMatcher{{Title: "ai-view-1:projwm-test-emmo"}})
 
 	tx, _ := parseAcceptedTransactionOutput(t, out)
 	if tx == "" {
@@ -410,19 +410,19 @@ func TestHumanE2EProductionRemovalWithoutCloseWindowSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	out, err := h.runOutput("archive", "dotfiles")
+	out, err := h.runOutput("archive", "projwm-test-main")
 	if err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "S1/S2/S4/production-removal",
 			fmt.Sprintf("archive of dotfiles project did not complete through production lifecycle removal: %v\n%s", err, tailString(out, 6000)))
 	}
 	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{
-		{Title: "ai-1:dotfiles"},
-		{Title: "shell-1:dotfiles"},
-		{Title: "shell-2:dotfiles"},
+		{Title: "ai-1:projwm-test-main"},
+		{Title: "shell-1:projwm-test-main"},
+		{Title: "shell-2:projwm-test-main"},
 		{BundleID: "dev.zed.Zed"},
-		{Title: "browser-1:dotfiles"},
+		{Title: "browser-1:projwm-test-main"},
 	})
-	waitForWorkspaceMissing(t, h.ctx, "A", []e2eWindowMatcher{{Title: "ai-view-1:dotfiles"}})
+	waitForWorkspaceMissing(t, h.ctx, "A", []e2eWindowMatcher{{Title: "ai-view-1:projwm-test-main"}})
 
 	tx, _ := parseAcceptedTransactionOutput(t, out)
 	if tx == "" {
@@ -444,10 +444,10 @@ func TestHumanE2EAssignUnassignSteps(t *testing.T) {
 	h.reconcileIdeal()
 
 	h.run("unassign", "W")
-	waitForManagedGhosttyMissing(t, h.ctx, jtestGhosttyMatchers())
+	waitForManagedGhosttyMissing(t, h.ctx, testAltGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S4.1")
 
-	h.run("assign", "W", "projwm-jtest")
+	h.run("assign", "W", "projwm-test-alt")
 	waitForLayout(t, h.ctx, "W", humanIdealSlots["W"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S4.2")
 
@@ -559,7 +559,7 @@ func TestHumanE2EPreconditionUniqueStrongAmbiguousSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 
-	const title = "shell-1:dotfiles"
+	const title = "shell-1:projwm-test-main"
 	const bundleID = "com.mitchellh.ghostty"
 	if count := countWindowsByTitleBundleWorkspace(t, h.ctx, title, bundleID, "Q"); count != 1 {
 		failAcceptance(t, scenario.FailFixtureInvalid, "S8.B/preflight",
@@ -656,26 +656,26 @@ func TestHumanE2EStaleEpochDiscardSteps(t *testing.T) {
 func TestHumanE2EAcceptManualLayoutSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
-	assertNoAcceptedLayout(t, h.storeDir, "dotfiles", "Q")
+	assertNoAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q")
 
 	manualLayout := manualDotfilesLayout()
 	h.performManualDotfilesLayout(manualLayout)
 	h.run("reconcile")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
-	assertNoAcceptedLayout(t, h.storeDir, "dotfiles", "Q")
+	assertNoAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q")
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.3")
 
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "dotfiles")
+	h.run("accept-manual-layout", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
-	assertAcceptedLayout(t, h.storeDir, "dotfiles", "Q", manualLayout)
+	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.1")
 
 	h.run("switch-profile", "empty")
-	waitForManagedGhosttyMissing(t, h.ctx, dotfilesGhosttyMatchers())
+	waitForManagedGhosttyMissing(t, h.ctx, testMainGhosttyMatchers())
 	h.run("switch-profile", "work")
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
-	assertAcceptedLayout(t, h.storeDir, "dotfiles", "Q", manualLayout)
+	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.2")
 }
 
@@ -1052,9 +1052,9 @@ func TestHumanE2EManagedWindowForcedTerminationSteps(t *testing.T) {
 	h.reconcileIdeal()
 	before := currentDesiredWorldKey(t, h.storeDir)
 
-	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	terminateLiveWindowProcess(t, victim)
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:dotfiles"}})
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:projwm-test-main"}})
 
 	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
@@ -1070,14 +1070,14 @@ func TestHumanE2EManagedWindowCrossWorkspaceMoveSteps(t *testing.T) {
 	h.reconcileIdeal()
 	before := currentDesiredWorldKey(t, h.storeDir)
 
-	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	runOmni(t, h.ctx, "window", "focus", victim.ID)
 	runOmni(t, h.ctx, "command", "move-to-workspace", "3")
-	waitForWindowTitleInWorkspace(t, h.ctx, "shell-1:dotfiles", "3", 10*time.Second)
+	waitForWindowTitleInWorkspace(t, h.ctx, "shell-1:projwm-test-main", "3", 10*time.Second)
 
 	h.sendEvent(event.KindUserMovedWindow, event.SourceUser)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
-	restored := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	restored := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	if restored.ID != victim.ID || restored.PID != victim.PID {
 		failAcceptance(t, scenario.FailInvariant, "EVT.4.2/identity-maintained",
 			fmt.Sprintf("cross-workspace move restored a different live window: before id=%s pid=%d after id=%s pid=%d", victim.ID, victim.PID, restored.ID, restored.PID))
@@ -1110,7 +1110,7 @@ func performManagedWindowUserCloseScenario(t *testing.T, h *humanE2E, auditStep 
 	before := currentDesiredWorldKey(t, h.storeDir)
 	desiredBefore := readCurrentDesiredWorld(t, h.storeDir)
 
-	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	if victim.BundleID != "com.mitchellh.ghostty" {
 		failAcceptance(t, scenario.FailFixtureInvalid, "EVT.4.3/select-victim",
 			fmt.Sprintf("expected Ghostty test-owned managed window for user-close victim; got %+v", victim))
@@ -1126,7 +1126,7 @@ func performManagedWindowUserCloseScenario(t *testing.T, h *humanE2E, auditStep 
 	})
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 
-	restored := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	restored := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	if restored.ID == victim.ID && restored.PID == victim.PID {
 		failAcceptance(t, scenario.FailInvariant, "EVT.4.3/respawn-identity",
 			fmt.Sprintf("user-close did not produce a fresh live window: id=%s pid=%d (victim id=%s pid=%d)", restored.ID, restored.PID, victim.ID, victim.PID))
@@ -1331,9 +1331,9 @@ func TestHumanE2EVerifierReplanTraceSteps(t *testing.T) {
 	// Stage the natural predicted-vs-observed divergence: a killed managed
 	// window whose DesiredWindow still demands a live process. The controller
 	// will plan a spawn op, execute it, then re-plan to confirm convergence.
-	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:dotfiles")
+	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	terminateLiveWindowProcess(t, victim)
-	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:dotfiles"}})
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:projwm-test-main"}})
 
 	ack := h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	if ack.AcceptedTransaction == nil {
@@ -1435,7 +1435,7 @@ func TestHumanE2ESameWorkspaceReorderEventSteps(t *testing.T) {
 	manualLayout := manualDotfilesLayout()
 
 	h.performManualDotfilesLayout(manualLayout)
-	project := w.ProjectID("dotfiles")
+	project := w.ProjectID("projwm-test-main")
 	workspace := w.WorkspaceID("Q")
 	manualColumns := manualDotfilesDesiredColumns()
 	h.sendEventData(event.KindUserReorderedColumns, event.SourceUser, event.Data{
@@ -1480,14 +1480,14 @@ func TestHumanE2ERestartVisiblePersistenceSteps(t *testing.T) {
 	h.reconcileIdeal()
 	manualLayout := manualDotfilesLayout()
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "dotfiles")
+	h.run("accept-manual-layout", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
-	assertAcceptedLayout(t, h.storeDir, "dotfiles", "Q", manualLayout)
+	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/AUTH.7.2-pre-restart")
 
 	h.restartDaemon()
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
-	assertAcceptedLayout(t, h.storeDir, "dotfiles", "Q", manualLayout)
+	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/AUTH.7.2")
 }
 
@@ -1563,9 +1563,9 @@ func TestHumanE2EPrivacyRequirementsSteps(t *testing.T) {
 		// generation -- only the live window goes away). Then unarchive
 		// re-opens the Vivaldi window via OpenInProfile, restoring the
 		// canary URL into a real tab.
-		h.run("archive", "dotfiles")
+		h.run("archive", "projwm-test-main")
 		waitForWorkspaceMissing(t, h.ctx, "Q",
-			[]e2eWindowMatcher{{Title: "browser-1:dotfiles"}})
+			[]e2eWindowMatcher{{Title: "browser-1:projwm-test-main"}})
 		// Throughout the archive transition the PrivatePayloadStore
 		// retains the payload (the desired browser session keeps the
 		// PrivatePayloadRef) and PersistentStore artifacts must remain
@@ -1573,13 +1573,13 @@ func TestHumanE2EPrivacyRequirementsSteps(t *testing.T) {
 		assertCanaryInPrivatePayload(t, h, humanBrowserCanaryToken)
 		assertNoCanaryInPersistentStore(t, h, humanBrowserCanaryToken, humanBrowserCanaryHost)
 
-		h.run("unarchive", "dotfiles", "Q")
+		h.run("unarchive", "projwm-test-main", "Q")
 		waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 		// After unarchive completes, OpenInProfile must have spawned a
 		// new Vivaldi window in workspace Q with the controller-owned
 		// browser identity title and a payload resolved through the
 		// PrivatePayloadStore.
-		liveBrowser := liveWindowByTitle(t, h.ctx, "Q", "browser-1:dotfiles")
+		liveBrowser := liveWindowByTitle(t, h.ctx, "Q", "browser-1:projwm-test-main")
 		if liveBrowser.BundleID != "com.vivaldi.Vivaldi" {
 			failAcceptance(t, scenario.FailInvariant, "PRIV.6.5/restore-spawn",
 				fmt.Sprintf("unarchive produced %q with bundle %q, want Vivaldi: %+v", liveBrowser.Title, liveBrowser.BundleID, liveBrowser))
@@ -1718,7 +1718,7 @@ func assertPrivatePayloadStoreBoundary(t *testing.T, h *humanE2E, needles ...str
 			fmt.Sprintf("PrivatePayloadStore must not be nested inside PersistentStore: store=%s private=%s", absStore, absPrivate))
 	}
 	desired := readCurrentDesiredWorld(t, h.storeDir)
-	browserProject := desired.Projects["dotfiles"]
+	browserProject := desired.Projects["projwm-test-main"]
 	var browserWindow *w.DesiredWindow
 	for i := range browserProject.Windows {
 		if browserProject.Windows[i].Kind == w.WindowBrowser {
@@ -1877,9 +1877,9 @@ func runLegacySavedURLsMigrationAudit(t *testing.T, h *humanE2E) {
 	}
 	legacyState := fmt.Sprintf(`{
   "active_profile": "work",
-  "profiles": {"work": {"assignments": {"Q": "dotfiles"}}},
+  "profiles": {"work": {"assignments": {"Q": "projwm-test-main"}}},
   "projects": {
-    "dotfiles": {
+    "projwm-test-main": {
       "cwd": %q,
       "windows": [
         {"id": 1, "kind": "browser", "saved_urls": ["https://canary-priv-6-4.example.test/%s"]}
@@ -2388,7 +2388,7 @@ func (h *humanE2E) stopDaemon() {
 
 func (h *humanE2E) performManualDotfilesLayout(expected e2eLayout) {
 	h.t.Helper()
-	target := liveWindowByTitle(h.t, h.ctx, "Q", "ai-1:dotfiles")
+	target := liveWindowByTitle(h.t, h.ctx, "Q", "ai-1:projwm-test-main")
 	runOmni(h.t, h.ctx, "window", "focus", target.ID)
 	runOmni(h.t, h.ctx, "command", "move-column", "left")
 	waitForLayout(h.t, h.ctx, "Q", expected, 20*time.Second)
@@ -2404,19 +2404,19 @@ func manualDotfilesDesiredColumns() []w.DesiredColumn {
 
 func swappedStackDotfilesLayout() e2eLayout {
 	return e2eLayout{
-		colTitle("ai-1:dotfiles"),
-		colTitle("dotfiles"),
-		{{Title: "shell-2:dotfiles"}, {Title: "shell-1:dotfiles"}},
-		colTitle("browser-1:dotfiles"),
+		colTitle("ai-1:projwm-test-main"),
+		colTitle("projwm-test-main"),
+		{{Title: "shell-2:projwm-test-main"}, {Title: "shell-1:projwm-test-main"}},
+		colTitle("browser-1:projwm-test-main"),
 	}
 }
 
 func swappedStackDotfilesDesiredColumns() []w.DesiredColumn {
 	return []w.DesiredColumn{
-		{Windows: []w.DesiredWindowID{{Project: "dotfiles", Kind: w.WindowAI, Index: 1}}, Mode: w.ColumnSolo},
-		{Windows: []w.DesiredWindowID{{Project: "dotfiles", Kind: w.WindowEditor, Index: 1}}, Mode: w.ColumnSolo},
-		{Windows: []w.DesiredWindowID{{Project: "dotfiles", Kind: w.WindowShell, Index: 2}, {Project: "dotfiles", Kind: w.WindowShell, Index: 1}}, Mode: w.ColumnStacked},
-		{Windows: []w.DesiredWindowID{{Project: "dotfiles", Kind: w.WindowBrowser, Index: 1}}, Mode: w.ColumnSolo},
+		{Windows: []w.DesiredWindowID{{Project: "projwm-test-main", Kind: w.WindowAI, Index: 1}}, Mode: w.ColumnSolo},
+		{Windows: []w.DesiredWindowID{{Project: "projwm-test-main", Kind: w.WindowEditor, Index: 1}}, Mode: w.ColumnSolo},
+		{Windows: []w.DesiredWindowID{{Project: "projwm-test-main", Kind: w.WindowShell, Index: 2}, {Project: "projwm-test-main", Kind: w.WindowShell, Index: 1}}, Mode: w.ColumnStacked},
+		{Windows: []w.DesiredWindowID{{Project: "projwm-test-main", Kind: w.WindowBrowser, Index: 1}}, Mode: w.ColumnSolo},
 	}
 }
 
@@ -2966,7 +2966,7 @@ func cleanupIdealResidue(t *testing.T, ctx context.Context) {
 // residueOnHumanWorkspaces returns every window currently on A/Q/W/E that
 // the test harness considers leftover from a previous run. This includes:
 //   - any window matching one of humanIdealSlots' matchers (e.g. an
-//     ai-1:dotfiles Ghostty window from a prior test)
+//     ai-1:projwm-test-main Ghostty window from a prior test)
 //   - any Zed window (dev.zed.Zed) regardless of title (covers the
 //     "empty project" leak that isn't an ideal slot but still owned by
 //     a managed app)
@@ -3610,13 +3610,13 @@ func writeHumanDesiredWorld(t *testing.T, ctx context.Context, privatePayloadDir
 	desired := w.DesiredWorld{
 		ActiveProfile: "work",
 		Profiles: map[w.ProfileID]w.DesiredProfile{
-			"work":  {ID: "work", Assignments: map[w.SlotID]w.ProjectID{"Q": "dotfiles", "W": "projwm-jtest", "E": "MyEmmoWorld"}, InactivePolicy: w.InactivePolicyRemove},
+			"work":  {ID: "work", Assignments: map[w.SlotID]w.ProjectID{"Q": "projwm-test-main", "W": "projwm-test-alt", "E": "projwm-test-emmo"}, InactivePolicy: w.InactivePolicyRemove},
 			"empty": {ID: "empty", Assignments: map[w.SlotID]w.ProjectID{}, InactivePolicy: w.InactivePolicyRemove},
 		},
 		Projects: map[w.ProjectID]w.DesiredProject{
-			"dotfiles":     projectDotfiles(projectRoot("dotfiles"), browserPayloadRef),
-			"projwm-jtest": projectJTest(projectRoot("projwm-jtest")),
-			"MyEmmoWorld":  projectMyEmmoWorld(projectRoot("MyEmmoWorld")),
+			"projwm-test-main":     projectDotfiles(projectRoot("projwm-test-main"), browserPayloadRef),
+			"projwm-test-alt": projectJTest(projectRoot("projwm-test-alt")),
+			"projwm-test-emmo":  projectMyEmmoWorld(projectRoot("projwm-test-emmo")),
 		},
 		FocusPolicy: w.FocusPolicySet{FinalFocus: map[string]w.WorkspaceID{
 			"intent:switch-profile":         "A",
@@ -3651,11 +3651,11 @@ func seedHumanBrowserPayload(t *testing.T, ctx context.Context, privatePayloadDi
 }
 
 func projectDotfiles(root string, browserPayloadRef w.PrivatePayloadRef) w.DesiredProject {
-	editor := desiredWindow("dotfiles", w.WindowEditor, 1, "dotfiles", "dev.zed.Zed", "/Applications/Zed.app")
-	ai := desiredWindow("dotfiles", w.WindowAI, 1, "ai-1:dotfiles", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
-	shell1 := desiredWindow("dotfiles", w.WindowShell, 1, "shell-1:dotfiles", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
-	shell2 := desiredWindow("dotfiles", w.WindowShell, 2, "shell-2:dotfiles", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
-	browser := desiredWindow("dotfiles", w.WindowBrowser, 1, "browser-1:dotfiles", "com.vivaldi.Vivaldi", "/Applications/Vivaldi.app")
+	editor := desiredWindow("projwm-test-main", w.WindowEditor, 1, "projwm-test-main", "dev.zed.Zed", "/Applications/Zed.app")
+	ai := desiredWindow("projwm-test-main", w.WindowAI, 1, "ai-1:projwm-test-main", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	shell1 := desiredWindow("projwm-test-main", w.WindowShell, 1, "shell-1:projwm-test-main", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	shell2 := desiredWindow("projwm-test-main", w.WindowShell, 2, "shell-2:projwm-test-main", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	browser := desiredWindow("projwm-test-main", w.WindowBrowser, 1, "browser-1:projwm-test-main", "com.vivaldi.Vivaldi", "/Applications/Vivaldi.app")
 	browser.Browser = &w.DesiredBrowserSession{
 		PrivacyMode:       w.BrowserSnapshotPrivateContent,
 		URLPayloadRefs:    []w.PrivatePayloadRef{browserPayloadRef},
@@ -3664,7 +3664,7 @@ func projectDotfiles(root string, browserPayloadRef w.PrivatePayloadRef) w.Desir
 		RedactionPolicyID: "human-e2e-private-payload-v1",
 	}
 	return w.DesiredProject{
-		ID: "dotfiles", Root: root,
+		ID: "projwm-test-main", Root: root,
 		Windows: []w.DesiredWindow{editor, ai, shell1, shell2, browser},
 		Layouts: map[w.WorkspaceID]w.DesiredLayout{"Q": {
 			Workspace: "Q",
@@ -3680,11 +3680,11 @@ func projectDotfiles(root string, browserPayloadRef w.PrivatePayloadRef) w.Desir
 }
 
 func projectJTest(root string) w.DesiredProject {
-	editor := desiredWindow("projwm-jtest", w.WindowEditor, 1, "projwm-jtest", "dev.zed.Zed", "/Applications/Zed.app")
-	ai := desiredWindow("projwm-jtest", w.WindowAI, 1, "ai-1:projwm-jtest", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
-	shell := desiredWindow("projwm-jtest", w.WindowShell, 1, "shell-1:projwm-jtest", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	editor := desiredWindow("projwm-test-alt", w.WindowEditor, 1, "projwm-test-alt", "dev.zed.Zed", "/Applications/Zed.app")
+	ai := desiredWindow("projwm-test-alt", w.WindowAI, 1, "ai-1:projwm-test-alt", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	shell := desiredWindow("projwm-test-alt", w.WindowShell, 1, "shell-1:projwm-test-alt", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
 	return w.DesiredProject{
-		ID: "projwm-jtest", Root: root,
+		ID: "projwm-test-alt", Root: root,
 		Windows: []w.DesiredWindow{editor, ai, shell},
 		Layouts: map[w.WorkspaceID]w.DesiredLayout{"W": {
 			Workspace: "W",
@@ -3699,9 +3699,9 @@ func projectJTest(root string) w.DesiredProject {
 }
 
 func projectMyEmmoWorld(root string) w.DesiredProject {
-	ai := desiredWindow("MyEmmoWorld", w.WindowAI, 1, "ai-1:MyEmmoWorld", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
+	ai := desiredWindow("projwm-test-emmo", w.WindowAI, 1, "ai-1:projwm-test-emmo", "com.mitchellh.ghostty", "/Applications/Ghostty.app")
 	return w.DesiredProject{
-		ID: "MyEmmoWorld", Root: root,
+		ID: "projwm-test-emmo", Root: root,
 		Windows: []w.DesiredWindow{ai},
 		Layouts: map[w.WorkspaceID]w.DesiredLayout{"E": {
 			Workspace: "E",
@@ -4821,15 +4821,15 @@ func desiredLayoutKeyFromE2E(t *testing.T, layout e2eLayout, project w.ProjectID
 
 func desiredIDForE2EWindow(project w.ProjectID, win e2eWindowMatcher) (w.DesiredWindowID, bool) {
 	switch project {
-	case "dotfiles":
+	case "projwm-test-main":
 		switch {
-		case win.Title == "dotfiles":
+		case win.Title == "projwm-test-main":
 			return w.DesiredWindowID{Project: project, Kind: w.WindowEditor, Index: 1}, true
-		case win.Title == "ai-1:dotfiles":
+		case win.Title == "ai-1:projwm-test-main":
 			return w.DesiredWindowID{Project: project, Kind: w.WindowAI, Index: 1}, true
-		case win.Title == "shell-1:dotfiles":
+		case win.Title == "shell-1:projwm-test-main":
 			return w.DesiredWindowID{Project: project, Kind: w.WindowShell, Index: 1}, true
-		case win.Title == "shell-2:dotfiles":
+		case win.Title == "shell-2:projwm-test-main":
 			return w.DesiredWindowID{Project: project, Kind: w.WindowShell, Index: 2}, true
 		case win.BundleID == "com.vivaldi.Vivaldi":
 			return w.DesiredWindowID{Project: project, Kind: w.WindowBrowser, Index: 1}, true
@@ -5006,26 +5006,26 @@ func waitForManagedGhosttyMissing(t *testing.T, ctx context.Context, matchers []
 }
 
 func allManagedGhosttyMatchers() []e2eWindowMatcher {
-	out := append([]e2eWindowMatcher{}, dotfilesGhosttyMatchers()...)
-	out = append(out, jtestGhosttyMatchers()...)
-	out = append(out, e2eWindowMatcher{Title: "ai-1:MyEmmoWorld"}, e2eWindowMatcher{Title: "ai-view-1:MyEmmoWorld"})
+	out := append([]e2eWindowMatcher{}, testMainGhosttyMatchers()...)
+	out = append(out, testAltGhosttyMatchers()...)
+	out = append(out, e2eWindowMatcher{Title: "ai-1:projwm-test-emmo"}, e2eWindowMatcher{Title: "ai-view-1:projwm-test-emmo"})
 	return out
 }
 
-func dotfilesGhosttyMatchers() []e2eWindowMatcher {
+func testMainGhosttyMatchers() []e2eWindowMatcher {
 	return []e2eWindowMatcher{
-		{Title: "ai-1:dotfiles"},
-		{Title: "shell-1:dotfiles"},
-		{Title: "shell-2:dotfiles"},
-		{Title: "ai-view-1:dotfiles"},
+		{Title: "ai-1:projwm-test-main"},
+		{Title: "shell-1:projwm-test-main"},
+		{Title: "shell-2:projwm-test-main"},
+		{Title: "ai-view-1:projwm-test-main"},
 	}
 }
 
-func jtestGhosttyMatchers() []e2eWindowMatcher {
+func testAltGhosttyMatchers() []e2eWindowMatcher {
 	return []e2eWindowMatcher{
-		{Title: "ai-1:projwm-jtest"},
-		{Title: "shell-1:projwm-jtest"},
-		{Title: "ai-view-1:projwm-jtest"},
+		{Title: "ai-1:projwm-test-alt"},
+		{Title: "shell-1:projwm-test-alt"},
+		{Title: "ai-view-1:projwm-test-alt"},
 	}
 }
 
@@ -6285,12 +6285,12 @@ func TestHumanE2EGhosttyTmuxSessionExistsSteps(t *testing.T) {
 	h.reconcileIdeal()
 	sessions := tmuxListSessions(t)
 	expected := []string{
-		"ai-1/dotfiles",
-		"shell-1/dotfiles",
-		"shell-2/dotfiles",
-		"ai-1/projwm-jtest",
-		"shell-1/projwm-jtest",
-		"ai-1/MyEmmoWorld",
+		"ai-1/projwm-test-main",
+		"shell-1/projwm-test-main",
+		"shell-2/projwm-test-main",
+		"ai-1/projwm-test-alt",
+		"shell-1/projwm-test-alt",
+		"ai-1/projwm-test-emmo",
 	}
 	for _, want := range expected {
 		if !slices.Contains(sessions, want) {
@@ -6308,15 +6308,15 @@ func TestHumanE2EGhosttyAIAutoLaunchSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 	time.Sleep(2 * time.Second)
-	out, err := exec.CommandContext(h.ctx, "tmux", "capture-pane", "-p", "-t", "ai-1/dotfiles").Output()
+	out, err := exec.CommandContext(h.ctx, "tmux", "capture-pane", "-p", "-t", "ai-1/projwm-test-main").Output()
 	if err != nil {
 		failAcceptance(t, scenario.FailInvariant, "SESS.2/ai-auto-launch",
-			fmt.Sprintf("tmux capture-pane against ai-1/dotfiles failed: %v", err))
+			fmt.Sprintf("tmux capture-pane against ai-1/projwm-test-main failed: %v", err))
 	}
 	pane := string(out)
 	if !strings.Contains(pane, "claude") && !strings.Contains(pane, "Claude") {
 		failAcceptance(t, scenario.FailInvariant, "SESS.2/ai-auto-launch",
-			fmt.Sprintf("AI command output not visible in tmux pane ai-1/dotfiles; pane content=%q", pane))
+			fmt.Sprintf("AI command output not visible in tmux pane ai-1/projwm-test-main; pane content=%q", pane))
 	}
 }
 
@@ -6328,7 +6328,7 @@ func TestHumanE2EGhosttyViewerGroupedTmuxSteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
 	sessions := tmuxListSessions(t)
-	expectedViewer := "ai-1/dotfiles_v"
+	expectedViewer := "ai-1/projwm-test-main_v"
 	if !slices.Contains(sessions, expectedViewer) {
 		failAcceptance(t, scenario.FailInvariant, "SESS.3/viewer-grouped",
 			fmt.Sprintf("grouped viewer session %q missing after reconcile; live sessions=%v", expectedViewer, sessions))

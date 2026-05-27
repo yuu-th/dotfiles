@@ -8,7 +8,7 @@
 //
 //   PROJWM_NEXT_REAL_ACCEPTANCE=1 go test -tags integration ./scenarios/...
 //
-// (Honest deferral note: the test bodies still embed "dotfiles" /
+// (Honest deferral note: the test bodies still embed "projwm-test-main" /
 // "manaflow" project IDs as L4 fixtures; the projwm-next-test prefix
 // rewrite is tracked under S29 separately from the gate enforcement.)
 package scenarios
