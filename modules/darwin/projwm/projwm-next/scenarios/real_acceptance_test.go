@@ -3704,16 +3704,25 @@ func projectMyEmmoWorld(root string) w.DesiredProject {
 }
 
 func desiredWindow(project string, kind w.WindowKind, index int, title, bundle, appPath string) w.DesiredWindow {
+	tc := w.TitleContract{
+		Authority: w.TitleControllerOwned,
+		Expected:  title,
+		Drift:     w.TitleDriftRepair,
+	}
+	// SSOT §4.4 / B-05: a Vivaldi browser window carries the page title, NOT a
+	// projwm-controlled title, and spawnVivaldi rejects a controller-owned
+	// browser title. The managed browser is identified by kind+bundleID
+	// (mirrors reducer.defaultWindowForKind). Using a ControllerOwned title
+	// here would set SpawnRequest.Title and trip the spawnVivaldi guard.
+	if kind == w.WindowBrowser {
+		tc = w.TitleContract{Authority: w.TitleAppOwned, Drift: w.TitleDriftObserveOnly}
+	}
 	return w.DesiredWindow{
-		ID:   w.DesiredWindowID{Project: w.ProjectID(project), Kind: kind, Index: index},
-		Kind: kind,
-		App:  w.AppRequirement{Capability: capabilityFor(kind), BundleID: bundle, AppPath: appPath},
-		TitleContract: w.TitleContract{
-			Authority: w.TitleControllerOwned,
-			Expected:  title,
-			Drift:     w.TitleDriftRepair,
-		},
-		MatchHints: []w.MatchHint{{Kind: w.MatchByBundleID, Pattern: bundle, Confidence: w.MatchStrong}},
+		ID:            w.DesiredWindowID{Project: w.ProjectID(project), Kind: kind, Index: index},
+		Kind:          kind,
+		App:           w.AppRequirement{Capability: capabilityFor(kind), BundleID: bundle, AppPath: appPath},
+		TitleContract: tc,
+		MatchHints:    []w.MatchHint{{Kind: w.MatchByBundleID, Pattern: bundle, Confidence: w.MatchStrong}},
 	}
 }
 

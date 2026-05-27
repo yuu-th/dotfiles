@@ -1036,6 +1036,15 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 			if probe.TrackedApps[app.BundleID] {
 				continue
 			}
+			// B-05: never blind-relaunch the browser (Vivaldi). A bare
+			// `open <Vivaldi.app>` opens the user's DEFAULT profile (no
+			// --user-data-dir), producing an undetectable, unmanaged window
+			// on a non-test workspace. The managed browser is spawned only by
+			// the planner via OpenInProfile(--user-data-dir); leave its
+			// registration to that path.
+			if app.Capability == w.CapabilityBrowser || app.BundleID == "com.vivaldi.Vivaldi" {
+				continue
+			}
 			if app.AppPath == "" {
 				fmt.Fprintf(os.Stderr, "projwmd: omniwm-recovery Lv2: %s missing from tracking but appPath unknown\n", app.BundleID)
 				continue
