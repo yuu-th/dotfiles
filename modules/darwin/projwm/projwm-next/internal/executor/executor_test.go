@@ -134,6 +134,62 @@ func TestExecuteKillSessionRejectsStillActiveDesiredProject(t *testing.T) {
 	}
 }
 
+// TestExecuteReorderResolvesDuplicateIdentityViaFocusTiebreak is the regression
+// owner for the S7 omniwm-restart reorder failure: when omniwm re-catalogs a
+// managed window twice, identity.Resolve returns ClassAmbiguous. The executor
+// USED to refuse the mutation ("classified ambiguous"), which stalled the
+// reorder forever — even though the planner already plans against the INV-01
+// focus-tiebreak winner (ResolveWithFocusTiebreak). The executor must resolve
+// the same winner so the op proceeds (the duplicate is surfaced separately as
+// a Check14 [INVARIANT] card). This test proves the executor no longer refuses
+// on a duplicate identity. (The fake WM's strict permutation check still errors
+// because the orphan remains a physical column; real sigwm tolerates it via
+// waitSemanticColumns' managed-only filter — the point here is solely that the
+// "classified ambiguous, refusing mutation" stall is gone.)
+func TestExecuteReorderResolvesDuplicateIdentityViaFocusTiebreak(t *testing.T) {
+	env := w.ManagedEnvironment{Workspaces: w.WorkspaceEnvironment{
+		Workspaces: []w.WorkspaceSpec{{ID: "Q", Role: w.WorkspaceProject}},
+	}}
+	desiredID := w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1}
+	dw := w.DesiredWindow{ID: desiredID, Kind: w.WindowAI, TitleContract: w.TitleContract{Authority: w.TitleControllerOwned, Expected: "ai-1:p1"}}
+	target := w.DesiredWorld{Projects: map[w.ProjectID]w.DesiredProject{"p1": {ID: "p1", Windows: []w.DesiredWindow{dw}}}}
+
+	fake := wm.NewFake(env)
+	// Two live windows share the managed identity (omniwm re-catalog duplicate).
+	for i := 0; i < 2; i++ {
+		if _, err := fake.Spawn(context.Background(), wm.SpawnRequest{
+			Workspace: "Q", Kind: w.WindowAI, Desired: desiredID,
+			Title: "ai-1:p1", BundleID: "com.mitchellh.ghostty",
+		}); err != nil {
+			t.Fatalf("Spawn dup %d: %v", i, err)
+		}
+	}
+	observed, err := fake.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	ws := w.WorkspaceID("Q")
+	err = ex_reorder(t, fake, env, observed, target, ws, desiredID)
+	if err != nil && strings.Contains(err.Error(), "classified ambiguous") {
+		t.Fatalf("executor must resolve the duplicate via focus-tiebreak, not refuse: %v", err)
+	}
+}
+
+// ex_reorder runs a KindReorderColumns op for a single desired window.
+func ex_reorder(t *testing.T, fake *wm.Fake, env w.ManagedEnvironment, observed w.ObservedWorld, target w.DesiredWorld, ws w.WorkspaceID, dwid w.DesiredWindowID) error {
+	t.Helper()
+	ex := Executor{Adapter: fake, Env: env}
+	return ex.Execute(context.Background(), op.Operation{
+		Kind:   op.KindReorderColumns,
+		Target: op.Target{Workspace: &ws},
+		ExpectedEffects: []op.Effect{{
+			Kind:    op.EffectReorderColumns,
+			Columns: []w.DesiredColumn{{Windows: []w.DesiredWindowID{dwid}}},
+		}},
+	}, observed, target)
+}
+
 func TestExecuteKillSessionTerminatesInactiveManagedAppInstance(t *testing.T) {
 	desiredID := w.DesiredWindowID{Project: "p1", Kind: w.WindowShell, Index: 1}
 	target := desiredWorldForKillSessionTest(desiredID, false)

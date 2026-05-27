@@ -106,7 +106,14 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 		if err != nil {
 			return "", err
 		}
-		res := identity.Resolve(*dw, observed)
+		// INV-01 / SSOT §2.5 EC4: a duplicate live window (ClassAmbiguous —
+		// e.g. omniwm re-cataloging the same managed window twice after a
+		// restart) must NOT block the mutation. The planner already plans
+		// against the focus-tiebreak winner (ResolveWithFocusTiebreak); the
+		// executor must resolve the same winner so move/focus ops proceed,
+		// while the duplicate is surfaced separately as a Check14 [INVARIANT]
+		// card. Plain Resolve would refuse and stall the reorder forever.
+		res := identity.ResolveWithFocusTiebreak(*dw, observed, identity.ResolveOptions{})
 		if res.Class != identity.ClassUniqueStrong {
 			return "", fmt.Errorf("executor: identity for %v classified %s, refusing mutation", d, res.Class)
 		}
