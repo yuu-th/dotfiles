@@ -226,3 +226,55 @@ func TestReduceIntent_DismissCard_NoMutation(t *testing.T) {
 		t.Errorf("DismissCard should not mutate DesiredWorld, ActiveProfile = %q", d.ActiveProfile)
 	}
 }
+
+// TestReduceIntent_AdoptOrphanWindow_AppendsDesiredWindow is the owner test
+// for SSOT §4.3 orphan card [Enter] action (previously §10.9 GAP-05): adopting
+// an orphan registers it as a managed DesiredWindow under the target project
+// at the next free index, so the next reconcile rematches the existing live
+// window via identity instead of treating it as an orphan.
+func TestReduceIntent_AdoptOrphanWindow_AppendsDesiredWindow(t *testing.T) {
+	s := baseState() // dotfiles has shell-1
+	d, err := ReduceIntent(s, intent.AdoptOrphanWindow{
+		LiveID: "live-orphan", AsProject: "dotfiles", AsWindowKind: w.WindowShell,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, win := range d.Projects["dotfiles"].Windows {
+		if win.Kind == w.WindowShell && win.ID.Index == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("§4.3 [Enter]: adopt should append shell-2 under dotfiles, got %+v", d.Projects["dotfiles"].Windows)
+	}
+}
+
+// TestReduceIntent_AdoptOrphanWindow_UnknownProjectRejects: adopting into a
+// project that does not exist must be rejected (SSOT §4.3 / §6.4 constraint).
+func TestReduceIntent_AdoptOrphanWindow_UnknownProjectRejects(t *testing.T) {
+	s := baseState()
+	if _, err := ReduceIntent(s, intent.AdoptOrphanWindow{
+		LiveID: "live-orphan", AsProject: "ghost", AsWindowKind: w.WindowShell,
+	}); err == nil {
+		t.Fatal("§4.3: adopt-orphan into unknown project must reject")
+	}
+}
+
+// TestReduceIntent_DismissOrphanWindow_NoDesiredMutation is the owner test for
+// SSOT §4.3 orphan card [c] close action (§10.9 GAP-05): dismissing an orphan
+// does NOT mutate DesiredWorld — the controller's card subsystem translates it
+// into an AX-close operation. The reducer must leave the desired projects /
+// windows untouched so no phantom managed window is created.
+func TestReduceIntent_DismissOrphanWindow_NoDesiredMutation(t *testing.T) {
+	s := baseState()
+	before := len(s.Desired.Projects["dotfiles"].Windows)
+	d, err := ReduceIntent(s, intent.DismissOrphanWindow{LiveID: "live-orphan", Action: "close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(d.Projects["dotfiles"].Windows); got != before {
+		t.Errorf("§4.3 [c]: dismiss-orphan must not mutate DesiredWorld windows (before=%d after=%d)", before, got)
+	}
+}

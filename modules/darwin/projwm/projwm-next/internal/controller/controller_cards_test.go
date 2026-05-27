@@ -91,6 +91,35 @@ func TestPromoteOrphans_PromotesAfterGrace(t *testing.T) {
 	}
 }
 
+// TestPromoteOrphans_CardCarriesActionSet is the owner test for SSOT §4.3
+// orphan suggestion UI (previously §10.9 GAP-05): the promoted [NEW] orphan
+// card must offer the Enter (adopt) / c (close) / t (carry to TUI) actions so
+// the cockpit can dispatch AdoptOrphanWindow / DismissOrphanWindow.
+func TestPromoteOrphans_CardCarriesActionSet(t *testing.T) {
+	c := minimalControllerEnv(t)
+	c.state.Observed.Windows = map[w.LiveWindowID]w.ObservedWindow{
+		"live-1": {ID: "live-1", Workspace: "Q", Kind: w.WindowShell},
+	}
+	c.state.Meta.PendingOrphans = []w.OrphanCandidate{
+		{LiveID: "live-1", Kind: w.WindowShell, Workspace: "Q",
+			DetectedAt: time.Now().Add(-10 * time.Second).UnixNano()},
+	}
+	c.PromoteOrphans(5 * time.Second)
+	cards := c.State().Meta.ActiveCards
+	if len(cards) != 1 {
+		t.Fatalf("expected 1 [NEW] card, got %d", len(cards))
+	}
+	keys := map[string]bool{}
+	for _, a := range cards[0].Actions {
+		keys[a.Key] = true
+	}
+	for _, want := range []string{"Enter", "c", "t"} {
+		if !keys[want] {
+			t.Errorf("§4.3: orphan card must offer %q action, got actions %+v", want, cards[0].Actions)
+		}
+	}
+}
+
 func TestPromoteOrphans_KeepsWithinGrace(t *testing.T) {
 	c := minimalControllerEnv(t)
 	c.state.Observed.Windows = map[w.LiveWindowID]w.ObservedWindow{
