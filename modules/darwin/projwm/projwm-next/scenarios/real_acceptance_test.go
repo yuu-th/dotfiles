@@ -156,7 +156,7 @@ var humanIdealSlots = map[string]e2eLayout{
 		colTitle("dotfiles"),
 		colTitle("ai-1:dotfiles"),
 		{{Title: "shell-1:dotfiles"}, {Title: "shell-2:dotfiles"}},
-		colTitle("browser-1:dotfiles"),
+		colBundle("com.vivaldi.Vivaldi"), // B-05: browser matched by bundle id, not title
 	},
 	"W": {
 		colTitle("projwm-jtest"),
@@ -2442,6 +2442,14 @@ func TestHumanE2EAcceptanceCoverageGate(t *testing.T) {
 
 func colTitle(title string) e2eColumn {
 	return e2eColumn{{Title: title}}
+}
+
+// colBundle matches a column by app bundle id rather than title. SSOT §4.4 /
+// B-05: a Vivaldi browser window carries the page title (e.g. "<page> -
+// Vivaldi"), not the projwm `browser-N:project` identity, so the visible-layout
+// oracle must identify the managed browser by its bundle id.
+func colBundle(bundleID string) e2eColumn {
+	return e2eColumn{{BundleID: bundleID}}
 }
 
 func humanE2ETimeout() time.Duration {
