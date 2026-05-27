@@ -344,6 +344,15 @@ func startupCleanupShell(t *testing.T, sw *wm.SigWM, live w.LiveWindowID, title,
 		BundleID:   "com.mitchellh.ghostty",
 	})
 	_ = (&session.Client{}).KillSession(ctx, tmuxSession)
+	// Backstop: TerminateManagedAppInstance only acts on windows OmniWM has
+	// cataloged; under load it can miss a just-spawned window, which then
+	// leaks into the next subtest (startup reconstruction iterates ALL live
+	// windows → the leftover re-registers and corrupts the sibling's slot
+	// assignment, e.g. slot Q resolves to "projwm" instead of "unknown").
+	// pkill the ghostty process by its exact title so the leak cannot survive
+	// OmniWM observation timing. The title ("shell-1:projwm") is test-specific;
+	// the user's shells (other project names) are never matched.
+	_ = exec.Command("pkill", "-TERM", "-f", "ghostty.*--title="+title).Run()
 	// Synchronously wait for the window to actually disappear from OmniWM
 	// before returning. Startup reconstruction iterates ALL observed windows,
 	// so a window leaking from one subtest into the next would be re-registered
