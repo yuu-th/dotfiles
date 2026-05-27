@@ -342,6 +342,11 @@ func TestSigWM_Spawn_ZedRequiresProjectPathDirectory(t *testing.T) {
 
 	project := t.TempDir()
 	m = newMockExec()
+	// Editor uses the diff-based settle (SSOT §4.4 ED-MULTI): the pre-spawn
+	// snapshot must be empty so the freshly-launched zed-1 registers as the
+	// single newly-appeared dev.zed.Zed window. setSeq feeds the empty
+	// snapshot once; the responder then surfaces zed-1 for the settle poll.
+	m.setSeq("query windows", okEnvelope("windows", `{"windows":[]}`))
 	m.set("query windows", okEnvelope("windows", `{"windows":[
 		{"id":"zed-1","title":"p1","app":{"bundleId":"dev.zed.Zed","name":"Zed"},
 		 "isFocused":true,"workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}
