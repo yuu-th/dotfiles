@@ -636,9 +636,9 @@ func TestHumanE2EStaleEpochDiscardSteps(t *testing.T) {
 			fmt.Sprintf("stale event changed DesiredWorld\nbefore: %s\nafter:  %s", beforeDesired, afterDesired))
 	}
 	afterCheckpoint := readCurrentCheckpoint(t, h.storeDir)
-	if !reflect.DeepEqual(beforeCheckpoint.DirtyScopes, afterCheckpoint.DirtyScopes) || !reflect.DeepEqual(beforeCheckpoint.ManualLayoutCandidates, afterCheckpoint.ManualLayoutCandidates) {
+	if !reflect.DeepEqual(beforeCheckpoint.DirtyScopes, afterCheckpoint.DirtyScopes) {
 		failAcceptance(t, scenario.FailInvariant, "S8.F/no-meta-mutation",
-			fmt.Sprintf("stale event changed committed DirtyScope/ManualLayoutCandidate\nbefore: %+v\nafter:  %+v", beforeCheckpoint, afterCheckpoint))
+			fmt.Sprintf("stale event changed committed DirtyScope\nbefore: %+v\nafter:  %+v", beforeCheckpoint, afterCheckpoint))
 	}
 	afterVisible := snapshotHumanWorkspaces(t, h.ctx)
 	if strings.Join(beforeVisible, "\n") != strings.Join(afterVisible, "\n") {
@@ -1444,11 +1444,12 @@ func TestHumanE2ESameWorkspaceReorderEventSteps(t *testing.T) {
 		Columns:   manualColumns,
 	})
 	waitForLayoutDifferentFrom(t, h.ctx, "Q", humanIdealSlots["Q"], 30*time.Second)
-	assertManualLayoutCandidate(t, h.storeDir, project, workspace, manualColumns)
-	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
-		failAcceptance(t, scenario.FailInvariant, "EVT.4.4/S8.D",
-			fmt.Sprintf("same-workspace reorder event changed DesiredWorld before accept\nbefore: %s\nafter:  %s", before, after))
-	}
+	// SSOT N-12 (2026-05-20): same-workspace reorder is no longer held out of
+	// DesiredWorld as a "ManualLayoutCandidate". The controller reduces the
+	// event to AutoSyncLayout and writes the new columns straight into
+	// DesiredWorld.AcceptedLayouts. Assert that accepted-layout write occurred.
+	_ = before
+	assertAcceptedLayout(t, h.storeDir, project, workspace, manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/EVT.4.4")
 }
 
@@ -2266,16 +2267,12 @@ func assertFullInvariantAudit(t *testing.T, h *humanE2E, step string) {
 	t.Helper()
 	state := h.currentWorldStateForAudit(step)
 	trace := readCurrentTransactionTrace(t, h.storeDir)
-	// AllowManualLayoutCandidates: true allows same-workspace reorder evidence
-	// (recorded as ManualLayoutCandidate, not committed as DesiredWorld write)
-	// to differ from DesiredWorld during the audit. The candidate-recording
-	// transaction has not yet been promoted to an accepted layout, so
-	// invariant 9 must skip workspaces with an active candidate; this is
-	// the same allowance the controller applies for the recording
-	// transaction itself (specs.md §4.4 / §8.D).
+	// SSOT N-12: the ManualLayoutCandidate hold-out was removed — same-workspace
+	// reorders are reduced to AutoSyncLayout and written straight into
+	// DesiredWorld.AcceptedLayouts, so invariant 9 has no candidate exception
+	// to honor anymore.
 	violations := invariant.CheckAll(state, invariant.CheckOptions{
-		FinalFocusCommandKey:        trace.Command,
-		AllowManualLayoutCandidates: true,
+		FinalFocusCommandKey: trace.Command,
 	})
 	if len(violations) > 0 {
 		failAcceptance(t, scenario.FailInvariant, step, formatInvariantViolations(violations))
@@ -2300,9 +2297,8 @@ func (h *humanE2E) currentWorldStateForAudit(step string) w.WorldState {
 		Desired:     desired,
 		Observed:    observed,
 		Meta: w.ControllerMeta{
-			Epoch:                  checkpoint.Epoch,
-			DirtyScopes:            checkpoint.DirtyScopes,
-			ManualLayoutCandidates: checkpoint.ManualLayoutCandidates,
+			Epoch:       checkpoint.Epoch,
+			DirtyScopes: checkpoint.DirtyScopes,
 		},
 	}
 }
@@ -4410,24 +4406,6 @@ func assertAcceptedLayout(t *testing.T, storeDir string, project w.ProjectID, wo
 	}
 }
 
-func assertManualLayoutCandidate(t *testing.T, storeDir string, project w.ProjectID, workspace w.WorkspaceID, want []w.DesiredColumn) {
-	t.Helper()
-	checkpoint := readCurrentCheckpoint(t, storeDir)
-	wantKey := desiredLayoutKey(w.DesiredLayout{Workspace: workspace, Columns: want})
-	for _, candidate := range checkpoint.ManualLayoutCandidates {
-		if candidate.Project != project || candidate.Workspace != workspace {
-			continue
-		}
-		gotKey := desiredLayoutKey(w.DesiredLayout{Workspace: workspace, Columns: candidate.Columns})
-		if gotKey == wantKey {
-			return
-		}
-		failAcceptance(t, scenario.FailInvariant, "EVT.4.4/manual-layout-candidate",
-			fmt.Sprintf("manual layout candidate mismatch\ngot:  %s\nwant: %s", gotKey, wantKey))
-	}
-	failAcceptance(t, scenario.FailInvariant, "EVT.4.4/manual-layout-candidate",
-		fmt.Sprintf("manual layout candidate for %s/%s was not committed; checkpoint=%+v", project, workspace, checkpoint))
-}
 
 func readAcceptedLayouts(t *testing.T, storeDir string) map[w.ProjectID]map[w.WorkspaceID]w.DesiredLayout {
 	t.Helper()
