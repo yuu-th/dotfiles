@@ -248,6 +248,7 @@ func TestControllerRecordsNoCommitTraceOnExecutorError(t *testing.T) {
 				Windows: []w.DesiredWindow{{
 					ID:   w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1},
 					Kind: w.WindowAI,
+					App:  w.AppRequirement{BundleID: "com.mitchellh.ghostty"},
 					TitleContract: w.TitleContract{
 						Authority: w.TitleControllerOwned,
 						Expected:  "ai-1:p1",
@@ -257,12 +258,12 @@ func TestControllerRecordsNoCommitTraceOnExecutorError(t *testing.T) {
 		},
 	}
 	st := store.NewMemoryStore(desired)
-	adapter := &failingSpawnAdapter{Fake: wm.NewFake(env)}
+	adapter := &failingMoveAdapter{Fake: wm.NewFake(env)}
 	ctrl := New(env, desired, adapter, st)
 
 	result, err := ctrl.ApplyIntent(context.Background(), intent.Reconcile{})
 	if err == nil {
-		t.Fatal("ApplyIntent should fail executor spawn")
+		t.Fatal("ApplyIntent should fail executor move")
 	}
 	if result.TransactionID == "" {
 		t.Fatalf("failed transaction response missing transaction id: %+v", result)
@@ -342,6 +343,7 @@ func TestControllerMarksDirtyWhenFailureRefreshObserveFails(t *testing.T) {
 				Windows: []w.DesiredWindow{{
 					ID:   w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1},
 					Kind: w.WindowAI,
+					App:  w.AppRequirement{BundleID: "com.mitchellh.ghostty"},
 					TitleContract: w.TitleContract{
 						Authority: w.TitleControllerOwned,
 						Expected:  "ai-1:p1",
@@ -351,13 +353,13 @@ func TestControllerMarksDirtyWhenFailureRefreshObserveFails(t *testing.T) {
 		},
 	}
 	st := store.NewMemoryStore(desired)
-	adapter := &failingSpawnThenObserveAdapter{Fake: wm.NewFake(env)}
+	adapter := &failingMoveThenObserveAdapter{Fake: wm.NewFake(env)}
 	ctrl := New(env, desired, adapter, st)
 	ctrl.state.Meta.DirtyScopes = []w.DirtyScope{{Kind: "project", Key: "p1"}}
 
 	result, err := ctrl.ApplyIntent(context.Background(), intent.Reconcile{})
 	if err == nil {
-		t.Fatal("ApplyIntent should fail executor spawn")
+		t.Fatal("ApplyIntent should fail executor move")
 	}
 	if result.TransactionID == "" || !result.Trace.ObservationRefreshFailed || result.Trace.ObservationRefreshError == "" {
 		t.Fatalf("failed transaction response missing observation refresh failure evidence: %+v", result)
@@ -388,26 +390,54 @@ func (a *failingObserveAdapter) Observe(ctx context.Context) (w.ObservedWorld, e
 	return w.ObservedWorld{}, errors.New("forced observe failure")
 }
 
-type failingSpawnThenObserveAdapter struct {
+// movableWindowObservation injects a single managed AI window that matches
+// ai-1:p1 but sits on the WRONG workspace ("B" instead of its slot workspace),
+// so the planner emits a move-window-to-workspace (layout phase) op. A move is
+// NOT degradable under §6.8 (only per-window spawns are), so failing it
+// exercises the genuine executor-error hard-abort path that remains for
+// removal/layout ops.
+func movableWindowObservation() w.ObservedWorld {
+	return w.ObservedWorld{
+		Windows: map[w.LiveWindowID]w.ObservedWindow{
+			"live-1": {
+				ID:        "live-1",
+				Kind:      w.WindowAI,
+				Workspace: "B",
+				App:       w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"},
+				Title:     w.ObservedTitle{Value: "ai-1:p1"},
+			},
+		},
+		Workspaces: map[w.WorkspaceID]w.ObservedWorkspace{
+			"A": {ID: "A"}, "B": {ID: "B"},
+		},
+		Layouts: map[w.WorkspaceID]w.ObservedLayout{},
+	}
+}
+
+type failingMoveThenObserveAdapter struct {
 	*wm.Fake
 	observes atomic.Int32
 }
 
-func (a *failingSpawnThenObserveAdapter) Observe(ctx context.Context) (w.ObservedWorld, error) {
+func (a *failingMoveThenObserveAdapter) Observe(ctx context.Context) (w.ObservedWorld, error) {
 	if a.observes.Add(1) > 1 {
 		return w.ObservedWorld{}, errors.New("forced refresh observe failure")
 	}
-	return a.Fake.Observe(ctx)
+	return movableWindowObservation(), nil
 }
 
-func (a *failingSpawnThenObserveAdapter) Spawn(ctx context.Context, r wm.SpawnRequest) (w.LiveWindowID, error) {
-	return "", errors.New("forced spawn failure")
+func (a *failingMoveThenObserveAdapter) MoveToWorkspace(ctx context.Context, id w.LiveWindowID, ws w.WorkspaceID) error {
+	return errors.New("forced move failure")
 }
 
-type failingSpawnAdapter struct {
+type failingMoveAdapter struct {
 	*wm.Fake
 }
 
-func (a *failingSpawnAdapter) Spawn(ctx context.Context, r wm.SpawnRequest) (w.LiveWindowID, error) {
-	return "", errors.New("forced spawn failure")
+func (a *failingMoveAdapter) Observe(ctx context.Context) (w.ObservedWorld, error) {
+	return movableWindowObservation(), nil
+}
+
+func (a *failingMoveAdapter) MoveToWorkspace(ctx context.Context, id w.LiveWindowID, ws w.WorkspaceID) error {
+	return errors.New("forced move failure")
 }

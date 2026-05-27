@@ -444,6 +444,23 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			iterTrace.Operations[idx].StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			if err := c.Executor.Execute(ctx, oper, c.state.Observed, c.state.Desired); err != nil {
 				iterTrace.Operations[idx].FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+				// SSOT §6.8 graceful degradation: a single window spawn
+				// failure must NOT abort the whole transaction. Surface a
+				// per-window [INVARIANT] card (§6.8 bullet 3), refresh
+				// observation, and continue with the remaining ops so other
+				// windows still spawn (bullet 1). The still-missing window
+				// keeps generating a spawn op next iteration, so it rejoins
+				// the replan path (bullet 2) and, if it never recovers, the
+				// converge loop falls through to the §7.1 max-replans path.
+				// Removal/layout failures keep hard-abort because §6.10
+				// ordering depends on them.
+				if isDegradableSpawn(oper.Kind) {
+					c.appendActiveCards([]w.Card{spawnFailureCard(oper, err)})
+					if obs, oerr := c.Settler.Settle(ctx); oerr == nil {
+						c.state.Observed = identity.PopulateMatchedTo(c.state.Desired, obs)
+					}
+					continue
+				}
 				trace.PlanIterations = append(trace.PlanIterations, iterTrace)
 				return c.failNoCommitTrace(ctx, trace, "executor-error", fmt.Errorf("controller: op %s: %w", oper.ID, err), lastDiff)
 			}
@@ -1366,6 +1383,48 @@ func isMutationOperation(kind op.Kind) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+// isDegradableSpawn reports whether a failed op of this kind should be
+// tolerated under SSOT §6.8 graceful degradation: a single window spawn
+// failure must not abort the whole transaction. Scoped to the per-window
+// spawns (terminal/editor/browser/viewer) because §6.8 speaks specifically of
+// "1 つのウィンドウの spawn"; these are mutually independent within the spawn
+// phase (§6.10), so continuing siblings is safe. Removal and layout failures
+// keep hard-abort because §6.10 ordering depends on them, and cockpit spawn is
+// infrastructure (INV-06) rather than a per-project window.
+func isDegradableSpawn(kind op.Kind) bool {
+	switch kind {
+	case op.KindSpawnTerminal, op.KindSpawnEditor, op.KindSpawnBrowser, op.KindSpawnViewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// spawnFailureCard builds the user-visible [INVARIANT] card for a window that
+// failed to spawn under graceful degradation (SSOT §6.8 bullet 3). The card is
+// keyed by the desired window identity so retries across replan iterations
+// dedup into a single surfaced card.
+func spawnFailureCard(oper op.Operation, cause error) w.Card {
+	win := "?"
+	if oper.Target.DesiredWindow != nil {
+		d := *oper.Target.DesiredWindow
+		win = fmt.Sprintf("%s/%s/%d", d.Project, d.Kind, d.Index)
+	}
+	return w.Card{
+		Type:    w.CardTypeInvariant,
+		Subject: fmt.Sprintf("window %s failed to spawn — other windows continue, will retry", win),
+		Context: map[string]string{
+			"window":   win,
+			"cause":    cause.Error(),
+			"degraded": "true",
+		},
+		Actions: []w.CardAction{
+			{Key: "Enter", Label: "acknowledge"},
+			{Key: "Esc", Label: "dismiss"},
+		},
 	}
 }
 
