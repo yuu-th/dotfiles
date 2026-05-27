@@ -365,13 +365,24 @@ func TestHumanE2EArchiveUnarchiveSteps(t *testing.T) {
 	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.2")
 
-	h.run("unarchive", "projwm-test-main", "Q")
-	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	// SSOT §4.5 (操作10): unarchive returns the project to PARK state — it
+	// clears the archived flag but does NOT re-assign a slot or auto-redeploy
+	// windows ("state 更新のみ → 自動再展開しない"). Slot assignment is a
+	// separate explicit `assign <slot> <project>` step, so the project stays
+	// undeployed until then.
+	h.run("unarchive", "projwm-test-main")
+	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.1")
 
-	h.run("unarchive", "projwm-test-main", "Q")
-	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	// Idempotent: a second unarchive on an already-parked project is a no-op.
+	h.run("unarchive", "projwm-test-main")
+	waitForManagedGhosttyMissing(t, h.ctx, archivedMatchers)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.2")
+
+	// Re-assigning the slot is what redeploys the full project layout on Q.
+	h.run("assign", "Q", "projwm-test-main")
+	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.3")
 }
 
 func TestHumanE2EGhosttyLifecycleRemovalTraceSteps(t *testing.T) {

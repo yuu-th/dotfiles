@@ -1165,49 +1165,54 @@ func (s *SigWM) settleNewWindowByDiff(ctx context.Context, bundleID string, befo
 	return "", fmt.Errorf("sigwm.settle: timeout (last new count=%d) for bundle=%s", lastCount, bundleID)
 }
 
+// closeNewZedEmptyProjects closes the spurious "empty project" window that Zed
+// opens alongside the real project window when launched into a managed
+// --user-data-dir. That window carries the dev.zed.Zed bundle, so omniwm
+// catalogs and tiles it on the managed workspace, inflating the column count
+// and breaking the layout settle. It can appear slightly AFTER the project
+// window registers, so a single-shot query misses it — we poll briefly and
+// close every NEW empty Zed window. Close goes through s.CloseWindow
+// (closeWindowByAccessibility), which is scoped to the window's exact PID and
+// title, so it never touches the user's own Zed instance (a distinct process
+// with a distinct PID and the default user-data-dir).
 func (s *SigWM) closeNewZedEmptyProjects(ctx context.Context, before map[string]struct{}, hadEmptyBefore bool) error {
-	wins, err := s.queryWindows(ctx)
-	if err != nil {
-		return err
-	}
-	hasNewEmpty := false
-	for _, win := range wins {
-		if win.App.BundleID != "dev.zed.Zed" || (win.Title != "empty project" && win.Title != "") {
-			continue
-		}
-		if _, existed := before[win.ID]; !existed {
-			hasNewEmpty = true
-			break
-		}
-	}
-	if !hasNewEmpty {
+	_ = hadEmptyBefore // PID+title-scoped close no longer needs the pre-existing-empty guard.
+	if s.CloseWindow == nil {
 		return nil
 	}
-	if hadEmptyBefore {
-		return fmt.Errorf("pre-existing Zed empty project window prevents safe targeted cleanup: %w", ErrRealBackendBlocked)
-	}
-	script := `
-tell application "System Events"
-  tell process "Zed"
-    set wins to every window
-    repeat with w in wins
-      try
-        set wn to name of w
-        if wn is "empty project" or wn is "" then
-          try
-            set cb to value of attribute "AXCloseButton" of w
-            if cb is not missing value then
-              perform action "AXPress" of cb
-            end if
-          end try
-        end if
-      end try
-    end repeat
-  end tell
-end tell`
-	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("osascript close Zed empty project: %w (out: %s)", err, out)
+	attempted := map[string]struct{}{}
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		wins, err := s.queryWindows(ctx)
+		if err != nil {
+			return err
+		}
+		foundNew := false
+		for i := range wins {
+			win := wins[i]
+			if win.App.BundleID != "dev.zed.Zed" || (win.Title != "empty project" && win.Title != "") {
+				continue
+			}
+			if _, existed := before[win.ID]; existed {
+				continue
+			}
+			if _, did := attempted[win.ID]; did {
+				continue
+			}
+			attempted[win.ID] = struct{}{}
+			foundNew = true
+			// Best-effort: an unclosable stray is still tolerated by the
+			// managed-only filtering in waitSemanticColumns.
+			_ = s.CloseWindow(ctx, win)
+		}
+		if !foundNew {
+			time.Sleep(400 * time.Millisecond)
+		}
 	}
 	return nil
 }
@@ -1974,6 +1979,30 @@ func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.
 }
 
 func (s *SigWM) waitSemanticColumns(ctx context.Context, ws w.WorkspaceID, want [][]w.LiveWindowID, timeout time.Duration) error {
+	// Only the windows we are arranging participate in the settle check.
+	// Unmanaged windows that happen to live on the managed workspace — e.g. a
+	// stray Zed "empty project" window, or a user window — must not block
+	// convergence (SSOT external-window tolerance). Scope the observed columns
+	// to the LiveWindowIDs in `want`.
+	wantSet := map[string]struct{}{}
+	for _, col := range want {
+		for _, id := range col {
+			wantSet[string(id)] = struct{}{}
+		}
+	}
+	scopedManagedColumns := func(wins []ctlWindow, num int) []ctlWindow {
+		var scoped []ctlWindow
+		for _, win := range wins {
+			if win.Workspace.Number != num {
+				continue
+			}
+			if _, ok := wantSet[win.ID]; !ok {
+				continue
+			}
+			scoped = append(scoped, win)
+		}
+		return scoped
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -1989,13 +2018,7 @@ func (s *SigWM) waitSemanticColumns(ctx context.Context, ws w.WorkspaceID, want 
 		if err != nil {
 			return err
 		}
-		var scoped []ctlWindow
-		for _, win := range wins {
-			if win.Workspace.Number == num {
-				scoped = append(scoped, win)
-			}
-		}
-		gotCols := observedColumnsFromCtl(scoped)
+		gotCols := observedColumnsFromCtl(scopedManagedColumns(wins, num))
 		if semanticColumnsMatch(gotCols, want) {
 			return nil
 		}
@@ -2009,13 +2032,7 @@ func (s *SigWM) waitSemanticColumns(ctx context.Context, ws w.WorkspaceID, want 
 	if err != nil {
 		return err
 	}
-	var scoped []ctlWindow
-	for _, win := range wins {
-		if win.Workspace.Number == num {
-			scoped = append(scoped, win)
-		}
-	}
-	return fmt.Errorf("sigwm.ReorderColumns[%s]: semantic columns did not settle to desired layout (got=%s want=%s)", ws, formatObservedColumns(observedColumnsFromCtl(scoped)), formatLiveColumns(want))
+	return fmt.Errorf("sigwm.ReorderColumns[%s]: semantic columns did not settle to desired layout (got=%s want=%s)", ws, formatObservedColumns(observedColumnsFromCtl(scopedManagedColumns(wins, num))), formatLiveColumns(want))
 }
 
 func semanticColumnsMatch(got []w.ObservedColumn, want [][]w.LiveWindowID) bool {
