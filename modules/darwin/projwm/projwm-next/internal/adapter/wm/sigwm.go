@@ -862,11 +862,21 @@ func vivaldiManaged(pid int) bool {
 	}
 	vivaldiCacheMu.Lock()
 	defer vivaldiCacheMu.Unlock()
-	if hit, ok := vivaldiCache[pid]; ok {
+	if hit, ok := vivaldiCache[pid]; ok && hit {
 		return hit
 	}
 	managed := vivaldiInspectPID(pid)
-	vivaldiCache[pid] = managed
+	// Only memoize positive (managed) results. A managed Vivaldi process keeps
+	// its --user-data-dir argv for life, so true is stable. A false result can
+	// be transient or stale: the argv was momentarily unreadable, or (after a
+	// browser archive→redeploy) macOS reused a PID that a now-dead helper had
+	// been cached false under. Caching false would pin a freshly-spawned
+	// managed browser as WindowExternal forever, so identity.Resolve returns
+	// ClassMissing and the planner re-emits spawn-browser every replan (the
+	// S2 archive→unarchive→assign redeploy loop). Re-inspect on false (~3ms).
+	if managed {
+		vivaldiCache[pid] = managed
+	}
 	return managed
 }
 
