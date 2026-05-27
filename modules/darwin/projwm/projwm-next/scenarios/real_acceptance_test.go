@@ -3145,7 +3145,11 @@ func pidStillAlive(pid int) bool {
 // own Vivaldi sessions (default profile, etc.) are not affected.
 func killVivaldiAutomationProcesses(t *testing.T) {
 	t.Helper()
-	const profileMarker = "--profile-directory=" + browseradapter.VivaldiAutomationProfile
+	// B-05: the managed Vivaldi now launches with --user-data-dir=<...
+	// projwm-next/vivaldi-data> (a forked, isolated process), so match on the
+	// user-data-dir leaf. The old --profile-directory marker never matched the
+	// single-process Vivaldi and left the automation window leaking.
+	const profileMarker = browseradapter.AutomationUserDataLeaf
 	out, err := exec.Command("ps", "-axo", "pid=,args=").Output()
 	if err != nil {
 		t.Logf("killVivaldiAutomationProcesses: ps failed (best-effort): %v", err)
