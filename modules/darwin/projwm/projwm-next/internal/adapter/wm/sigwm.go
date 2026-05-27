@@ -184,20 +184,40 @@ func (CmdAppLauncher) Launch(ctx context.Context, appPath, bundleID string, args
 	return nil
 }
 
+// zedManagedSettingsJSON is the projwm-managed Zed settings (SSOT §4.4 editor):
+// restore_on_startup="none" keeps the managed Zed from reopening unrelated
+// prior windows, and an empty auto_install_extensions isolates it from the
+// user's normal Zed configuration. Written into the projwm-private
+// --user-data-dir so the managed instance never shares state with the user's Zed.
+const zedManagedSettingsJSON = `{
+  "restore_on_startup": "none",
+  "auto_install_extensions": {}
+}
+`
+
 func (CmdAppLauncher) LaunchZedProject(ctx context.Context, projectPath string, extraArgs []string) error {
 	dataDir, err := ensureZedDataDir()
 	if err != nil {
 		return err
 	}
-	args := []string{"-n", "--user-data-dir", dataDir}
-	args = append(args, extraArgs...)
-	args = append(args, projectPath)
+	args := zedLaunchArgs(dataDir, projectPath, extraArgs)
 	cmd := exec.CommandContext(ctx, "zed", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("zed %s: %w (out: %s)", strings.Join(args, " "), err, string(out))
 	}
 	return nil
+}
+
+// zedLaunchArgs builds the `zed` argv for a managed editor launch (SSOT §4.4):
+// `-n` forces a NEW window (a bare `zed <cwd>` would reuse an existing
+// workspace), and `--user-data-dir` points at the projwm-private dir so the
+// managed Zed is isolated from the user's normal Zed state.
+func zedLaunchArgs(dataDir, projectPath string, extraArgs []string) []string {
+	args := []string{"-n", "--user-data-dir", dataDir}
+	args = append(args, extraArgs...)
+	args = append(args, projectPath)
+	return args
 }
 
 func ensureZedDataDir() (string, error) {
@@ -209,11 +229,7 @@ func ensureZedDataDir() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("zed: create data dir %q: %w", dir, err)
 	}
-	settings := []byte(`{
-  "restore_on_startup": "none",
-  "auto_install_extensions": {}
-}
-`)
+	settings := []byte(zedManagedSettingsJSON)
 	for _, path := range []string{
 		filepath.Join(dir, "settings.json"),
 		filepath.Join(dir, "config", "settings.json"),
