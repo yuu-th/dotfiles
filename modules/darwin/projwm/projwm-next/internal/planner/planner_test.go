@@ -1006,3 +1006,181 @@ func hasOperationKind(ops []op.Operation, kind op.Kind) bool {
 	}
 	return false
 }
+
+// hierShell builds a controller-owned Ghostty shell DesiredWindow for the
+// state-hierarchy owner tests below.
+func hierShell(project string, index int) w.DesiredWindow {
+	return w.DesiredWindow{
+		ID:   w.DesiredWindowID{Project: w.ProjectID(project), Kind: w.WindowShell, Index: index},
+		Kind: w.WindowShell,
+		App:  w.AppRequirement{BundleID: "com.mitchellh.ghostty"},
+		TitleContract: w.TitleContract{
+			Authority: w.TitleControllerOwned,
+			Expected:  "shell-" + itoa(index) + ":" + project,
+		},
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
+}
+
+// TestPlanHierarchyL1BeforeL2BeforeL3 is an owner test for SSOT §6.3 (state
+// hierarchy) — previously §10.9 GAP-15. The transaction loop repairs all three
+// levels but with strict priority L1 (identity: spawn/close) > L2 (placement:
+// move) > L3 (ordering: reorder). A single reconcile that needs all three must
+// emit them so that every spawn precedes every move and every move precedes
+// every reorder.
+func TestPlanHierarchyL1BeforeL2BeforeL3(t *testing.T) {
+	desired := w.DesiredWorld{
+		ActiveProfile: "work",
+		Profiles: map[w.ProfileID]w.DesiredProfile{
+			"work": {ID: "work", Assignments: map[w.SlotID]w.ProjectID{
+				"Q": "p_spawn", "W": "p_move", "E": "p_reorder",
+			}},
+		},
+		Projects: map[w.ProjectID]w.DesiredProject{
+			"p_spawn":   {ID: "p_spawn", Windows: []w.DesiredWindow{hierShell("p_spawn", 1)}},      // missing → spawn (L1)
+			"p_move":    {ID: "p_move", Windows: []w.DesiredWindow{hierShell("p_move", 1)}},        // wrong ws → move (L2)
+			"p_reorder": {ID: "p_reorder", Windows: []w.DesiredWindow{hierShell("p_reorder", 1), hierShell("p_reorder", 2)}}, // mis-ordered → reorder (L3)
+		},
+	}
+	plan, err := Plan(w.WorldState{
+		Environment: w.ManagedEnvironment{
+			WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+			Apps: w.AppEnvironment{ManagedApps: []w.ManagedAppPolicy{{
+				Capability: w.CapabilityTerminal,
+				BundleID:   "com.mitchellh.ghostty",
+				LifecycleRemoval: w.LifecycleRemovalPolicy{
+					Allowed: true, Method: w.LifecycleRemovalAXCloseGuarded,
+					AllowedKinds: []w.WindowKind{w.WindowAI, w.WindowShell, w.WindowViewer},
+				},
+			}}},
+			Workspaces: w.WorkspaceEnvironment{
+				Slots: []w.SlotSpec{
+					{ID: "Q", Workspace: "Q", Order: 1},
+					{ID: "W", Workspace: "W", Order: 2},
+					{ID: "E", Workspace: "E", Order: 3},
+				},
+			},
+		},
+		Desired: desired,
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				// p_move's window exists but on the wrong workspace ("3" ≠ "W").
+				"live-move": {ID: "live-move", Kind: w.WindowShell, Workspace: "3",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p_move"}},
+				// p_reorder's two windows exist on the correct workspace E but in reversed column order.
+				"live-r1": {ID: "live-r1", Kind: w.WindowShell, Workspace: "E",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p_reorder"}},
+				"live-r2": {ID: "live-r2", Kind: w.WindowShell, Workspace: "E",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-2:p_reorder"}},
+				// p_spawn's window is absent → spawn.
+			},
+			Layouts: map[w.WorkspaceID]w.ObservedLayout{
+				// reversed vs desired [[live-r1],[live-r2]] → triggers reorder.
+				"E": {Columns: []w.ObservedColumn{{Windows: []w.LiveWindowID{"live-r2"}}, {Windows: []w.LiveWindowID{"live-r1"}}}},
+			},
+		},
+	}, desired, "intent:reconcile", op.ReasonIntent)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	maxSpawn, minMove, maxMove, minReorder := -1, 1<<30, -1, 1<<30
+	sawSpawn, sawMove, sawReorder := false, false, false
+	for i, oper := range plan.Operations {
+		switch oper.Kind {
+		case op.KindSpawnTerminal:
+			sawSpawn = true
+			if i > maxSpawn {
+				maxSpawn = i
+			}
+		case op.KindMoveWindowToWorkspace:
+			sawMove = true
+			if i < minMove {
+				minMove = i
+			}
+			if i > maxMove {
+				maxMove = i
+			}
+		case op.KindReorderColumns:
+			sawReorder = true
+			if i < minReorder {
+				minReorder = i
+			}
+		}
+	}
+	if !sawSpawn || !sawMove || !sawReorder {
+		t.Fatalf("fixture must exercise spawn=%v move=%v reorder=%v; plan=%+v", sawSpawn, sawMove, sawReorder, plan.Operations)
+	}
+	if maxSpawn >= minMove {
+		t.Errorf("SSOT §6.3: L1 spawn (max idx %d) must precede L2 move (min idx %d)", maxSpawn, minMove)
+	}
+	if maxMove >= minReorder {
+		t.Errorf("SSOT §6.3: L2 move (max idx %d) must precede L3 reorder (min idx %d)", maxMove, minReorder)
+	}
+}
+
+// TestPlanHierarchyDefersOrderingUntilIdentityResolved is an owner test for
+// SSOT §6.3's priority rule: ordering (L3) is not attempted while a window in
+// that workspace is still missing (L1 unresolved). The planner emits the spawn
+// and defers reorder to a later round ("layout settles next round").
+func TestPlanHierarchyDefersOrderingUntilIdentityResolved(t *testing.T) {
+	desired := w.DesiredWorld{
+		ActiveProfile: "work",
+		Profiles: map[w.ProfileID]w.DesiredProfile{
+			"work": {ID: "work", Assignments: map[w.SlotID]w.ProjectID{"E": "p_reorder"}},
+		},
+		Projects: map[w.ProjectID]w.DesiredProject{
+			// shell-1 exists, shell-2 missing → identity not fully resolved.
+			"p_reorder": {ID: "p_reorder", Windows: []w.DesiredWindow{hierShell("p_reorder", 1), hierShell("p_reorder", 2)}},
+		},
+	}
+	plan, err := Plan(w.WorldState{
+		Environment: w.ManagedEnvironment{
+			WindowManager: w.WindowManagerEnvironment{Backend: "omniwm"},
+			Workspaces: w.WorkspaceEnvironment{
+				Slots: []w.SlotSpec{{ID: "E", Workspace: "E", Order: 1}},
+			},
+		},
+		Desired: desired,
+		Observed: w.ObservedWorld{
+			Windows: map[w.LiveWindowID]w.ObservedWindow{
+				"live-r1": {ID: "live-r1", Kind: w.WindowShell, Workspace: "E",
+					App: w.ObservedAppRef{BundleID: "com.mitchellh.ghostty"}, Title: w.ObservedTitle{Value: "shell-1:p_reorder"}},
+			},
+			// A layout exists but cannot be honoured until shell-2 is spawned.
+			Layouts: map[w.WorkspaceID]w.ObservedLayout{
+				"E": {Columns: []w.ObservedColumn{{Windows: []w.LiveWindowID{"live-r1"}}}},
+			},
+		},
+	}, desired, "intent:reconcile", op.ReasonIntent)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !hasOperationKind(plan.Operations, op.KindSpawnTerminal) {
+		t.Fatalf("SSOT §6.3: missing shell-2 must be spawned (L1); plan=%+v", plan.Operations)
+	}
+	if hasOperationKind(plan.Operations, op.KindReorderColumns) {
+		t.Errorf("SSOT §6.3: L3 reorder must be deferred while shell-2 (L1) is unresolved; plan=%+v", plan.Operations)
+	}
+}
