@@ -880,7 +880,14 @@ var vivaldiInspectFunc = func(pid int) bool {
 	if err != nil {
 		return true
 	}
-	return strings.Contains(string(out), "--profile-directory=projwm-next")
+	s := string(out)
+	// B-05: the managed Vivaldi is launched with a dedicated --user-data-dir
+	// (projwm-next/vivaldi-data) which Chromium retains in the persistent
+	// process argv — unlike --profile-directory, which is single-process and
+	// dropped. Match the user-data-dir leaf; keep the legacy profile flag for
+	// back-compat with any still-running pre-B-05 instance.
+	return strings.Contains(s, "projwm-next/vivaldi-data") ||
+		strings.Contains(s, "--profile-directory=projwm-next")
 }
 
 func vivaldiInspectPID(pid int) bool {

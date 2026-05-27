@@ -188,7 +188,19 @@ type VivaldiAdapter struct {
 	// When non-empty, OpenInProfile purges the Session_* / Tabs_* snapshot
 	// files before launch so Vivaldi does not restore tabs from a prior run.
 	ProfileBaseDir string
+	// UserDataDir is a projwm-private Chromium user-data-dir for the managed
+	// (automation) Vivaldi instance (B-05). Launching with `--user-data-dir`
+	// (instead of `--profile-directory` within the user's data dir) forks a
+	// SEPARATE Vivaldi process whose argv retains the flag — so it is both
+	// isolated from the user's Vivaldi AND detectable by vivaldiManaged
+	// (which inspects process args). Empty disables the isolation (tests).
+	UserDataDir string
 }
+
+// AutomationUserDataLeaf is the stable path suffix of the managed Vivaldi
+// user-data-dir. wm.vivaldiInspectFunc matches process argv against this
+// substring to classify automation-profile windows.
+const AutomationUserDataLeaf = "projwm-next/vivaldi-data"
 
 const VivaldiAutomationProfile = "projwm-next"
 
@@ -217,8 +229,11 @@ func NewVivaldiAdapterWithWM(privateStore PrivatePayloadStore, opener AppOpener,
 		closer = CmdVivaldiWindowCloser{}
 	}
 	profileBaseDir := ""
+	userDataDir := ""
 	if home, err := os.UserHomeDir(); err == nil {
 		profileBaseDir = filepath.Join(home, "Library", "Application Support", "Vivaldi")
+		// B-05: dedicated, isolated user-data-dir for the managed Vivaldi.
+		userDataDir = filepath.Join(home, ".cache", filepath.FromSlash(AutomationUserDataLeaf))
 	}
 	return &VivaldiAdapter{
 		PrivateStore:   privateStore,
@@ -229,6 +244,7 @@ func NewVivaldiAdapterWithWM(privateStore PrivatePayloadStore, opener AppOpener,
 		SettleTimeout:  15 * time.Second,
 		DisappearWait:  15 * time.Second,
 		ProfileBaseDir: profileBaseDir,
+		UserDataDir:    userDataDir,
 	}
 }
 
@@ -295,10 +311,24 @@ func (a *VivaldiAdapter) OpenInProfile(ctx context.Context, profile string, payl
 	// Purge leftover session snapshots so Vivaldi opens a fresh window
 	// containing only the requested URLs. Only safe when no automation window
 	// is currently open (live Vivaldi would be writing to these files).
-	if a.ProfileBaseDir != "" && len(beforeIDs) == 0 {
-		purgeSessionFiles(filepath.Join(a.ProfileBaseDir, profile))
+	if len(beforeIDs) == 0 {
+		if a.UserDataDir != "" {
+			purgeSessionFiles(filepath.Join(a.UserDataDir, "Default"))
+		} else if a.ProfileBaseDir != "" {
+			purgeSessionFiles(filepath.Join(a.ProfileBaseDir, profile))
+		}
 	}
-	args := []string{"--new-window", "--profile-directory=" + profile}
+	// B-05: launch the managed Vivaldi with a dedicated --user-data-dir. This
+	// forks a SEPARATE process (isolated from the user's Vivaldi) whose argv
+	// retains --user-data-dir, so vivaldiManaged can classify the window as a
+	// managed browser (a per-window --profile-directory would not, because
+	// Vivaldi is single-process and drops the flag from the persistent argv).
+	var args []string
+	if a.UserDataDir != "" {
+		args = []string{"--new-window", "--user-data-dir=" + a.UserDataDir}
+	} else {
+		args = []string{"--new-window", "--profile-directory=" + profile}
+	}
 	args = append(args, payload.URLs...)
 	if err := a.Opener.Open(ctx, a.AppPath, args...); err != nil {
 		return OpenResult{}, redactedAppOpenError(ctx, err)

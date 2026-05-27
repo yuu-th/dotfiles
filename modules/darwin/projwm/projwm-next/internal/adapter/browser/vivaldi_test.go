@@ -72,12 +72,15 @@ func TestVivaldiAdapterOpenInProfileUsesPrivatePayload(t *testing.T) {
 	}
 	opener := &recordingAppOpener{}
 	adapter := NewVivaldiAdapter(store, opener, "/Applications/Vivaldi.app")
+	// B-05: pin a deterministic private user-data-dir so the managed Vivaldi
+	// launches as an isolated, detectable process.
+	adapter.UserDataDir = t.TempDir()
 
 	if _, err := adapter.OpenInProfile(ctx, VivaldiAutomationProfile, token); err != nil {
 		t.Fatalf("OpenInProfile: %v", err)
 	}
 
-	want := []string{"--new-window", "--profile-directory=" + VivaldiAutomationProfile, "https://example.test/one", "https://example.test/two"}
+	want := []string{"--new-window", "--user-data-dir=" + adapter.UserDataDir, "https://example.test/one", "https://example.test/two"}
 	if opener.appPath != "/Applications/Vivaldi.app" || !reflect.DeepEqual(opener.args, want) {
 		t.Fatalf("open args = path=%q args=%v, want path=/Applications/Vivaldi.app args=%v", opener.appPath, opener.args, want)
 	}
