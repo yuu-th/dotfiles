@@ -1036,13 +1036,23 @@ func runOmniwmRecovery(ctx context.Context, healer wm.OmniwmSelfHealer, env w.Ma
 			if probe.TrackedApps[app.BundleID] {
 				continue
 			}
-			// B-05: never blind-relaunch the browser (Vivaldi). A bare
-			// `open <Vivaldi.app>` opens the user's DEFAULT profile (no
-			// --user-data-dir), producing an undetectable, unmanaged window
-			// on a non-test workspace. The managed browser is spawned only by
-			// the planner via OpenInProfile(--user-data-dir); leave its
-			// registration to that path.
-			if app.Capability == w.CapabilityBrowser || app.BundleID == "com.vivaldi.Vivaldi" {
+			// SSOT §8.9: recovery is the transaction loop's responsibility —
+			// it observes existing windows, recreates missing ones, and moves
+			// present ones back to the correct slot. A bare `open <app>` here
+			// cannot do that for the user-shared, multi-window managed apps
+			// (Vivaldi / Ghostty / Zed): it targets the user's DEFAULT instance
+			// and produces an UNMANAGED window — browser: wrong profile (B-05);
+			// Zed: an "empty project" window; Ghostty: an untitled window — on
+			// whatever workspace is focused. That stray window inflates the
+			// managed workspace's column count (breaking layout settle), and
+			// lands on / disturbs the user's other workspaces (B-06). After an
+			// omniwm restart these apps are re-registered by omniwm's own
+			// window re-catalog plus the next reconcile, not by relaunch.
+			switch {
+			case app.Capability == w.CapabilityBrowser,
+				app.BundleID == "com.vivaldi.Vivaldi",
+				app.BundleID == "com.mitchellh.ghostty",
+				app.BundleID == "dev.zed.Zed":
 				continue
 			}
 			if app.AppPath == "" {
