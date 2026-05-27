@@ -369,15 +369,85 @@ func TestHumanE2ESSOTCrashRecoverySteps(t *testing.T) {
 	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 
-	// The SSOT S10 row requires tmux and Zed crash recovery in addition to
-	// Ghostty. Keep the test red until those two crash fixtures are isolated
-	// enough to run without killing unrelated user tmux/Zed state.
 	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
-		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/desired-authority",
+		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/ghostty-desired-authority",
 			fmt.Sprintf("Ghostty crash recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
 	}
-	failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/tmux-zed-crash-fixtures",
-		"SSOT §9.1 S10 also requires tmux-server and Zed crash recovery; dedicated isolated fixtures are not implemented yet")
+
+	// SSOT §8.9 tmux-server crash: managed tmux sessions vanish; the
+	// transaction loop recreates them (INV-03) and Ghostty reconnects — the
+	// windows are NOT respawned. Isolated to the test project's OWN sessions
+	// (never the user's tmux server): we kill only the projwm-test-main
+	// sessions by name.
+	managedSessions := []string{"ai-1/projwm-test-main", "shell-1/projwm-test-main", "shell-2/projwm-test-main"}
+	present := map[string]bool{}
+	for _, s := range tmuxListSessions(t) {
+		present[s] = true
+	}
+	var killable []string
+	for _, s := range managedSessions {
+		if present[s] {
+			killable = append(killable, s)
+		}
+	}
+	if len(killable) == 0 {
+		failAcceptance(t, scenario.FailFixtureInvalid, "SSOT-S10/tmux-precondition",
+			fmt.Sprintf("expected managed tmux sessions before crash; have %v", tmuxListSessions(t)))
+	}
+	for _, s := range killable {
+		killTmuxSession(t, s)
+	}
+	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
+	waitForTmuxSessions(t, killable, 30*time.Second)
+	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
+		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/tmux-desired-authority",
+			fmt.Sprintf("tmux crash recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
+	}
+	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S10-tmux")
+
+	// SSOT §8.9 Zed crash: SAFETY BOUNDARY — Zed is single-process (GPUI
+	// ignores --user-data-dir; the managed Zed windows live in the user's
+	// own zed process, observed pid is shared). terminateLiveWindowProcess on
+	// a managed Zed window would SIGTERM the user's editor and lose unsaved
+	// work. A real Zed-crash fixture therefore requires a dedicated session
+	// with no user Zed running; it is intentionally NOT exercised here.
+	failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/zed-crash-needs-clean-env",
+		"SSOT §9.1 S10 Zed-crash recovery is unsafe to exercise while the user's Zed is running (Zed is single-process; killing the managed window's process would kill the user's editor). Requires a dedicated clean session.")
+}
+
+// killTmuxSession kills a single tmux session by exact name (test project
+// sessions only — never the user's tmux server).
+func killTmuxSession(t *testing.T, name string) {
+	t.Helper()
+	_ = exec.Command("tmux", "kill-session", "-t", name).Run()
+}
+
+// waitForTmuxSessions polls until every wanted session name is present again,
+// proving the transaction loop recreated the crashed sessions (SSOT §8.9 /
+// INV-03).
+func waitForTmuxSessions(t *testing.T, want []string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		have := map[string]bool{}
+		for _, s := range tmuxListSessions(t) {
+			have[s] = true
+		}
+		all := true
+		for _, w := range want {
+			if !have[w] {
+				all = false
+				break
+			}
+		}
+		if all {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	failAcceptance(t, scenario.FailInvariant, "SSOT-S10/tmux-recreate",
+		fmt.Sprintf("tmux sessions not recreated within %s: want %v have %v", timeout, want, tmuxListSessions(t)))
 }
 
 func (h *humanE2E) submitRawIntent(kind string, payload json.RawMessage) (ipc.IntentResponse, error) {
