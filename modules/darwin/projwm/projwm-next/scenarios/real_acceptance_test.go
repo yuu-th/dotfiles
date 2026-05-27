@@ -3901,9 +3901,20 @@ func assertStartupProvenance(t *testing.T, h *humanE2E) {
 		failAcceptance(t, scenario.FailObservabilityGap, "AUTH.7.1/startup-provenance", err.Error())
 	}
 	current := currentGenerationName(t, h.storeDir)
-	if provenance.SchemaVersion != 1 || provenance.Mode != "production" || provenance.ManifestDigest != h.manifestDigest || provenance.StoreKind != "production" || provenance.CurrentGeneration != current || provenance.SocketPath != h.socketPath || provenance.Backend != "real" || provenance.LaunchdLabel != "human-e2e" || provenance.ManagedByManifest || provenance.DesiredWorldInjected {
+	if provenance.SchemaVersion != 1 || provenance.Mode != "production" || provenance.ManifestDigest != h.manifestDigest || provenance.StoreKind != "production" || provenance.SocketPath != h.socketPath || provenance.Backend != "real" || provenance.LaunchdLabel != "human-e2e" || provenance.ManagedByManifest || provenance.DesiredWorldInjected {
 		failAcceptance(t, scenario.FailObservabilityGap, "AUTH.7.1/startup-provenance",
 			fmt.Sprintf("startup provenance does not match real harness production-shaped inputs: %+v current=%s", provenance, current))
+	}
+	// The store commits a checkpoint generation on EVERY converge (SSOT §7.1
+	// per-transaction generations), so a windows-changed event fired by the
+	// re-spawned recovery windows advances `current` past the generation the
+	// daemon recorded in startup provenance. Requiring exact equality is a
+	// race; the correct invariant is monotonic — the recorded startup
+	// generation must not be AHEAD of the current store generation. (Zero-
+	// padded "G000NNN" ids order correctly under string comparison.)
+	if provenance.CurrentGeneration == "" || string(provenance.CurrentGeneration) > current {
+		failAcceptance(t, scenario.FailObservabilityGap, "AUTH.7.1/startup-provenance",
+			fmt.Sprintf("startup provenance generation %q is empty or ahead of current store generation %s: %+v", provenance.CurrentGeneration, current, provenance))
 	}
 	if !filepath.IsAbs(provenance.ManifestPath) || !filepath.IsAbs(provenance.StoreDir) || strings.Contains(h.provenancePath, "/tmp/") {
 		failAcceptance(t, scenario.FailUnsafeToRun, "AUTH.7.1/startup-provenance",
