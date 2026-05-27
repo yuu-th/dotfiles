@@ -500,6 +500,11 @@ func (s *FileStore) publish(ctx context.Context, staged StagedCommit) error {
 	if err := writeFileAtomic(filepath.Join(s.root, "CURRENT"), []byte(manifest.Generation+"\n")); err != nil {
 		return err
 	}
+	// SSOT §8.1 / §3.5 case D: maintain a backup generation pointer so a
+	// torn or corrupted CURRENT can be recovered on next open (readCurrentName).
+	if err := writeFileAtomic(filepath.Join(s.root, "CURRENT.bak"), []byte(manifest.Generation+"\n")); err != nil {
+		return err
+	}
 	return fsyncDir(s.root)
 }
 
@@ -615,16 +620,49 @@ func migrateDesiredTitleContracts(d *w.DesiredWorld) {
 	}
 }
 
-func readCurrentName(root string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(root, "CURRENT"))
+// readPointer reads a generation-pointer file (CURRENT / CURRENT.bak),
+// returning the trimmed name and whether it is a well-formed pointer.
+func readPointer(path string) (string, bool) {
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("store/file: read CURRENT: %w", err)
+		return "", false
 	}
 	name := strings.TrimSpace(string(b))
 	if name == "" || strings.Contains(name, "/") {
-		return "", fmt.Errorf("store/file: invalid CURRENT value %q", name)
+		return "", false
 	}
-	return name, nil
+	return name, true
+}
+
+// generationExists reports whether the named generation has a readable manifest.
+func generationExists(root, name string) bool {
+	if name == "" || strings.Contains(name, "/") {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, "generations", name, artifactManifest))
+	return err == nil
+}
+
+// readCurrentName resolves the current generation pointer. SSOT §3.5 case D /
+// §8.1: if CURRENT is missing, malformed, or names a generation that does not
+// exist on disk (e.g. a torn write or external corruption), fall back to the
+// CURRENT.bak backup pointer (maintained on every commit) and repair CURRENT
+// from it so subsequent reads are consistent.
+func readCurrentName(root string) (string, error) {
+	name, ok := readPointer(filepath.Join(root, "CURRENT"))
+	if ok && generationExists(root, name) {
+		return name, nil
+	}
+	bak, bakOK := readPointer(filepath.Join(root, "CURRENT.bak"))
+	if bakOK && generationExists(root, bak) {
+		// Repair CURRENT from the backup pointer (best-effort).
+		_ = writeFileAtomic(filepath.Join(root, "CURRENT"), []byte(bak+"\n"))
+		return bak, nil
+	}
+	if !ok && !bakOK {
+		return "", fmt.Errorf("store/file: CURRENT and CURRENT.bak are both unreadable")
+	}
+	return "", fmt.Errorf("store/file: CURRENT %q / CURRENT.bak %q do not name an existing generation", name, bak)
 }
 
 func validateManifestFiles(dir string, manifest generationManifest) error {
