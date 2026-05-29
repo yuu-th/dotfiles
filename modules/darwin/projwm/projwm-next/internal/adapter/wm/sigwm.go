@@ -1770,6 +1770,20 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 	if len(want) == 0 {
 		return nil
 	}
+	// Focus the target workspace before observing or moving columns. OmniWM
+	// returns a focused workspace's windows in column order, but reports a
+	// stale ordering for an inactive workspace; observing/moving an unfocused
+	// workspace is the root of the "order did not settle" reorder failures.
+	// SSOT §4.6 preMoveGrace lets niri propagate the focus change before we
+	// observe. We do NOT restore the caller's focus afterwards: the column
+	// moves naturally leave focus on this workspace (as before this change),
+	// and restoring would point Observe at an inactive workspace during the
+	// post-reorder verify. The transaction loop sets the intended final focus
+	// in Phase C.
+	if err := s.focusWorkspaceLocked(ctx, ws); err != nil {
+		return fmt.Errorf("sigwm.ReorderColumns[%s]: focus workspace: %w", ws, err)
+	}
+	time.Sleep(reorderFocusGrace)
 	current, err := s.liveOrderInWorkspace(ctx, ws)
 	if err != nil {
 		return err
@@ -2012,6 +2026,14 @@ func (s *SigWM) liveOrderInWorkspace(ctx context.Context, ws w.WorkspaceID) ([]w
 	if err != nil {
 		return nil, err
 	}
+	// OmniWM returns a focused workspace's windows in column order (left-to-
+	// right); we rely on that order directly. It is only reliable while the
+	// workspace is active — OmniWM reports stale ordering for inactive
+	// workspaces — which is why ReorderColumns focuses the workspace before
+	// observing. We deliberately do NOT re-sort by frame.x: on multi-display
+	// layouts the frame.x of a focused workspace's columns does not map
+	// monotonically to the query order, so sorting by it inverts the layout
+	// (verified on real OmniWM — it regresses the R1-R4 reorder specs).
 	out := []w.LiveWindowID{}
 	for _, cw := range wins {
 		if cw.Workspace.Number == num {
@@ -2026,6 +2048,11 @@ func (s *SigWM) liveOrderInWorkspace(ctx context.Context, ws w.WorkspaceID) ([]w
 // SigWM.SettleTimeout is configured lower (e.g. an aggressive unit-test
 // override). Caller can still pass a larger value and we honor it.
 const reorderColumnSettleTimeout = 5 * time.Second
+
+// reorderFocusGrace mirrors SSOT §4.6 preMoveGrace (150ms): the wait after
+// focusing the target workspace so niri can propagate the focus change into
+// accurate per-window frame.x before ReorderColumns observes the layout.
+const reorderFocusGrace = 150 * time.Millisecond
 
 func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.LiveWindowID, timeout time.Duration) error {
 	if timeout < reorderColumnSettleTimeout {
@@ -2217,6 +2244,14 @@ func managedOrderSettled(got, want []w.LiveWindowID) bool {
 func (s *SigWM) FocusWorkspace(ctx context.Context, ws w.WorkspaceID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.focusWorkspaceLocked(ctx, ws)
+}
+
+// focusWorkspaceLocked focuses a workspace assuming s.mu is already held. It is
+// used both by the public FocusWorkspace and by ReorderColumns (which holds the
+// lock for the whole operation); calling FocusWorkspace from there would
+// self-deadlock on the non-reentrant mutex.
+func (s *SigWM) focusWorkspaceLocked(ctx context.Context, ws w.WorkspaceID) error {
 	spec, ok := s.Env.WorkspaceByID(ws)
 	if !ok {
 		return fmt.Errorf("sigwm.FocusWorkspace: unknown workspace %q", ws)

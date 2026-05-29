@@ -645,6 +645,7 @@ func TestSigWM_ReorderColumns_SingleWindowColumns(t *testing.T) {
 	m.set("query windows", after)
 	m.set("query focused-window", okEnvelope("focused-window", `{"window":{"id":"b"}}`))
 	m.set("window focus", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
+	m.set("workspace focus-name", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
 	m.set("command move-column", []byte(`{"ok":true,"result":{"kind":"move-column","payload":{}}}`))
 	sw := NewSigWM(env, m, &mockLauncher{})
 	if err := sw.ReorderColumns(context.Background(), "ws-A", [][]w.LiveWindowID{{"b"}, {"a"}}); err != nil {
