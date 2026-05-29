@@ -194,7 +194,7 @@ var ssotLedger = []ledgerItem{
 	// violations from creeping in; promotion to statusCovered requires
 	// rewriting those two files to use projwm-next-test-* (tracked under
 	// slice S29 in queue/ssot-slice-plan.md).
-	{ID: "ISO-01", Section: "§10.8/§10.9 GAP-26", Layer: "L0", Subject: "L3/L4 tests use projwm-next-test prefix for project IDs, sessions, and titles", TestPath: "internal/ssottest/test_isolation_audit_test.go", TestName: "TestSSOTTestIsolationAuditEnforcesPrefixes", Status: statusRed, Evidence: evidenceBehavior},
+	{ID: "ISO-01", Section: "§10.8/§10.9 GAP-26", Layer: "L0", Subject: "L3/L4 tests use projwm-next-test prefix for project IDs, sessions, and titles (allowlist 空、audit が strict mode で pass)", TestPath: "internal/ssottest/test_isolation_audit_test.go", TestName: "TestSSOTTestIsolationAuditEnforcesPrefixes", Status: statusCovered, Evidence: evidenceBehavior},
 }
 
 func TestSSOTLedgerItemsAreExplicitlyClassified(t *testing.T) {

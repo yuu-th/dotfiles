@@ -63,20 +63,12 @@ func TestSSOTTestIsolationAuditEnforcesPrefixes(t *testing.T) {
 		regexp.MustCompile(`"(ai|shell|editor|viewer|browser)-[0-9]+:manaflow"`),
 	}
 	// Files whitelisted to refer to a specific production identifier.
-	productionAuditAllowlist := map[string]bool{
-		// The legacy audit file pre-dates SSOT §10.8 and references
-		// production project IDs for read-only assertions against the
-		// launchd-loaded daemon.
-		"scenarios/real_acceptance_test.go": true,
-		// SSOT-driven acceptance flow uses "dotfiles"/"manaflow" as
-		// project names in the test daemon's sandboxed store. Because
-		// tmux session names are host-global, this still clashes with
-		// the user's running production daemon. Tracked as a known gap
-		// to fix in slice S29 (L4 acceptance ledger promotion): replace
-		// "dotfiles"/"manaflow" with "projwm-next-test-*" project IDs
-		// throughout ssot_real_acceptance_test.go and its helpers.
-		"scenarios/ssot_real_acceptance_test.go": true,
-	}
+	// Previously needed when scenarios/* hard-coded "dotfiles" / "manaflow"
+	// as project IDs; the f83d3c2 ISO-01 rename moved L4 fixtures to
+	// projwm-next-test-{main,alt,emmo} so this allowlist is now empty.
+	// Any future production-shaped token in L3/L4 test files must be
+	// justified here.
+	productionAuditAllowlist := map[string]bool{}
 	repoRoot := findRepoRoot(t)
 	if repoRoot == "" {
 		t.Skip("repo root not located; meta-audit cannot proceed")
