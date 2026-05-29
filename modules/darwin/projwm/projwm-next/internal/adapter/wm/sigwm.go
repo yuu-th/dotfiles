@@ -881,23 +881,70 @@ func vivaldiManaged(pid int) bool {
 }
 
 // vivaldiInspectPID shells out to `ps -p PID -o args=` and inspects
-// the result for `--profile-directory=projwm-next`. Default open-tilted
-// so unknown / unreadable PIDs are treated as managed (same as before).
+// the result for `--user-data-dir=...projwm-next/vivaldi-data` (B-05) or
+// the legacy `--profile-directory=projwm-next`. Default open-tilted so
+// unknown / unreadable PIDs are treated as managed (same as before).
+//
+// macOS / Chromium quirk: only the MAIN Vivaldi process carries
+// `--user-data-dir` in its argv. Renderer / GPU helpers have different
+// argv (e.g. `--type=renderer ...`) without that flag. If omniwm reports
+// a helper PID as the owner of a managed window (which it does briefly
+// during window creation, before the AX hierarchy settles to the main
+// process), a single-PID inspection misclassifies the window as
+// WindowExternal → planner Resolve returns ClassMissing → spawn-browser
+// is re-emitted → multiple managed Vivaldi processes accumulate (the S2
+// archive→unarchive→assign respawn loop). Walk up the parent chain
+// (up to a few hops) so a helper inherits its main process's identity.
 //
 // Override-able from tests via vivaldiInspectFunc.
 var vivaldiInspectFunc = func(pid int) bool {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
-	if err != nil {
+	hasManagedArgs := func(p int) (managed, found bool) {
+		out, err := exec.Command("ps", "-p", strconv.Itoa(p), "-o", "args=").Output()
+		if err != nil {
+			return false, false
+		}
+		s := string(out)
+		return strings.Contains(s, "projwm-next/vivaldi-data") ||
+			strings.Contains(s, "--profile-directory=projwm-next"), true
+	}
+	managed, found := hasManagedArgs(pid)
+	if managed {
 		return true
 	}
-	s := string(out)
-	// B-05: the managed Vivaldi is launched with a dedicated --user-data-dir
-	// (projwm-next/vivaldi-data) which Chromium retains in the persistent
-	// process argv — unlike --profile-directory, which is single-process and
-	// dropped. Match the user-data-dir leaf; keep the legacy profile flag for
-	// back-compat with any still-running pre-B-05 instance.
-	return strings.Contains(s, "projwm-next/vivaldi-data") ||
-		strings.Contains(s, "--profile-directory=projwm-next")
+	if !found {
+		// ps unreadable — keep the historical open-tilt behavior so a
+		// race during process startup doesn't misclassify.
+		return true
+	}
+	// PID is a Chromium helper without --user-data-dir; walk up to find a
+	// Vivaldi main process. Cap depth so we never wander outside Vivaldi.
+	cur := pid
+	for hop := 0; hop < 4; hop++ {
+		out, err := exec.Command("ps", "-p", strconv.Itoa(cur), "-o", "ppid=").Output()
+		if err != nil {
+			return false
+		}
+		ppidStr := strings.TrimSpace(string(out))
+		ppid, err := strconv.Atoi(ppidStr)
+		if err != nil || ppid <= 1 {
+			return false
+		}
+		parentManaged, parentFound := hasManagedArgs(ppid)
+		if !parentFound {
+			return false
+		}
+		if parentManaged {
+			return true
+		}
+		// Continue only if the parent is still a Vivaldi process; otherwise
+		// we've left the chain and the original PID is external.
+		out2, err := exec.Command("ps", "-p", strconv.Itoa(ppid), "-o", "comm=").Output()
+		if err != nil || !strings.Contains(string(out2), "Vivaldi") {
+			return false
+		}
+		cur = ppid
+	}
+	return false
 }
 
 func vivaldiInspectPID(pid int) bool {
