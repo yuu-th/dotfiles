@@ -1797,6 +1797,18 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 			return fmt.Errorf("sigwm.ReorderColumns[%s]: desired window %s is not in workspace", ws, id)
 		}
 	}
+	// wantSet lets the move loop work in MANAGED-relative index space (SSOT
+	// §6.3: layout concerns only managed/desired windows). Any non-managed
+	// window interleaved on the workspace — a Zed "empty project" window, a
+	// user window that drifted in — is then transparent to the column
+	// placement arithmetic, matching managedOrderSettled (the settle check
+	// already filters to this set). Without this the raw index could exceed
+	// the managed target position and over-move a column past already-placed
+	// ones.
+	wantSet := make(map[w.LiveWindowID]bool, len(want))
+	for _, id := range want {
+		wantSet[id] = true
+	}
 	var orderErr error
 	for pass := 0; pass < 3; pass++ {
 		if err := s.unstackWorkspaceLocked(ctx, ws, len(want)); err != nil {
@@ -1807,13 +1819,28 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 			return err
 		}
 		for i, target := range want {
-			for attempts := 0; attempts < len(want)*2; attempts++ {
+			// Bound by total live windows, not just len(want): each move-column
+			// left advances the target one PHYSICAL column which may be a stray,
+			// so reaching managed-index i can take more steps than there are
+			// managed windows.
+			maxAttempts := len(current)*2 + 4
+			for attempts := 0; attempts < maxAttempts; attempts++ {
+				// Break on the MANAGED-relative index (strays ignored): a
+				// non-managed window to the left must never cause us to
+				// over-move the target past already-placed managed columns.
+				mj := managedIndexInOrder(current, wantSet, target)
+				if mj < 0 {
+					return fmt.Errorf("sigwm.ReorderColumns[%s]: lost target %s while reordering", ws, target)
+				}
+				if mj <= i {
+					break
+				}
+				// rawJ drives the physical-progress wait below: a single
+				// move-column left always lowers the target's raw index by one
+				// (swapping past whatever neighbor — managed or stray).
 				j := indexLive(current, target)
 				if j < 0 {
 					return fmt.Errorf("sigwm.ReorderColumns[%s]: lost target %s while reordering", ws, target)
-				}
-				if j <= i {
-					break
 				}
 				if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
 					return fmt.Errorf("sigwm.ReorderColumns[%s]: focus %s: %w", ws, target, err)
@@ -2202,6 +2229,25 @@ func indexLive(ids []w.LiveWindowID, target w.LiveWindowID) int {
 	for i, id := range ids {
 		if id == target {
 			return i
+		}
+	}
+	return -1
+}
+
+// managedIndexInOrder returns target's index among ONLY the managed windows
+// (those in set) of order, skipping any interleaved non-managed/stray windows.
+// Returns -1 if target is absent. This is the managed-relative position the
+// reorder move loop converges on, keeping it consistent with managedOrderSettled
+// (SSOT §6.3: layout concerns only managed windows) so strays are transparent.
+func managedIndexInOrder(order []w.LiveWindowID, set map[w.LiveWindowID]bool, target w.LiveWindowID) int {
+	idx := -1
+	for _, id := range order {
+		if !set[id] {
+			continue
+		}
+		idx++
+		if id == target {
+			return idx
 		}
 	}
 	return -1
