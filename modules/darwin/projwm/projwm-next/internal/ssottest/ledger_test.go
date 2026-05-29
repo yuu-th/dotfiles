@@ -140,7 +140,7 @@ var ssotLedger = []ledgerItem{
 	{ID: "ACC-S6", Section: "§9.1", Layer: "L4", Subject: "macOS restart recovery", TestPath: "scenarios/ssot_l4_acceptance_coverage_test.go", TestName: "TestSSOTL4AcceptanceCoverageGate", Status: statusRed, Evidence: evidenceMeta},
 	{ID: "ACC-S7", Section: "§9.1", Layer: "L4", Subject: "OmniWM restart recovery", TestPath: "scenarios/ssot_l4_acceptance_coverage_test.go", TestName: "TestSSOTL4AcceptanceCoverageGate", Status: statusRed, Evidence: evidenceMeta},
 	{ID: "ACC-S8", Section: "§9.1", Layer: "L4", Subject: "summon idempotency (実機 PASS; cycle anchor fix で replan-loop 解消)", TestPath: "scenarios/ssot_l4_acceptance_spec_test.go scenarios/ssot_real_acceptance_test.go", TestName: "TestSSOTL4S8SummonIdempotency", Status: statusRealOnly, Evidence: evidenceBehavior},
-	{ID: "ACC-S9", Section: "§9.1", Layer: "L4", Subject: "drift repair from outside slot", TestPath: "scenarios/ssot_l4_acceptance_coverage_test.go", TestName: "TestSSOTL4AcceptanceCoverageGate", Status: statusRed, Evidence: evidenceMeta},
+	{ID: "ACC-S9", Section: "§9.1", Layer: "L4", Subject: "drift repair from outside slot (実機 PASS; focus-race を waitForFocusedLiveWindowID で除去 + swappedStackDotfilesLayout の browser column を B-05 整合に修正)", TestPath: "scenarios/ssot_l4_acceptance_spec_test.go scenarios/real_acceptance_test.go", TestName: "TestSSOTL4S9DriftRepair", Status: statusRealOnly, Evidence: evidenceBehavior},
 	{ID: "ACC-S10", Section: "§9.1", Layer: "L4", Subject: "tmux/Ghostty/Zed crash recovery", TestPath: "scenarios/ssot_l4_acceptance_coverage_test.go", TestName: "TestSSOTL4AcceptanceCoverageGate", Status: statusRed, Evidence: evidenceMeta},
 
 	// Phase 5 S26-S29 horizontal coverage.

@@ -1083,6 +1083,13 @@ func TestHumanE2EManagedWindowCrossWorkspaceMoveSteps(t *testing.T) {
 
 	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	runOmni(t, h.ctx, "window", "focus", victim.ID)
+	// `window focus` is async — `command move-to-workspace` acts on whichever
+	// window is FOCUSED at that moment, so without a focus-settle wait the
+	// move can fire while focus is still the previous window (a different
+	// window gets moved to workspace 3, and the test waits forever for the
+	// shell to appear there). Mirror sigwm.go:1587-1660's focus → wait-focused
+	// → move pattern that the daemon uses for the same reason.
+	waitForFocusedLiveWindowID(t, h.ctx, victim.ID, 5*time.Second)
 	runOmni(t, h.ctx, "command", "move-to-workspace", "3")
 	waitForWindowTitleInWorkspace(t, h.ctx, "shell-1:projwm-test-main", "3", 10*time.Second)
 
@@ -2401,6 +2408,11 @@ func (h *humanE2E) performManualDotfilesLayout(expected e2eLayout) {
 	h.t.Helper()
 	target := liveWindowByTitle(h.t, h.ctx, "Q", "ai-1:projwm-test-main")
 	runOmni(h.t, h.ctx, "window", "focus", target.ID)
+	// Same focus-async race as in TestHumanE2EManagedWindowCrossWorkspaceMoveSteps:
+	// `command move-column` operates on the currently-focused window, so we must
+	// wait for focus to settle before issuing it (otherwise the previously-focused
+	// column moves instead of the AI one we just selected).
+	waitForFocusedLiveWindowID(h.t, h.ctx, target.ID, 5*time.Second)
 	runOmni(h.t, h.ctx, "command", "move-column", "left")
 	waitForLayout(h.t, h.ctx, "Q", expected, 20*time.Second)
 }
@@ -2418,7 +2430,10 @@ func swappedStackDotfilesLayout() e2eLayout {
 		colTitle("ai-1:projwm-test-main"),
 		colTitle("projwm-test-main"),
 		{{Title: "shell-2:projwm-test-main"}, {Title: "shell-1:projwm-test-main"}},
-		colTitle("browser-1:projwm-test-main"),
+		// B-05: Vivaldi shows the page title (e.g. "canary.example.test - Vivaldi"),
+		// not a projwm-controlled title — match by bundleID. Mirrors the same
+		// update humanIdealSlots["Q"] already received for the browser column.
+		colBundle("com.vivaldi.Vivaldi"),
 	}
 }
 
