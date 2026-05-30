@@ -25,6 +25,10 @@ type ControllerCheckpoint struct {
 	Epoch       w.Epoch
 	LastClean   *w.TransactionID
 	DirtyScopes []w.DirtyScope
+	// WindowProvenance is the validated-cache of (desired identity → live
+	// window) projwm spawned/adopted (SSOT §6.9.1 G1). Persisted so a
+	// daemon-only restart re-matches its live windows without respawning.
+	WindowProvenance map[w.DesiredWindowID]w.LiveWindowID `json:"windowProvenance,omitempty"`
 }
 
 // ControllerCommit is the controller's request to begin a commit.

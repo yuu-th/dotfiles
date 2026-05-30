@@ -103,6 +103,15 @@ func NewFromGeneration(env w.ManagedEnvironment, gen store.CommittedGeneration, 
 	c := New(env, gen.Desired, adapter, st)
 	c.state.Meta.Epoch = gen.Checkpoint.Epoch
 	c.state.Meta.DirtyScopes = append([]w.DirtyScope(nil), gen.Checkpoint.DirtyScopes...)
+	// SSOT §6.9.1 G1: restore the persisted provenance cache so a daemon
+	// restart re-matches its live windows instead of respawning.
+	if len(gen.Checkpoint.WindowProvenance) > 0 {
+		prov := make(map[w.DesiredWindowID]w.LiveWindowID, len(gen.Checkpoint.WindowProvenance))
+		for k, v := range gen.Checkpoint.WindowProvenance {
+			prov[k] = v
+		}
+		c.state.Meta.WindowProvenance = prov
+	}
 	return c
 }
 
@@ -164,6 +173,14 @@ func (c *Controller) ApplyIntent(ctx context.Context, in intent.Intent) (Transac
 		return result, recordErr
 	}
 	c.state.Desired = newDesired
+
+	// SSOT §6.9.1 E1/E2/E3/E5: an intent that removes a project/window or
+	// switches/unassigns a profile drops desired identities. Their provenance
+	// entries must clear as a consequence of the intent — independent of
+	// whether the converge loop later succeeds (the close path may have an
+	// unrelated gap). Prune against the freshly reduced desired set, and
+	// (below) preserve the result across a converge rollback.
+	c.pruneProvenanceInactive()
 
 	// 3a. ControllerMeta-only intents (DismissCard / DismissAllCards) act
 	// on the in-memory cards list, not DesiredWorld. Applied after the
@@ -456,6 +473,12 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			trace.AttemptedOperations++
 			iterTrace.Operations[idx].Attempted = true
 			iterTrace.Operations[idx].StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			// SSOT §6.9.1 C1: forward the up-to-date provenance cache so the
+			// semop pre-spawn check excludes a sibling editor's colliding
+			// same-title window when spawning the next editor of the same
+			// project. Refreshed per-op because captureProvenance records the
+			// just-spawned sibling before the next op runs.
+			c.Executor.Provenance = c.state.Meta.WindowProvenance
 			if err := c.Executor.Execute(ctx, oper, c.state.Observed, c.state.Desired); err != nil {
 				iterTrace.Operations[idx].FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 				// SSOT §6.8 graceful degradation: a single window spawn
@@ -471,7 +494,7 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 				if isDegradableSpawn(oper.Kind) {
 					c.appendActiveCards([]w.Card{spawnFailureCard(oper, err)})
 					if obs, oerr := c.Settler.Settle(ctx); oerr == nil {
-						c.state.Observed = identity.PopulateMatchedTo(c.state.Desired, obs)
+						c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, obs, c.state.Meta.WindowProvenance)
 					}
 					continue
 				}
@@ -489,7 +512,12 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 				trace.PlanIterations = append(trace.PlanIterations, iterTrace)
 				return c.failNoCommitTrace(ctx, trace, "settler-error", oerr, lastDiff)
 			}
-			c.state.Observed = identity.PopulateMatchedTo(c.state.Desired, obs)
+			c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, obs, c.state.Meta.WindowProvenance)
+			// SSOT §6.9.1 CAPTURE: after a successful spawn (or adopt-by-move
+			// into a slot), record which live window we produced for the op's
+			// target identity. Subsequent resolves prefer this window over a
+			// colliding same-title sibling. Guarded against double-record (A6).
+			c.captureProvenance(oper)
 		}
 
 		// Final settle.
@@ -498,7 +526,14 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			trace.PlanIterations = append(trace.PlanIterations, iterTrace)
 			return c.failNoCommitTrace(ctx, trace, "settler-error", err, lastDiff)
 		}
-		c.state.Observed = identity.PopulateMatchedTo(c.state.Desired, obs)
+		c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, obs, c.state.Meta.WindowProvenance)
+		c.captureSlotAdoptions()
+		// SSOT §6.9 / §6.9.1 validated-cache prune: drop any provenance entry
+		// whose desired identity is no longer an active (non-archived,
+		// slot-assigned) desired window, or whose remembered live ID is no
+		// longer observed. Self-heals stale entries and clears on
+		// archive/remove/profile-switch/unassign (E1/E2/E3/E5).
+		c.pruneProvenance()
 
 		// Verifier gates the transaction (specs §2-C). If predicted vs observed
 		// diverge, replan the next iteration. Skipped for fake backend, which
@@ -658,8 +693,9 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			Desired:         c.state.Desired,
 			AcceptedLayouts: c.state.Desired.AcceptedLayouts,
 			Checkpoint: store.ControllerCheckpoint{
-				Epoch:     c.state.Meta.Epoch,
-				LastClean: &txn,
+				Epoch:            c.state.Meta.Epoch,
+				LastClean:        &txn,
+				WindowProvenance: c.state.Meta.WindowProvenance,
 			},
 			Trace: trace,
 		}
@@ -802,9 +838,18 @@ func (c *Controller) restoreRollbackState(s rollbackState) {
 	//     defeats that contract.
 	preservedCards := append([]w.Card(nil), c.state.Meta.ActiveCards...)
 	preservedDirty := append([]w.DirtyScope(nil), c.state.Meta.DirtyScopes...)
+	// SSOT §6.9.1 carve-out: WindowProvenance is a validated cache, and the
+	// intent-driven clear (pruneProvenanceInactive) of identities removed from
+	// the desired set must survive a converge rollback (E1: the close path may
+	// error, but the user's intent to remove the window must still clear its
+	// provenance). Captures that get rolled back are self-healed on the next
+	// observe's pruneProvenance (the live ID won't validate) — so preserving the
+	// current map is safe.
+	preservedProvenance := c.state.Meta.WindowProvenance
 	c.state.Meta = cloneControllerMeta(s.meta)
 	c.state.Meta.ActiveCards = preservedCards
 	c.state.Meta.DirtyScopes = preservedDirty
+	c.state.Meta.WindowProvenance = preservedProvenance
 }
 
 func cloneControllerMeta(meta w.ControllerMeta) w.ControllerMeta {
@@ -817,7 +862,207 @@ func cloneControllerMeta(meta w.ControllerMeta) w.ControllerMeta {
 	out.DirtyScopes = append([]w.DirtyScope(nil), meta.DirtyScopes...)
 	out.ActiveCards = append([]w.Card(nil), meta.ActiveCards...)
 	out.PendingOrphans = append([]w.OrphanCandidate(nil), meta.PendingOrphans...)
+	// Deep-clone WindowProvenance so a rollback snapshot is owner-independent
+	// (SSOT §6.9.1 §5 CLONE — rollback safety; shallow copy would alias the
+	// live map and a rolled-back transaction's capture would leak back).
+	if meta.WindowProvenance != nil {
+		prov := make(map[w.DesiredWindowID]w.LiveWindowID, len(meta.WindowProvenance))
+		for k, v := range meta.WindowProvenance {
+			prov[k] = v
+		}
+		out.WindowProvenance = prov
+	}
 	return out
+}
+
+// captureProvenance records the live window produced by a successful spawn (or
+// adopt-by-move into a slot) for the op's target DesiredWindow identity (SSOT
+// §6.9.1 CAPTURE). It resolves the target against the fresh observation and, on
+// UniqueStrong, stamps WindowProvenance[target] = live — but only if absent or
+// changed, so an idempotent re-reconcile does not churn the entry (A6).
+func (c *Controller) captureProvenance(oper op.Operation) {
+	switch oper.Kind {
+	case op.KindSpawnEditor, op.KindSpawnTerminal, op.KindSpawnBrowser, op.KindSpawnViewer,
+		op.KindMoveWindowToWorkspace:
+	default:
+		return
+	}
+	if oper.Target.DesiredWindow == nil {
+		return
+	}
+	target := *oper.Target.DesiredWindow
+	dw := c.findDesiredWindow(target)
+	if dw == nil {
+		return
+	}
+	// Resolve against fresh observation threading the CURRENT provenance so a
+	// sibling editor's already-captured colliding same-title window is excluded
+	// (C1) — we never re-capture another identity's window. We do not rely on
+	// this identity's OWN entry being present yet (it usually is not, this being
+	// the capture); focus-tiebreak collapses any residual same-title ambiguity.
+	res := identity.ResolveWithFocusTiebreak(*dw, c.state.Observed, identity.ResolveOptions{Provenance: c.state.Meta.WindowProvenance})
+	if res.Class != identity.ClassUniqueStrong || res.Live == "" {
+		return
+	}
+	if c.state.Meta.WindowProvenance == nil {
+		c.state.Meta.WindowProvenance = map[w.DesiredWindowID]w.LiveWindowID{}
+	}
+	if existing, ok := c.state.Meta.WindowProvenance[target]; ok && existing == res.Live {
+		return // double-record guard (A6)
+	}
+	c.state.Meta.WindowProvenance[target] = res.Live
+}
+
+// pruneProvenance drops WindowProvenance entries that no longer reflect a live,
+// active managed window (SSOT §6.9 validated cache). An entry is removed when
+// (a) its desired identity is no longer an active — non-archived, slot-assigned
+// — desired window, or (b) its remembered live ID is no longer observed. This
+// self-heals stale entries and clears provenance on
+// archive/remove/profile-switch/unassign (E1/E2/E3/E5).
+func (c *Controller) pruneProvenance() {
+	if len(c.state.Meta.WindowProvenance) == 0 {
+		return
+	}
+	for id, live := range c.state.Meta.WindowProvenance {
+		if !c.isActiveDesiredWindow(id) {
+			delete(c.state.Meta.WindowProvenance, id)
+			continue
+		}
+		if _, observed := c.state.Observed.Windows[live]; !observed {
+			delete(c.state.Meta.WindowProvenance, id)
+		}
+	}
+}
+
+// captureSlotAdoptions establishes provenance for cold-start / recovery
+// slot-territory adoption (SSOT §6.9.1 B2): when an active desired editor-class
+// identity has no usable provenance and a same-title same-bundle window already
+// sits on its slot workspace, projwm adopts that window (records it as ours)
+// rather than spawning a duplicate beside it. STRICTLY slot territory — windows
+// on the user's own workspaces are never adopted (B3 / G2 / G3), which holds
+// because the candidate search is scoped to the slot workspace.
+func (c *Controller) captureSlotAdoptions() {
+	prof, ok := c.state.Desired.Profiles[c.state.Desired.ActiveProfile]
+	if !ok {
+		return
+	}
+	for _, slotID := range c.state.Environment.SlotOrder() {
+		pid, assigned := prof.Assignments[slotID]
+		if !assigned {
+			continue
+		}
+		pr, ok := c.state.Desired.Projects[pid]
+		if !ok || pr.Archived {
+			continue
+		}
+		slot, ok := c.state.Environment.SlotByID(slotID)
+		if !ok {
+			continue
+		}
+		for i := range pr.Windows {
+			dw := pr.Windows[i]
+			// Skip windows that already resolve uniquely (spawned/owned).
+			res := identity.ResolveWithOptions(dw, c.state.Observed, identity.ResolveOptions{Provenance: c.state.Meta.WindowProvenance})
+			if res.Class == identity.ClassUniqueStrong {
+				continue
+			}
+			live, ok := adoptableSlotWindow(dw, c.state.Observed, slot.Workspace, c.state.Meta.WindowProvenance)
+			if !ok {
+				continue
+			}
+			if c.state.Meta.WindowProvenance == nil {
+				c.state.Meta.WindowProvenance = map[w.DesiredWindowID]w.LiveWindowID{}
+			}
+			c.state.Meta.WindowProvenance[dw.ID] = live
+			// Re-populate MatchedTo so the adopted window now carries the
+			// resolver-truthful identity hint downstream.
+			c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, c.state.Observed, c.state.Meta.WindowProvenance)
+		}
+	}
+}
+
+// adoptableSlotWindow returns the live ID of a same-title same-bundle window on
+// the slot workspace eligible for slot-territory adoption, mirroring the
+// planner's adoptableOnSlot gate. Browser windows (B-05) are excluded.
+func adoptableSlotWindow(dw w.DesiredWindow, observed w.ObservedWorld, slotWS w.WorkspaceID, provenance map[w.DesiredWindowID]w.LiveWindowID) (w.LiveWindowID, bool) {
+	if dw.Kind == w.WindowBrowser || dw.App.BundleID == "" || dw.TitleContract.Expected == "" {
+		return "", false
+	}
+	owned := map[w.LiveWindowID]bool{}
+	for id, live := range provenance {
+		if id != dw.ID && live != "" {
+			owned[live] = true
+		}
+	}
+	ids := make([]w.LiveWindowID, 0, len(observed.Windows))
+	for id := range observed.Windows {
+		ids = append(ids, id)
+	}
+	sortLiveIDs(ids)
+	for _, id := range ids {
+		ow := observed.Windows[id]
+		if ow.Workspace != slotWS || ow.App.BundleID != dw.App.BundleID || ow.Title.Value != dw.TitleContract.Expected {
+			continue
+		}
+		if owned[id] {
+			continue
+		}
+		if ow.MatchedTo != nil && *ow.MatchedTo != dw.ID {
+			continue
+		}
+		return id, true
+	}
+	return "", false
+}
+
+func sortLiveIDs(ids []w.LiveWindowID) {
+	for i := 0; i < len(ids); i++ {
+		for j := i + 1; j < len(ids); j++ {
+			if ids[j] < ids[i] {
+				ids[i], ids[j] = ids[j], ids[i]
+			}
+		}
+	}
+}
+
+// pruneProvenanceInactive drops provenance entries whose desired identity is no
+// longer in the active desired set (archive/remove/profile-switch/unassign). It
+// does NOT consult observation, so it is safe to call right after reduce (before
+// the converge loop re-observes). The full validated-cache prune
+// (pruneProvenance) additionally drops entries whose live ID is gone.
+func (c *Controller) pruneProvenanceInactive() {
+	if len(c.state.Meta.WindowProvenance) == 0 {
+		return
+	}
+	for id := range c.state.Meta.WindowProvenance {
+		if !c.isActiveDesiredWindow(id) {
+			delete(c.state.Meta.WindowProvenance, id)
+		}
+	}
+}
+
+// isActiveDesiredWindow reports whether id is a desired window of an active
+// (non-archived, slot-assigned) project that still declares this identity.
+func (c *Controller) isActiveDesiredWindow(id w.DesiredWindowID) bool {
+	if !c.state.Desired.IsProjectActive(id.Project) {
+		return false
+	}
+	return c.findDesiredWindow(id) != nil
+}
+
+// findDesiredWindow returns the DesiredWindow for id, or nil if the project no
+// longer declares it.
+func (c *Controller) findDesiredWindow(id w.DesiredWindowID) *w.DesiredWindow {
+	pr, ok := c.state.Desired.Projects[id.Project]
+	if !ok {
+		return nil
+	}
+	for i := range pr.Windows {
+		if pr.Windows[i].ID == id {
+			return &pr.Windows[i]
+		}
+	}
+	return nil
 }
 
 // absorbUserCloseRecords merges reducer-emitted close events into
@@ -1463,7 +1708,10 @@ func (c *Controller) observe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.state.Observed = identity.PopulateMatchedTo(c.state.Desired, o)
+	c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, o, c.state.Meta.WindowProvenance)
+	// SSOT §6.9.1 B2: adopt a same-title same-bundle window already on a slot
+	// (cold start / recovery) so it becomes ours instead of being duplicated.
+	c.captureSlotAdoptions()
 	return nil
 }
 

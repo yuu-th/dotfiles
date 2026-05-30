@@ -15,6 +15,12 @@ import (
 type Runner struct {
 	Adapter wm.Adapter
 	Env     w.ManagedEnvironment
+	// Provenance is the controller's validated (desired identity → live window)
+	// cache (SSOT §6.9.1). The pre-spawn existing-state check threads it so a
+	// sibling editor's colliding same-title window is never mistaken for "this
+	// identity already exists" (C1): the resolver excludes other-identity-owned
+	// windows. Nil when provenance is off.
+	Provenance map[w.DesiredWindowID]w.LiveWindowID
 }
 
 func (r Runner) SpawnProjectTerminal(ctx context.Context, desiredID w.DesiredWindowID, workspace w.WorkspaceID, observed w.ObservedWorld, target w.DesiredWorld) (w.LiveWindowID, error) {
@@ -195,7 +201,7 @@ func browserPayloadToken(desired *w.DesiredWindow) string {
 }
 
 func (r Runner) preSpawnExistingState(desired *w.DesiredWindow, workspace w.WorkspaceID, observed w.ObservedWorld) (w.LiveWindowID, bool, error) {
-	res := identity.ResolveWithOptions(*desired, observed, identity.ResolveOptions{ExpectedWorkspace: workspace})
+	res := identity.ResolveWithOptions(*desired, observed, identity.ResolveOptions{ExpectedWorkspace: workspace, Provenance: r.Provenance})
 	switch res.Class {
 	case identity.ClassMissing:
 		return "", false, nil

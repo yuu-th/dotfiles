@@ -40,6 +40,15 @@ type ControllerMeta struct {
 	// emit a focus op" decision keeps using live focus. Empty outside a
 	// transaction (planner unit tests fall back to Observed.Focus).
 	SummonFocusAnchor LiveWindowID
+	// WindowProvenance records the live window ID that projwm spawned/adopted
+	// for each desired identity (SSOT §6.9 / §6.9.1). It is the primary
+	// attribution signal for single-process apps (Zed) where title is ambiguous
+	// and process attribution is impossible. It is a VALIDATED CACHE: every
+	// observe cycle re-checks the live ID is present with the expected
+	// bundle/title, dropping stale entries (window-ID reuse / silent close). A
+	// window not in this map is never claimed by provenance — user windows with
+	// colliding titles stay External. Persisted with the store.
+	WindowProvenance map[DesiredWindowID]LiveWindowID
 }
 
 // WorldState is the controller's view. design.md §8.

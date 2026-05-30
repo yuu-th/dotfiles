@@ -140,6 +140,15 @@ func Check14DuplicateWindow(state w.WorldState) *Violation {
 		if ow.Kind != ow.MatchedTo.Kind {
 			continue
 		}
+		// SSOT §6.9.1 ATTR-B4: when provenance owns a window for this identity,
+		// any same-group live id that is NOT the provenance window is the user's
+		// External window (single-process apps collide on title). Exclude it
+		// from the duplicate set so we never flag the user's window. With no
+		// provenance entry, every candidate stays in the set (guard: genuine
+		// managed duplicates still fire).
+		if provLive, ok := state.Meta.WindowProvenance[*ow.MatchedTo]; ok && provLive != ow.ID {
+			continue
+		}
 		k := groupKey{Desired: *ow.MatchedTo, Kind: ow.Kind}
 		groups[k] = append(groups[k], ow.ID)
 	}
@@ -198,7 +207,7 @@ func Check4ActiveDesiredPresent(state w.WorldState) *Violation {
 		}
 		slot, hasSlot := state.Environment.SlotByID(sid)
 		for _, dw := range pr.Windows {
-			opts := identity.ResolveOptions{}
+			opts := identity.ResolveOptions{Provenance: state.Meta.WindowProvenance}
 			if hasSlot {
 				opts.ExpectedWorkspace = slot.Workspace
 			}
@@ -397,7 +406,7 @@ func Check9LayoutSemantics(state w.WorldState) *Violation {
 		ws := slot.Workspace
 		want := desiredColumns(pr, ws, state.Desired.AcceptedLayouts)
 		obs := state.Observed.Layouts[ws]
-		if !semanticEq(obs.Columns, want, pr, ws, state.Observed) {
+		if !semanticEq(obs.Columns, want, pr, ws, state.Observed, state.Meta.WindowProvenance) {
 			return &Violation{ID: 9, Name: "layout-semantics",
 				Message: fmt.Sprintf("project %q layout on %q does not match desired", pid, ws)}
 		}
@@ -535,7 +544,7 @@ func desiredColumns(pr w.DesiredProject, ws w.WorkspaceID, accepted map[w.Projec
 	return out
 }
 
-func semanticEq(obs []w.ObservedColumn, want []w.DesiredColumn, pr w.DesiredProject, ws w.WorkspaceID, world w.ObservedWorld) bool {
+func semanticEq(obs []w.ObservedColumn, want []w.DesiredColumn, pr w.DesiredProject, ws w.WorkspaceID, world w.ObservedWorld, provenance map[w.DesiredWindowID]w.LiveWindowID) bool {
 	// Resolve desired columns to their live window IDs (the managed set).
 	wantLiveCols := make([][]w.LiveWindowID, 0, len(want))
 	managed := map[w.LiveWindowID]bool{}
@@ -546,7 +555,7 @@ func semanticEq(obs []w.ObservedColumn, want []w.DesiredColumn, pr w.DesiredProj
 			if dw == nil {
 				return false
 			}
-			res := identity.ResolveWithOptions(*dw, world, identity.ResolveOptions{ExpectedWorkspace: ws})
+			res := identity.ResolveWithOptions(*dw, world, identity.ResolveOptions{ExpectedWorkspace: ws, Provenance: provenance})
 			if res.Class != identity.ClassUniqueStrong {
 				return false
 			}

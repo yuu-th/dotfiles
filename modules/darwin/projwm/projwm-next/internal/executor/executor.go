@@ -60,6 +60,11 @@ type Executor struct {
 	// rejected so the Executor never bypasses the lifecycle contract by
 	// silently falling back to the WindowManagerAdapter.
 	Zed ZedCloser
+	// Provenance is the controller's validated (desired identity → live window)
+	// cache (SSOT §6.9.1), forwarded to semop so the pre-spawn existing-state
+	// check can exclude sibling-owned same-title windows (C1). The controller
+	// refreshes this before each Execute. Nil when provenance is off.
+	Provenance map[w.DesiredWindowID]w.LiveWindowID
 }
 
 // Execute applies a single Operation against the adapter using the latest observed world.
@@ -206,7 +211,7 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 			}
 		}
 	}
-	semantic := semop.Runner{Adapter: e.Adapter, Env: e.Env}
+	semantic := semop.Runner{Adapter: e.Adapter, Env: e.Env, Provenance: e.Provenance}
 
 	switch oper.Kind {
 	case op.KindSpawnTerminal:

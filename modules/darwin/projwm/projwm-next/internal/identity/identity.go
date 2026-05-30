@@ -47,6 +47,13 @@ const (
 
 type ResolveOptions struct {
 	ExpectedWorkspace w.WorkspaceID
+	// Provenance maps a desired identity to the live window ID that projwm
+	// spawned/adopted for it (SSOT §6.9). When set for the desired window, the
+	// resolver MUST prefer that live window — but only after validating it is
+	// still present with the expected bundle/title (a validated cache, not
+	// blind truth). A non-provenance window with a colliding title is then
+	// treated as External, never grabbed. See SSOT §6.9.1 ATTR-A2/A3/A4/B1/B4.
+	Provenance map[w.DesiredWindowID]w.LiveWindowID
 }
 
 // IdentifyWinnerAndOrphans realises SSOT §2.5 EC4 / §3.4 INV-01: when multiple
@@ -101,6 +108,28 @@ func Resolve(desired w.DesiredWindow, observed w.ObservedWorld) Resolution {
 }
 
 func ResolveWithOptions(desired w.DesiredWindow, observed w.ObservedWorld, opts ResolveOptions) Resolution {
+	// Provenance-precedence PRE-PASS (SSOT §6.9.1 ATTR-A2/A3/A4/B1/B4/C1).
+	// For single-process apps (Zed) the title is ambiguous — the user can open
+	// the same project — so the resolver must prefer the live window projwm
+	// spawned/adopted for this identity (opts.Provenance) before the candidate
+	// scan, short-circuiting it so a colliding same-title sibling can NEVER
+	// promote to Ambiguous. This is a VALIDATED CACHE, not blind truth: the
+	// remembered live window must still be OBSERVED and VALID (same kind, same
+	// bundle, and — for non-browser kinds with an Expected title — same title).
+	// If the entry is absent or no longer valid, FALL THROUGH to the normal
+	// path (self-heal: respawn / re-adopt).
+	if want, ok := opts.Provenance[desired.ID]; ok && want != "" {
+		if ow, present := observed.Windows[want]; present && provenanceValid(desired, ow) {
+			return Resolution{
+				Class:      ClassUniqueStrong,
+				Live:       want,
+				Candidates: []w.LiveWindowID{want},
+				Confidence: 1.0,
+				Evidence:   []MatchEvidence{{Kind: "provenance", Strength: w.MatchStrong, Window: want}},
+			}
+		}
+	}
+
 	keys := make([]w.LiveWindowID, 0, len(observed.Windows))
 	for k := range observed.Windows {
 		keys = append(keys, k)
@@ -114,11 +143,21 @@ func ResolveWithOptions(desired w.DesiredWindow, observed w.ObservedWorld, opts 
 	var forbidden []MatchEvidence
 	missing := requiredEvidence(desired, opts)
 
+	// Provenance partitions ambiguous same-title windows among sibling
+	// identities (SSOT §6.9.1 C1): a live window that provenance assigns to a
+	// DIFFERENT desired identity is that sibling's window — never a candidate
+	// for this one. (The target's OWN provenance window was already handled by
+	// the pre-pass above; here we only EXCLUDE other-identity-owned windows.)
+	ownedByOther := ownedByOtherIdentity(desired.ID, opts.Provenance)
+
 	for _, k := range keys {
 		ow := observed.Windows[k]
 		// Kind must match. Viewer mirrors share DesiredWindowID with their AI source but
 		// have Kind=WindowViewer; only same-kind windows are candidates.
 		if ow.Kind != desired.Kind {
+			continue
+		}
+		if ownedByOther[k] {
 			continue
 		}
 		missing = removeRequired(missing, RequiredKind)
@@ -285,6 +324,49 @@ func removeRequired(req []RequiredEvidence, item RequiredEvidence) []RequiredEvi
 	return out
 }
 
+// ownedByOtherIdentity returns the set of live windows that provenance assigns
+// to a desired identity OTHER than self. Such windows belong to a sibling and
+// must not be candidates when resolving self (SSOT §6.9.1 C1).
+func ownedByOtherIdentity(self w.DesiredWindowID, provenance map[w.DesiredWindowID]w.LiveWindowID) map[w.LiveWindowID]bool {
+	if len(provenance) == 0 {
+		return nil
+	}
+	out := map[w.LiveWindowID]bool{}
+	for id, live := range provenance {
+		if id == self || live == "" {
+			continue
+		}
+		out[live] = true
+	}
+	return out
+}
+
+// provenanceValid reports whether the live window remembered for a desired
+// identity is still a trustworthy match (SSOT §6.9.1 ATTR-A4): same bundle (when
+// the contract pins one) and the same Expected title (mirroring the
+// TitleAppOwned/TitleControllerOwned Expected!="" rule). Browser windows carry
+// the page title, not a projwm-controlled one (B-05), so title is skipped for
+// WindowBrowser.
+//
+// We deliberately do NOT require the observed Kind to equal the desired Kind:
+// for single-process apps (Zed) the WM may classify a user-opened — but
+// projwm-adopted — window as External, since projwm cannot attribute it by
+// process. Bundle (app-specific) + Expected title is the real safety boundary;
+// the A4 window-ID-reuse guard rejects via the bundle check (a reused ID that
+// became Safari fails dev.zed.Zed != com.apple.Safari).
+func provenanceValid(desired w.DesiredWindow, ow w.ObservedWindow) bool {
+	if desired.App.BundleID != "" && ow.App.BundleID != desired.App.BundleID {
+		return false
+	}
+	if desired.Kind == w.WindowBrowser {
+		return true
+	}
+	if desired.TitleContract.Expected != "" && ow.Title.Value != desired.TitleContract.Expected {
+		return false
+	}
+	return true
+}
+
 func matchesTitleContract(desired w.DesiredWindow, ow w.ObservedWindow) bool {
 	switch desired.TitleContract.Authority {
 	case w.TitleControllerOwned:
@@ -351,6 +433,16 @@ func hintMatches(h w.MatchHint, ow w.ObservedWindow) bool {
 // instead leave the cached value so the planner's "stale-title revert"
 // logic still fires.
 func PopulateMatchedTo(desired w.DesiredWorld, observed w.ObservedWorld) w.ObservedWorld {
+	return PopulateMatchedToWithProvenance(desired, observed, nil)
+}
+
+// PopulateMatchedToWithProvenance is PopulateMatchedTo threading a provenance
+// map into the inner resolve (SSOT §6.9.1). Callers that hold
+// ControllerMeta.WindowProvenance pass it so a same-title sibling can never be
+// stamped onto our managed identity (the resolver short-circuits to the
+// provenance window). PopulateMatchedTo delegates here with nil (provenance
+// off) for callers that have none.
+func PopulateMatchedToWithProvenance(desired w.DesiredWorld, observed w.ObservedWorld, provenance map[w.DesiredWindowID]w.LiveWindowID) w.ObservedWorld {
 	if len(observed.Windows) == 0 {
 		return observed
 	}
@@ -385,7 +477,7 @@ func PopulateMatchedTo(desired w.DesiredWorld, observed w.ObservedWorld) w.Obser
 	for _, pid := range pids {
 		p := desired.Projects[pid]
 		for _, dw := range p.Windows {
-			res := Resolve(dw, out)
+			res := ResolveWithOptions(dw, out, ResolveOptions{Provenance: provenance})
 			if res.Class != ClassUniqueStrong && res.Class != ClassWeak {
 				continue
 			}

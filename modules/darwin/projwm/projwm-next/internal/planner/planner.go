@@ -176,7 +176,10 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				// layout phase MOVES it to its slot workspace rather than
 				// re-spawning a duplicate. Workspace disambiguates browsers only
 				// at the layout/invariant check, where final placement matters.
-				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{})
+				// SSOT §6.9.1: thread provenance so a managed editor with a
+				// colliding same-title user window resolves UniqueStrong to OUR
+				// window (C1/A2) instead of hard-erroring as Ambiguous below.
+				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{Provenance: state.Meta.WindowProvenance})
 				if res.Class == identity.ClassUniqueStrong {
 					// Window exists. May need to be moved to its slot workspace.
 					ow := state.Observed.Windows[res.Live]
@@ -200,6 +203,18 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				}
 				if res.Class == identity.ClassMissing {
 					dwid := dw.ID
+					// SSOT §6.9.1 B2 (slot-territory adopt): on cold start /
+					// recovery, a same-title same-bundle window already sitting
+					// on THIS slot's workspace is the user's project editor we
+					// should adopt rather than spawn a duplicate beside. Only
+					// slot territory qualifies — windows on the user's own
+					// workspaces stay inviolable (B3/G2/G3), which holds because
+					// the search is scoped to the slot workspace. Suppress the
+					// spawn; the controller records provenance for the adopted
+					// window on the next observe/capture.
+					if adoptableOnSlot(dw, state.Observed, workspace, state.Meta.WindowProvenance) {
+						continue
+					}
 					// T4.4: if the user closed this DesiredWindow twice
 					// within the last 60 seconds, suppress the spawn so
 					// they don't end up in a respawn loop. The cockpit
@@ -279,7 +294,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 						allFound = false
 						break
 					}
-					layoutOpts := identity.ResolveOptions{}
+					layoutOpts := identity.ResolveOptions{Provenance: state.Meta.WindowProvenance}
 					if dw.Kind == w.WindowBrowser {
 						layoutOpts.ExpectedWorkspace = ws
 					}
@@ -841,6 +856,55 @@ func managedDesiredByObserved(ow w.ObservedWindow, target w.DesiredWorld) (w.Des
 		}
 	}
 	return w.DesiredWindowID{}, false
+}
+
+// adoptableOnSlot reports whether a same-title, same-bundle window already sits
+// on the desired window's slot workspace and should be ADOPTED instead of
+// spawning a duplicate beside it (SSOT §6.9.1 B2 slot-territory adopt). This is
+// the cold-start / recovery title→identity adoption that is gated STRICTLY to
+// slot territory: windows on the user's own workspaces are never adopted (B3 /
+// G2 / G3). It applies to single-process editor-class windows whose title is the
+// project basename (TitleAppOwned with an Expected value); browser windows
+// (B-05, URL-dependent titles) are excluded. A window already claimed by
+// provenance for a DIFFERENT identity is not adoptable (it is a sibling's).
+func adoptableOnSlot(dw w.DesiredWindow, observed w.ObservedWorld, slotWS w.WorkspaceID, provenance map[w.DesiredWindowID]w.LiveWindowID) bool {
+	if dw.Kind == w.WindowBrowser {
+		return false
+	}
+	if dw.App.BundleID == "" {
+		return false
+	}
+	if dw.TitleContract.Expected == "" {
+		return false
+	}
+	owned := map[w.LiveWindowID]bool{}
+	for id, live := range provenance {
+		if id != dw.ID && live != "" {
+			owned[live] = true
+		}
+	}
+	for _, id := range sortedLiveIDs(observed.Windows) {
+		ow := observed.Windows[id]
+		if ow.Workspace != slotWS {
+			continue
+		}
+		if ow.App.BundleID != dw.App.BundleID {
+			continue
+		}
+		if ow.Title.Value != dw.TitleContract.Expected {
+			continue
+		}
+		if owned[id] {
+			continue // a sibling identity's window
+		}
+		// A window already matched to a DIFFERENT active managed identity is
+		// not a free adoption target.
+		if ow.MatchedTo != nil && *ow.MatchedTo != dw.ID {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func viewerTitleForAI(aiTitle string) string {
