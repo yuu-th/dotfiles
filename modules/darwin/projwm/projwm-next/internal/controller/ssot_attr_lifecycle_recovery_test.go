@@ -109,19 +109,29 @@ func TestZedAttr_E1_RemoveWindowClearsProvenance(t *testing.T) {
 		attrEditorID(): edLive,
 	}
 
-	// Remove the editor window (operation 13). NOTE: the reducer drops the desired
-	// window; the executor's close path for an already-undesired window has a
-	// separate, provenance-INDEPENDENT gap today (PreUniqueStrong re-resolves the
-	// orphan's MatchedTo identity against a target that no longer holds it), so the
-	// dispatch may return an error and the live window may not actually close. That
-	// gap is OUT OF SCOPE for this attribution test — we tolerate the dispatch
-	// error and assert only the provenance-clear contract, which is the faithful
-	// RED: once provenance clears entries for identities removed from the desired
-	// set, the seeded entry below must be dropped regardless of the close gap.
-	_, _ = ctrl.ApplyIntent(context.Background(), intent.RemoveWindow{Project: "p1", WindowID: attrEditorID()})
+	// Remove the editor window (operation 13). The reducer drops the desired
+	// window; the next converge MUST close the now-orphaned live window. This used
+	// to be a provenance-INDEPENDENT gap (the planner protected the orphan as an
+	// ambiguous candidate of the active identity, then PreUniqueStrong re-resolved
+	// its stale MatchedTo against a target that no longer held it), so the close
+	// silently failed. That gap is now fixed (provenance narrows the protected set
+	// + the executor permits a removal close of a non-active-provenance window), so
+	// this test asserts BOTH the close AND the provenance-clear contract.
+	if _, err := ctrl.ApplyIntent(context.Background(), intent.RemoveWindow{Project: "p1", WindowID: attrEditorID()}); err != nil {
+		t.Fatalf("ATTR-E1: remove-window: %v", err)
+	}
 
-	// Mechanism (RED today): the editor identity is no longer in the desired set,
-	// so its provenance entry MUST be cleared — asserted UNCONDITIONALLY.
+	// Observable (un-tolerated now): the removed editor's live window is GONE.
+	obs2, _ := fake.Observe(context.Background())
+	if _, stillThere := obs2.Windows[edLive]; stillThere {
+		t.Fatalf("ATTR-E1: removed editor's live window %q is still present after remove-window (must be closed)", edLive)
+	}
+	if _, _, ok := attrFindManagedEditor(obs2); ok {
+		t.Fatalf("ATTR-E1: a managed editor for p1 still exists after remove-window (its window must be closed)")
+	}
+
+	// Mechanism: the editor identity is no longer in the desired set, so its
+	// provenance entry MUST be cleared — asserted UNCONDITIONALLY.
 	if got := ctrl.State().Meta.WindowProvenance[attrEditorID()]; got != "" {
 		t.Fatalf("ATTR-E1: WindowProvenance[%v]=%q still set after remove-window dropped the desired identity (entry must be cleared)", attrEditorID(), got)
 	}

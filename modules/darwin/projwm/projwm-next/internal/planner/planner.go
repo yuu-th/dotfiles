@@ -61,7 +61,7 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 		idCounter++
 		return w.OperationID(fmt.Sprintf("op-%s-%d", kindHint, idCounter))
 	}
-	protectedLive := liveCandidatesForActiveDesired(state.Observed, target)
+	protectedLive := liveCandidatesForActiveDesired(state.Observed, target, state.Meta.WindowProvenance)
 	closeBlocked := closeWindowBlocked(state.Environment)
 	removalOperation := func(kindHint string, id w.LiveWindowID, desired *w.DesiredWindowID) (op.Operation, bool) {
 		opTarget := op.Target{LiveWindow: idPtr(id)}
@@ -1121,7 +1121,7 @@ func dcCopy(in []w.DesiredColumn) []w.DesiredColumn {
 	return out
 }
 
-func liveCandidatesForActiveDesired(observed w.ObservedWorld, target w.DesiredWorld) map[w.LiveWindowID]bool {
+func liveCandidatesForActiveDesired(observed w.ObservedWorld, target w.DesiredWorld, provenance map[w.DesiredWindowID]w.LiveWindowID) map[w.LiveWindowID]bool {
 	protected := map[w.LiveWindowID]bool{}
 	for _, pid := range sortedProjectIDs(target.Projects) {
 		pr := target.Projects[pid]
@@ -1130,6 +1130,36 @@ func liveCandidatesForActiveDesired(observed w.ObservedWorld, target w.DesiredWo
 		}
 		for _, dw := range pr.Windows {
 			res := identity.Resolve(dw, observed)
+			// SSOT §6.9.1: when an active identity resolves AMBIGUOUS over
+			// several same-title siblings (e.g. two Zed editors titled by the
+			// project basename), provenance tells us WHICH live window actually
+			// belongs to this identity. Protect ONLY that provenance window so a
+			// sibling orphan — one whose desired identity has been removed
+			// (intent.RemoveWindow), archived, or deactivated — is left
+			// unprotected and the removal loop can close it. Without this, every
+			// same-title candidate is protected and the orphan never closes
+			// (RemoveWindow silently fails to close the removed window).
+			//
+			// Narrowing is ONLY safe when provenance unambiguously names one of
+			// the live candidates; otherwise (cold start / stale provenance with
+			// no live match) we fall back to protecting EVERY candidate so we
+			// never close a window we cannot prove is a sibling rather than this
+			// identity's own (preserves B3/G2/G3 inviolability).
+			if res.Class == identity.ClassAmbiguous && provenance != nil {
+				if prov, ok := provenance[dw.ID]; ok && prov != "" {
+					provIsCandidate := false
+					for _, live := range res.Candidates {
+						if live == prov {
+							provIsCandidate = true
+							break
+						}
+					}
+					if provIsCandidate {
+						protected[prov] = true
+						continue
+					}
+				}
+			}
 			for _, live := range res.Candidates {
 				protected[live] = true
 			}

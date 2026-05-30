@@ -172,10 +172,42 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 			desired = ow.MatchedTo
 		}
 		if desired == nil {
+			// SSOT §6.9.1 removal/orphan close: a live managed window with no
+			// desired-identity evidence (its identity was deleted by
+			// intent.RemoveWindow, archive, or slot-deactivation — and a
+			// same-title sibling already claimed any remaining active identity)
+			// is a clean orphan. Closing it is safe PROVIDED it is not the
+			// provenance-owned live window of any still-active identity. The
+			// caller supplies no expectedDesired for a removal close, so falling
+			// through here means there is genuinely nothing to re-resolve.
+			//
+			// This relaxation is gated on provenance being ENABLED (e.Provenance
+			// != nil): without a provenance cache we have no basis to prove the
+			// window is a safe orphan rather than an active identity's own
+			// window, so we keep the strict rejection (do not weaken safety).
+			if e.Provenance != nil && !e.isActiveProvenanceWindow(id, target) {
+				return nil
+			}
 			return fmt.Errorf("executor: PreUniqueStrong: live window %s has no desired identity evidence", id)
 		}
 		resolved, err := resolveDesired(*desired)
 		if err != nil {
+			// SSOT §6.9.1 removal/orphan close: the live window's MatchedTo
+			// points at a desired identity that no longer exists in the target
+			// (the reducer deleted it via intent.RemoveWindow / archive /
+			// deactivate, but the stale MatchedTo stamp was preserved across the
+			// re-populate). Re-resolving a deleted identity must NOT block the
+			// removal close. When this is a removal close (expectedDesired==nil,
+			// i.e. the planner did not pin a still-present desired identity),
+			// provenance is enabled, and the target is not the provenance-owned
+			// live window of any active identity, the close is safe — it can never
+			// touch a managed window that is still wanted. Profile-switch / drift
+			// closes that DO carry a still-present desired identity keep the
+			// strict re-resolve behaviour (they pass expectedDesired or a
+			// MatchedTo that still resolves).
+			if expectedDesired == nil && e.Provenance != nil && !desiredIdentityPresent(target, *desired) && !e.isActiveProvenanceWindow(id, target) {
+				return nil
+			}
 			return err
 		}
 		if resolved != id {
@@ -529,6 +561,45 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 		return e.Adapter.HideScratchShell(ctx, prior)
 	}
 	return fmt.Errorf("executor: unsupported op kind %q", oper.Kind)
+}
+
+// isActiveProvenanceWindow reports whether the given live window is the
+// provenance-owned live window of an identity that is STILL active (its project
+// is active in target and the identity is still desired). This is the safety
+// gate for the removal/orphan close path: a clean orphan (the removed sibling)
+// is never an active identity's provenance window, so it is safe to close;
+// conversely we must NEVER allow a close that would tear down a window an
+// active managed identity is still claiming as its own. SSOT §6.9.1.
+func (e *Executor) isActiveProvenanceWindow(id w.LiveWindowID, target w.DesiredWorld) bool {
+	if e.Provenance == nil {
+		return false
+	}
+	for desiredID, live := range e.Provenance {
+		if live != id {
+			continue
+		}
+		if target.IsProjectActive(desiredID.Project) && desiredIdentityPresent(target, desiredID) {
+			return true
+		}
+	}
+	return false
+}
+
+// desiredIdentityPresent reports whether the desired window identity still
+// exists in the target world (i.e. was NOT removed by the reducer). Used to
+// distinguish a removal/orphan close (identity gone) from a profile-switch /
+// drift close (identity still present, just unmatched on this live window).
+func desiredIdentityPresent(target w.DesiredWorld, id w.DesiredWindowID) bool {
+	pr, ok := target.Projects[id.Project]
+	if !ok {
+		return false
+	}
+	for _, dw := range pr.Windows {
+		if dw.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func windowKindAllowed(allowed []w.WindowKind, kind w.WindowKind) bool {
