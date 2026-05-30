@@ -37,15 +37,28 @@ func realOpsEnv() w.ManagedEnvironment {
 				{ID: "9", RawName: "9", DisplayName: "9", Role: w.WorkspaceGeneral},
 			},
 		},
-		Apps: w.AppEnvironment{ManagedApps: []w.ManagedAppPolicy{{
-			Capability: w.CapabilityTerminal,
-			BundleID:   "com.mitchellh.ghostty",
-			LifecycleRemoval: w.LifecycleRemovalPolicy{
-				Allowed:      true,
-				Method:       w.LifecycleRemovalAXCloseGuarded,
-				AllowedKinds: []w.WindowKind{w.WindowAI, w.WindowShell, w.WindowViewer},
+		Apps: w.AppEnvironment{ManagedApps: []w.ManagedAppPolicy{
+			{
+				Capability: w.CapabilityTerminal,
+				BundleID:   "com.mitchellh.ghostty",
+				LifecycleRemoval: w.LifecycleRemovalPolicy{
+					Allowed:      true,
+					Method:       w.LifecycleRemovalAXCloseGuarded,
+					AllowedKinds: []w.WindowKind{w.WindowAI, w.WindowShell, w.WindowViewer},
+				},
 			},
-		}}},
+			{
+				// Zed is single-process (ZED-CONFIG/§4.4): removal is AXClose of
+				// the window only, never a process kill. Needed for ATTR-F1.
+				Capability: w.CapabilityEditor,
+				BundleID:   "dev.zed.Zed",
+				LifecycleRemoval: w.LifecycleRemovalPolicy{
+					Allowed:      true,
+					Method:       w.LifecycleRemovalAXCloseGuarded,
+					AllowedKinds: []w.WindowKind{w.WindowEditor},
+				},
+			},
+		}},
 	}
 }
 

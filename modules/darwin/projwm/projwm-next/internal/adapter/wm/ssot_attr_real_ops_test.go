@@ -78,6 +78,7 @@ func TestZedAttr_F1_RemoveManagedWindowKeepsProcessAlive(t *testing.T) {
 		Desired:    w.DesiredWindowID{Project: "projwm-attr", Kind: w.WindowEditor, Index: 1},
 		Kind:       w.WindowEditor,
 		Title:      title,
+		BundleID:   "dev.zed.Zed",
 	}); err != nil {
 		t.Fatalf("terminate managed editor window: %v", err)
 	}
