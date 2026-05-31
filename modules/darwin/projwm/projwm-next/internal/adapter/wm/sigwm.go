@@ -260,6 +260,21 @@ type SigWM struct {
 	// SettleTimeout bounds post-spawn / post-move polling.
 	SettleTimeout time.Duration
 
+	// BrowserSettleTimeout bounds post-spawn polling for the managed Vivaldi
+	// window specifically. A FRESH --user-data-dir Vivaldi performs first-run
+	// profile generation that can delay window creation well past the generic
+	// SettleTimeout (observed ~40s on a cold profile). Using SettleTimeout for
+	// the browser made settleNewWindowByDiff hit its deadline, fall through to
+	// the process-alive empty-accept, and return ("", nil) — which left the
+	// managed window unobserved inside the transaction, so the converge loop
+	// re-emitted spawn-browser every replan until MaxReplans exhausted (S2
+	// archive→unarchive→assign loop). A dedicated, larger browser budget lets
+	// the settle wait out first-run generation and return the real live id
+	// (UniqueStrong) instead of empty-accepting. Only the browser branch uses
+	// this knob, so Ghostty/Zed settle timing is unchanged. Zero falls back to
+	// browserSettleTimeoutDefault.
+	BrowserSettleTimeout time.Duration
+
 	// EnsureCockpitSession is called by SpawnCockpit to ensure the base tmux
 	// session is running. If nil, ensureCockpitBaseSession is used (production
 	// default). Tests inject a no-op to avoid real tmux invocations.
@@ -1098,10 +1113,15 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 			return perr == nil && len(strings.TrimSpace(string(out))) > 0
 		}
 	case w.WindowBrowser:
-		aliveFn = func() bool {
-			out, perr := exec.CommandContext(ctx, "pgrep", "-fl", "Vivaldi.app/Contents/MacOS").Output()
-			return perr == nil && len(strings.TrimSpace(string(out))) > 0
-		}
+		// Key the browser liveness off the MANAGED Vivaldi process (argv
+		// carrying the projwm vivaldi-data --user-data-dir), not "any Vivaldi
+		// alive". The managed instance is a SEPARATE process whose argv retains
+		// the flag for life (see vivaldiInspectFunc), so this reliably signals
+		// "our spawn is in-flight" even when the user's own Vivaldi is running.
+		// settleNewBrowserWindowByDiff treats this as "keep polling for the
+		// window" (covering first-run profile generation) rather than the
+		// generic empty-accept fallback that would re-trigger the spawn loop.
+		aliveFn = managedVivaldiProcessAlive
 	}
 	var live w.LiveWindowID
 	var err error
@@ -1116,7 +1136,9 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 	// no longer required because (a) Zed's title may lag the actual
 	// window creation, and (b) the pre/post diff is itself enough to
 	// disambiguate a single new instance.
-	if r.Kind == w.WindowBrowser || r.Kind == w.WindowEditor {
+	if r.Kind == w.WindowBrowser {
+		live, err = s.settleNewBrowserWindowByDiff(ctx, r.BundleID, before, aliveFn)
+	} else if r.Kind == w.WindowEditor {
 		live, err = s.settleNewWindowByDiff(ctx, r.BundleID, before, aliveFn)
 	} else {
 		live, err = s.settleNewWindow(ctx, r.BundleID, r.Title, aliveFn)
@@ -1256,6 +1278,88 @@ func (s *SigWM) settleNewWindowByDiff(ctx context.Context, bundleID string, befo
 		return "", nil
 	}
 	return "", fmt.Errorf("sigwm.settle: timeout (last new count=%d) for bundle=%s", lastCount, bundleID)
+}
+
+// browserSettleTimeoutDefault is the post-spawn settle budget for the managed
+// Vivaldi window. It must cover a COLD --user-data-dir first-run: Vivaldi
+// generates the fresh profile before it creates (and omniwm observes) the
+// browser window, which has been measured at ~40s. The budget is sized
+// generously above that so a single Spawn call can wait out first-run and
+// return the real live id rather than timing out into a respawn loop. This
+// applies ONLY to the browser branch (settleNewBrowserWindowByDiff); the
+// generic SettleTimeout (Ghostty/Zed, which catalog in well under a second)
+// is untouched.
+const browserSettleTimeoutDefault = 75 * time.Second
+
+func (s *SigWM) browserSettleTimeout() time.Duration {
+	if s.BrowserSettleTimeout > 0 {
+		return s.BrowserSettleTimeout
+	}
+	return browserSettleTimeoutDefault
+}
+
+// managedVivaldiProcessAlive reports whether a MANAGED Vivaldi process (one
+// launched with the projwm --user-data-dir, i.e. carrying the vivaldi-data
+// leaf in its argv) is currently running. This is the in-flight signal for a
+// projwm-owned browser spawn: the user's own Vivaldi does NOT carry that flag,
+// so a true result means "our spawn launched a process whose window we are
+// still waiting on" — distinct from the generic "any Vivaldi alive" check.
+// pgrep -fl matches against the full argv line including the user-data-dir.
+func managedVivaldiProcessAlive() bool {
+	out, err := exec.Command("pgrep", "-fl", browser.AutomationUserDataLeaf).Output()
+	return err == nil && len(strings.TrimSpace(string(out))) > 0
+}
+
+// settleNewBrowserWindowByDiff is the browser-specific settle. Unlike
+// settleNewWindowByDiff it (a) polls for the generous browserSettleTimeout so
+// it can wait out a cold --user-data-dir first-run, and (b) does NOT empty-
+// accept on the process-alive path. Empty-accepting the browser is exactly
+// what broke S2: settleNewWindowByDiff returned ("", nil) the instant any
+// Vivaldi was alive, the converge loop re-observed a still-window-less world,
+// and re-emitted spawn-browser until MaxReplans exhausted (the window finally
+// cataloged too late). Here, while the managed Vivaldi process is in-flight we
+// keep polling for ITS window up to the full budget and return the real live
+// id once omniwm surfaces it; we only error if the window never appears within
+// the budget. Returning an honest error (not empty-accept) on a true timeout
+// keeps the executor's failure handling intact while the generous budget makes
+// the success path the common one.
+func (s *SigWM) settleNewBrowserWindowByDiff(ctx context.Context, bundleID string, before map[string]struct{}, processAlive func() bool) (w.LiveWindowID, error) {
+	deadline := time.Now().Add(s.browserSettleTimeout())
+	var lastCount int
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		wins, err := s.queryWindows(ctx)
+		if err != nil {
+			return "", err
+		}
+		var cands []ctlWindow
+		for _, cw := range wins {
+			if cw.App.BundleID != bundleID {
+				continue
+			}
+			if _, existed := before[cw.ID]; !existed {
+				cands = append(cands, cw)
+			}
+		}
+		lastCount = len(cands)
+		if len(cands) == 1 {
+			return w.LiveWindowID(cands[0].ID), nil
+		}
+		if len(cands) > 1 {
+			return "", fmt.Errorf("sigwm.settle[browser]: ambiguous newly spawned windows (count=%d) for bundle=%s", len(cands), bundleID)
+		}
+		// If the managed Vivaldi process died (e.g. crash) before the window
+		// surfaced, stop waiting early — there is nothing to converge on.
+		if processAlive != nil && !processAlive() {
+			return "", fmt.Errorf("sigwm.settle[browser]: managed Vivaldi process exited before window surfaced for bundle=%s", bundleID)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return "", fmt.Errorf("sigwm.settle[browser]: timeout (last new count=%d) for bundle=%s after %s (managed first-run profile generation may have stalled)", lastCount, bundleID, s.browserSettleTimeout())
 }
 
 // closeNewZedEmptyProjects closes the spurious "empty project" window that Zed
