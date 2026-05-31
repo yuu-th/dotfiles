@@ -90,13 +90,13 @@ func (c CmdCtlExecutor) Run(ctx context.Context, args ...string) ([]byte, error)
 }
 
 // retryConnRefusedExecutor wraps a CtlExecutor and retries the underlying
-// call when it fails with omniwmctl's "Connection refused" transient error.
-// This is most commonly seen in the harness when the production daemon's
-// quiesce window overlaps OmniWM's brief listener restart on workspace
-// transitions (see specs.md §7 on dual-listener race avoidance). The retry
-// is treated as a production primitive: connection refused is a true
-// transient failure mode of the omniwmctl protocol, not a test-only
-// concern, so retrying here is consistent with the design constitution.
+// call when it fails with a TRANSIENT omniwmctl error (see isTransientOmniErr):
+// "Connection refused" (socket briefly absent during a listener restart) or
+// "exit status 2" with empty stderr (OmniWM up but not yet ready to answer
+// queries, e.g. right after a `kickstart -k omniwm` restart — SSOT §3.5 /
+// ACC-S7). These are true transient failure modes of the omniwmctl protocol,
+// not test-only concerns, so retrying here is consistent with the design
+// constitution. Genuine command errors (non-empty stderr) are never retried.
 type retryConnRefusedExecutor struct {
 	inner    CtlExecutor
 	attempts int
@@ -111,18 +111,36 @@ func newRetryConnRefusedExecutor(inner CtlExecutor) *retryConnRefusedExecutor {
 	}
 }
 
-// isConnRefusedError reports whether err looks like an omniwmctl transient
-// connection-refused failure. omniwmctl exits with code 2 and the stderr
-// fragment "Connection refused" when its IPC socket is briefly absent.
-func isConnRefusedError(err error) bool {
+// isTransientOmniErr reports whether err looks like an omniwmctl TRANSIENT
+// failure that is worth retrying (as opposed to a genuine command error like
+// an unknown workspace).
+//
+// Two transient signatures, both observed on the real machine:
+//
+//  1. "Connection refused": omniwmctl exits with code 2 + that stderr fragment
+//     when its IPC socket is briefly absent — most often the production
+//     daemon's quiesce window overlapping OmniWM's listener restart on a
+//     workspace transition (specs.md §7 dual-listener race).
+//
+//  2. "exit status 2" with EMPTY stderr: immediately after an OmniWM restart
+//     (SSOT §3.5 / ACC-S7 `launchctl kickstart -k omniwm`), OmniWM accepts the
+//     connection but is not yet ready to answer `query windows/workspaces`,
+//     returning exit code 2 with no stderr. Observed 2026-06-01: an
+//     observe-barrier hit `query workspaces: exit status 2 (stderr: )` and
+//     hard-aborted the whole bootstrap reconcile. A GENUINE omniwmctl error
+//     (e.g. unknown workspace) always carries a non-empty stderr explaining
+//     it, so "exit status 2" + empty stderr is a reliable transient signature
+//     that does not mask real errors. CmdCtlExecutor.Run formats empty stderr
+//     as the literal "(stderr: )".
+func isTransientOmniErr(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "Connection refused") {
+	if strings.Contains(msg, "Connection refused") || strings.Contains(msg, "connection refused") {
 		return true
 	}
-	if strings.Contains(msg, "connection refused") {
+	if strings.Contains(msg, "exit status 2") && strings.Contains(msg, "(stderr: )") {
 		return true
 	}
 	return false
@@ -144,7 +162,7 @@ func (r *retryConnRefusedExecutor) Run(ctx context.Context, args ...string) ([]b
 		if err == nil {
 			return out, nil
 		}
-		if !isConnRefusedError(err) {
+		if !isTransientOmniErr(err) {
 			return out, err
 		}
 		lastOut = out

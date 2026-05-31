@@ -2041,6 +2041,13 @@ type humanE2E struct {
 	desiredPath       string
 	daemon            *exec.Cmd
 	daemonStderr      *bytes.Buffer
+	// externalBaseline points at the external-workspace snapshot that the
+	// newHumanE2E teardown guard asserts is unchanged. Scenarios that
+	// legitimately reshuffle the user's non-managed windows by an act OUTSIDE
+	// the projwm daemon's control (S7: OmniWM restart, §3.5) re-baseline it via
+	// rebaselineExternalWorkspaces so the guard isolates "what the daemon's
+	// recovery did" from "what the external act did".
+	externalBaseline *externalWorkspaceSnapshot
 }
 
 func newHumanE2E(t *testing.T) *humanE2E {
@@ -2098,6 +2105,10 @@ func newHumanE2E(t *testing.T) *humanE2E {
 
 	daemon, daemonStderr := startHumanDaemon(t, ctx, bins.projwmd, manifestPath, manifestDigest, storeDir, privatePayloadDir, socketPath, provenancePath)
 	h := &humanE2E{t: t, ctx: ctx, bins: bins, storeDir: storeDir, privatePayloadDir: privatePayloadDir, socketPath: socketPath, provenancePath: provenancePath, initialDesiredKey: initialDesiredKey, manifestPath: manifestPath, manifestDigest: manifestDigest, desiredPath: desiredPath, daemon: daemon, daemonStderr: daemonStderr}
+	// The teardown guard closure above captures the externalBefore VARIABLE;
+	// handing h a pointer to it lets rebaselineExternalWorkspaces() update the
+	// guard's reference frame from inside a scenario (see field doc / S7).
+	h.externalBaseline = &externalBefore
 	assertStartupProvenance(t, h)
 	// Postlude (registered AFTER h.stopDaemon; LIFO means h.stopDaemon
 	// runs first, this runs second): final SIGKILL of every projwm-next-
@@ -2397,6 +2408,23 @@ func (h *humanE2E) restartDaemon() {
 	h.stopDaemon()
 	h.daemon, h.daemonStderr = startHumanDaemon(h.t, h.ctx, h.bins.projwmd, h.manifestPath, h.manifestDigest, h.storeDir, h.privatePayloadDir, h.socketPath, h.provenancePath)
 	assertStartupProvenance(h.t, h)
+}
+
+// rebaselineExternalWorkspaces resets the external-workspace baseline that the
+// newHumanE2E teardown guard asserts is unchanged, to the CURRENT observed
+// state. It exists for S7 (OmniWM restart): restarting OmniWM reshuffles the
+// user's non-managed windows by its own nature (SSOT §3.5 "ウィンドウが再配置
+// される") — an act outside the projwm daemon's control. Re-baselining AFTER
+// OmniWM has settled but BEFORE the daemon's recovery runs makes the guard
+// verify the meaningful property — the daemon's recovery does not move external
+// windows beyond where the OmniWM restart left them — instead of falsely
+// flagging OmniWM's own reshuffle as a test-induced disturbance.
+func (h *humanE2E) rebaselineExternalWorkspaces() {
+	h.t.Helper()
+	if h.externalBaseline == nil {
+		return
+	}
+	*h.externalBaseline = snapshotExternalWorkspaces(h.t, h.ctx)
 }
 
 func (h *humanE2E) stopDaemon() {
@@ -4351,6 +4379,16 @@ func snapshotExternalWorkspaces(t *testing.T, ctx context.Context) externalWorks
 		if _, ok := humanIdealSlots[win.Workspace]; ok {
 			continue
 		}
+		// CP1 is the cockpit PARK workspace (SSOT §2.4) — a managed SYSTEM
+		// workspace, not a user workspace. The cockpit window that lives there
+		// is projwm-managed; its spawn/teardown lifecycle is the harness's, not
+		// the user's. Excluding it keeps the "did we disturb the user's
+		// windows" guard about genuine user/external workspaces only (it would
+		// otherwise flag the cockpit appearing/disappearing across snapshots,
+		// e.g. S7's post-restart re-baseline vs daemon-stop teardown).
+		if win.Workspace == "CP1" {
+			continue
+		}
 		snap = append(snap, externalWindowFingerprint(win))
 	}
 	sort.Strings(snap)
@@ -4997,6 +5035,22 @@ func waitForAllIdealSlots(t *testing.T, ctx context.Context, timeout time.Durati
 	for ws, layout := range humanIdealSlots {
 		assertLayout(t, ctx, ws, layout)
 	}
+}
+
+// humanAllIdealSlotsReached is the non-failing convergence predicate behind
+// waitForAllIdealSlots: it reports whether every ideal slot currently matches
+// its desired layout, without asserting/failing. Used to drive a tolerant
+// reconcile loop (S7 OmniWM-restart recovery) where transient transaction
+// failures during OmniWM's post-restart settling are expected and only
+// non-convergence within the budget is fatal.
+func humanAllIdealSlotsReached(t *testing.T, ctx context.Context) bool {
+	t.Helper()
+	for ws, layout := range humanIdealSlots {
+		if !layoutMatches(groupByColumn(windowsInWorkspace(t, ctx, ws)), layout) {
+			return false
+		}
+	}
+	return true
 }
 
 func waitForLayout(t *testing.T, ctx context.Context, ws string, layout e2eLayout, timeout time.Duration) {

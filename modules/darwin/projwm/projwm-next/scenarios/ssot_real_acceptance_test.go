@@ -86,15 +86,42 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 		failAcceptance(t, scenario.FailUnsafeToRun, "SSOT-S7/omniwm-restart",
 			fmt.Sprintf("launchctl kickstart -k %s failed: %v\n%s", label, err, out))
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := exec.CommandContext(h.ctx, "omniwmctl", "query", "windows", "--format", "json").CombinedOutput(); err == nil {
+	// Wait for OmniWM to come back AND stabilize. Responding to a single query
+	// is not enough: immediately after a restart OmniWM accepts the connection
+	// but is briefly not ready (it returns `query workspaces: exit status 2`
+	// with empty stderr — see isTransientOmniErr) and its catalog/column order
+	// is still settling. Require BOTH `query windows` and `query workspaces` to
+	// succeed for several CONSECUTIVE polls so the daemon's recovery reconcile
+	// runs against a settled OmniWM rather than racing its startup.
+	waitForOmniWMStable(t, h.ctx, 30*time.Second)
+	// OmniWM restart reshuffles the user's non-managed windows by its own
+	// nature (§3.5) — that is OmniWM's act, not the projwm daemon's. Re-baseline
+	// the external-workspace teardown guard to this post-restart reality (before
+	// the daemon's recovery runs) so the guard verifies the meaningful property:
+	// the daemon's recovery moves only MANAGED windows back to their slots and
+	// leaves external windows where OmniWM's restart placed them.
+	h.rebaselineExternalWorkspaces()
+	// Drive recovery to convergence. The daemon adopts the live tmux sessions
+	// (INV-03) and moves managed windows back to their slots (§3.5: "窓の存在
+	// 確認 → 無ければ再作成、あれば正しい slot に配置"). Per §7.1 a transaction that
+	// fails to settle — e.g. a reorder racing OmniWM's freshly-restarted,
+	// still-settling catalog — records a dirty scope and is retried on the NEXT
+	// event/intent (there is no auto-retry). So we nudge `reconcile` repeatedly
+	// until the ideal slots are reached, within the §3.5 / §9.2③ recovery
+	// budget; transient transaction failures during the settling window are
+	// expected and tolerated, only non-convergence within the budget is fatal.
+	recoveryDeadline := time.Now().Add(90 * time.Second)
+	for {
+		_, _ = h.runOutput("reconcile") // tolerant nudge: ignore transient settling failures
+		if humanAllIdealSlotsReached(t, h.ctx) {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		if time.Now().After(recoveryDeadline) {
+			waitForAllIdealSlots(t, h.ctx, time.Second) // emits the detailed per-slot mismatch failure
+			break
+		}
+		time.Sleep(2 * time.Second)
 	}
-	h.sendEvent(event.KindSafetyTimer, event.SourceTimer)
-	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
 
 	after := currentDesiredWorldKey(t, h.storeDir)
 	if before != after {
@@ -109,6 +136,38 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 		}
 	}
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S7")
+}
+
+// waitForOmniWMStable blocks until OmniWM has both come back AND settled after a
+// restart. A single successful query is not enough: immediately after a restart
+// OmniWM accepts the connection but is briefly not ready, returning
+// `query workspaces: exit status 2` with empty stderr (see isTransientOmniErr),
+// and its window catalog / column order is still settling. We require BOTH
+// `query windows` and `query workspaces` to succeed for 3 CONSECUTIVE polls so
+// the daemon's recovery reconcile runs against a settled OmniWM.
+func waitForOmniWMStable(t *testing.T, ctx context.Context, timeout time.Duration) {
+	t.Helper()
+	const wantStreak = 3
+	deadline := time.Now().Add(timeout)
+	streak := 0
+	for time.Now().Before(deadline) {
+		if omniQueryOK(ctx, "windows") && omniQueryOK(ctx, "workspaces") {
+			streak++
+			if streak >= wantStreak {
+				return
+			}
+		} else {
+			streak = 0
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	failAcceptance(t, scenario.FailUnsafeToRun, "SSOT-S7/omniwm-stabilize",
+		fmt.Sprintf("OmniWM did not stabilize (%d consecutive healthy query windows+workspaces) within %s after restart", wantStreak, timeout))
+}
+
+func omniQueryOK(ctx context.Context, what string) bool {
+	_, err := exec.CommandContext(ctx, "omniwmctl", "query", what, "--format", "json").CombinedOutput()
+	return err == nil
 }
 
 func TestHumanE2ESSOTSummonIdempotencySteps(t *testing.T) {

@@ -1060,3 +1060,66 @@ func TestSigWM_ShowCockpitOnDisplay_DisplayNotFound(t *testing.T) {
 	// This is a best-effort behavior — the important thing is it doesn't panic.
 	_ = sw.ShowCockpitOnDisplay(context.Background(), "display:99", "23")
 }
+
+// TestIsTransientOmniErr locks the transient-vs-genuine classification that
+// gates omniwmctl retry (SSOT §3.5 / ACC-S7 OmniWM restart). The exit-2 +
+// empty-stderr case is the post-restart "OmniWM up but not ready" signature
+// observed 2026-06-01; exit-2 WITH stderr is a genuine error and must NOT be
+// retried (it would mask real failures and add latency).
+func TestIsTransientOmniErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"conn-refused", fmt.Errorf("omniwmctl query windows: exit status 2 (stderr: Connection refused (os error 61))"), true},
+		{"conn-refused-lower", fmt.Errorf("dial unix: connection refused"), true},
+		// CmdCtlExecutor.Run formats empty stderr as the literal "(stderr: )".
+		{"exit2-empty-stderr", fmt.Errorf("omniwmctl query workspaces --format json: exit status 2 (stderr: )"), true},
+		{"exit2-with-stderr", fmt.Errorf("omniwmctl focus-workspace 99: exit status 2 (stderr: no such workspace)"), false},
+		{"timeout", fmt.Errorf("omniwmctl query windows: timed out after 5s"), false},
+		{"exit1", fmt.Errorf("omniwmctl command move-to-workspace 9: exit status 1 (stderr: )"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientOmniErr(tc.err); got != tc.want {
+				t.Fatalf("isTransientOmniErr(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRetryConnRefusedExecutorRetriesNotReadyOmniWM proves the retry decorator
+// transparently rides out OmniWM's post-restart "exit status 2 + empty stderr"
+// not-ready window and then succeeds, without surfacing the transient error to
+// the caller (ACC-S7 robustness).
+func TestRetryConnRefusedExecutorRetriesNotReadyOmniWM(t *testing.T) {
+	m := newMockExec()
+	notReady := fmt.Errorf("omniwmctl query workspaces --format json: exit status 2 (stderr: )")
+	m.setErrSeq("query workspaces", notReady, notReady, nil)
+	m.set("query workspaces", []byte(`{"ok":true}`))
+
+	r := newRetryConnRefusedExecutor(m)
+	out, err := r.Run(context.Background(), "query", "workspaces", "--format", "json")
+	if err != nil {
+		t.Fatalf("retry should ride out two not-ready transients then succeed, got err=%v", err)
+	}
+	if string(out) != `{"ok":true}` {
+		t.Fatalf("unexpected output after retry: %q", out)
+	}
+}
+
+// TestRetryConnRefusedExecutorDoesNotRetryGenuineError proves a genuine
+// omniwmctl error (exit 2 WITH stderr) is returned immediately, not retried.
+func TestRetryConnRefusedExecutorDoesNotRetryGenuineError(t *testing.T) {
+	m := newMockExec()
+	m.setErr("focus-workspace", fmt.Errorf("omniwmctl focus-workspace 99: exit status 2 (stderr: no such workspace)"))
+	r := newRetryConnRefusedExecutor(m)
+	if _, err := r.Run(context.Background(), "focus-workspace", "99"); err == nil {
+		t.Fatal("genuine error must be returned, not retried into success")
+	}
+	if n := len(m.calls); n != 1 {
+		t.Fatalf("genuine error must not be retried: got %d calls, want 1", n)
+	}
+}
