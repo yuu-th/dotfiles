@@ -1997,10 +1997,15 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 		if err := s.unstackWorkspaceLocked(ctx, ws, len(want)); err != nil {
 			return err
 		}
+		// Let OmniWM's settle pipeline quiesce before observing/moving so the
+		// move loop plans against a stable base rather than racing OmniWM's own
+		// re-layout (see waitWorkspaceOrderStable).
+		s.waitWorkspaceOrderStable(ctx, ws, want, 6*time.Second)
 		current, err = s.liveOrderInWorkspace(ctx, ws)
 		if err != nil {
 			return err
 		}
+		wmTracef("reorder[%s] pass=%d post-unstack order=%v want=%v", ws, pass, current, want)
 		for i, target := range want {
 			// Bound by total live windows, not just len(want): each move-column
 			// left advances the target one PHYSICAL column which may be a stray,
@@ -2253,6 +2258,74 @@ func (s *SigWM) liveOrderInWorkspace(ctx context.Context, ws w.WorkspaceID) ([]w
 	return out, nil
 }
 
+// waitWorkspaceOrderStable blocks until the MANAGED-window order in ws is
+// identical across stableReads consecutive observations (strays transparent,
+// matching managedOrderSettled), or until timeout. Immediately after a recovery
+// move phase — or an OmniWM restart — OmniWM's own settle pipeline keeps
+// re-laying-out the columns for a few seconds; starting the reorder move loop
+// against that moving target makes per-move index decisions on stale
+// observations and the order re-scrambles between passes (observed 2026-06-01
+// in ACC-S7 recovery: pass 0 was one swap away, pass 1 was worse). Waiting for
+// quiescence first gives the reorder a stable base. Best-effort: on timeout it
+// returns so the caller proceeds anyway (the reorder's own retry still applies).
+func (s *SigWM) waitWorkspaceOrderStable(ctx context.Context, ws w.WorkspaceID, want []w.LiveWindowID, timeout time.Duration) {
+	const stableReads = 3
+	const settlePoll = 350 * time.Millisecond
+	wantSet := make(map[w.LiveWindowID]bool, len(want))
+	for _, id := range want {
+		wantSet[id] = true
+	}
+	filtered := func(got []w.LiveWindowID) []w.LiveWindowID {
+		out := make([]w.LiveWindowID, 0, len(want))
+		for _, id := range got {
+			if wantSet[id] {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	deadline := time.Now().Add(timeout)
+	var prev []w.LiveWindowID
+	streak := 0
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		fg := filtered(mustLiveOrder(s, ctx, ws))
+		if len(fg) < len(want) {
+			// A wanted window is transiently missing from the catalog — not
+			// quiescent yet.
+			streak, prev = 0, nil
+			time.Sleep(settlePoll)
+			continue
+		}
+		if prev != nil && sameLiveOrder(prev, fg) {
+			streak++
+			if streak >= stableReads {
+				wmTracef("reorder[%s] order quiescent (%d stable reads): %v", ws, stableReads, fg)
+				return
+			}
+		} else {
+			streak = 1
+		}
+		prev = fg
+		time.Sleep(settlePoll)
+	}
+	wmTracef("reorder[%s] order did NOT quiesce within %s; proceeding", ws, timeout)
+}
+
+// mustLiveOrder returns the live order or an empty slice on error (the caller,
+// waitWorkspaceOrderStable, treats an empty/short read as "not yet quiescent").
+func mustLiveOrder(s *SigWM, ctx context.Context, ws w.WorkspaceID) []w.LiveWindowID {
+	got, err := s.liveOrderInWorkspace(ctx, ws)
+	if err != nil {
+		return nil
+	}
+	return got
+}
+
 // reorderColumnSettleTimeout enforces a minimum 5s settle window for
 // liveOrderInWorkspace polling during ReorderColumns, even when
 // SigWM.SettleTimeout is configured lower (e.g. an aggressive unit-test
@@ -2269,6 +2342,7 @@ func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.
 		timeout = reorderColumnSettleTimeout
 	}
 	deadline := time.Now().Add(timeout)
+	lastTrace := time.Now().Add(-time.Hour)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -2281,6 +2355,10 @@ func (s *SigWM) waitColumnOrder(ctx context.Context, ws w.WorkspaceID, want []w.
 		}
 		if managedOrderSettled(got, want) {
 			return nil
+		}
+		if time.Since(lastTrace) > 2*time.Second {
+			wmTracef("reorder[%s] waitColumnOrder NOT settled got=%v want=%v", ws, got, want)
+			lastTrace = time.Now()
 		}
 		time.Sleep(120 * time.Millisecond)
 	}

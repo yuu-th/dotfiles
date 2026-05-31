@@ -47,6 +47,12 @@ type mockExec struct {
 	errFor map[string]error
 	// errSequence injects sequential errors for a matching prefix.
 	errSequence map[string][]error
+	// fn, if set, is consulted FIRST on every Run; returning handled=true
+	// short-circuits the static maps. Lets a test model state transitions
+	// (e.g. "query windows returns the pre-move order until move-column is
+	// issued, the post-move order after") so it is robust to how many times
+	// the production code observes — not coupled to a fixed query count.
+	fn func(args []string) (out []byte, err error, handled bool)
 }
 
 func newMockExec() *mockExec {
@@ -66,6 +72,11 @@ func (m *mockExec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, mockCall{args: append([]string(nil), args...)})
+	if m.fn != nil {
+		if out, err, handled := m.fn(append([]string(nil), args...)); handled {
+			return out, err
+		}
+	}
 	joined := strings.Join(args, " ")
 	for prefix, seq := range m.errSequence {
 		if strings.HasPrefix(joined, prefix) && len(seq) > 0 {
@@ -641,12 +652,29 @@ func TestSigWM_ReorderColumns_SingleWindowColumns(t *testing.T) {
 		{"id":"a","title":"a","app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"},
 		 "workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}
 	]}`)
-	m.setSeq("query windows", before, before, before, after, after)
-	m.set("query windows", after)
+	// State-aware: `query windows` returns the pre-move order [a,b] until a
+	// `move-column left` is issued, then the post-move order [b,a]. This makes
+	// the test robust to HOW MANY times the reorder observes the workspace
+	// (the quiescence pre-pass + per-move re-observation), rather than coupling
+	// it to a fixed query-count sequence.
+	moved := false
+	m.fn = func(args []string) ([]byte, error, bool) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "command move-column"):
+			moved = true
+			return []byte(`{"ok":true,"result":{"kind":"move-column","payload":{}}}`), nil, true
+		case strings.HasPrefix(joined, "query windows"):
+			if moved {
+				return after, nil, true
+			}
+			return before, nil, true
+		}
+		return nil, nil, false // fall through to static maps
+	}
 	m.set("query focused-window", okEnvelope("focused-window", `{"window":{"id":"b"}}`))
 	m.set("window focus", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
 	m.set("workspace focus-name", []byte(`{"ok":true,"result":{"kind":"focus","payload":{}}}`))
-	m.set("command move-column", []byte(`{"ok":true,"result":{"kind":"move-column","payload":{}}}`))
 	sw := NewSigWM(env, m, &mockLauncher{})
 	if err := sw.ReorderColumns(context.Background(), "ws-A", [][]w.LiveWindowID{{"b"}, {"a"}}); err != nil {
 		t.Fatalf("ReorderColumns: %v", err)
