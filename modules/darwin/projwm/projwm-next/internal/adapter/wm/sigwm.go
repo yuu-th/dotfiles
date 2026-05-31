@@ -551,6 +551,17 @@ func (s *SigWM) Observe(ctx context.Context) (w.ObservedWorld, error) {
 		}
 		live := w.LiveWindowID(cw.ID)
 		kind := classifyLiveWindow(cw)
+		// Gated S2 spawn-browser convergence diagnostic. For every
+		// com.vivaldi.Vivaldi window report the PID omniwm attributed, the
+		// classified kind, and whether vivaldiManaged() considered it managed.
+		// This pinpoints whether the managed automation Vivaldi is cataloged as
+		// WindowBrowser (so identity.Resolve finds it) or misclassified as
+		// WindowExternal (so the planner re-emits spawn-browser). Read-only;
+		// stderr only when PROJWM_NEXT_PLANNER_TRACE=1.
+		if os.Getenv("PROJWM_NEXT_PLANNER_TRACE") == "1" && cw.App.BundleID == "com.vivaldi.Vivaldi" {
+			fmt.Fprintf(os.Stderr, "[WM_TRACE] vivaldi-window live=%s pid=%d ws=%s kind=%s managed=%v title=%q\n",
+				live, cw.PID, wsID, kind, vivaldiManaged(cw.PID), cw.Title)
+		}
 		// v2.8 §8.10 ghost-window filter: omniwm can hold a stale window
 		// reference whose backing process is dead (we hit this when a
 		// previous daemon restart left orphan ghostty entries). For

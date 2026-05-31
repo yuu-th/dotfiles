@@ -4,6 +4,7 @@ package planner
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,76 @@ import (
 	"github.com/yuu-th/projwm-next/internal/op"
 	w "github.com/yuu-th/projwm-next/internal/world"
 )
+
+// plannerTraceEnabled gates the spawn-browser convergence diagnostic. Default
+// OFF; enable with PROJWM_NEXT_PLANNER_TRACE=1. The trace prints, per Plan call
+// (i.e. per converge-loop replan), every observed WindowBrowser window the
+// planner sees (live id, workspace, title, bundleID, MatchedTo) and, for each
+// active desired browser window, the identity.Resolve Class + Candidates that
+// drives the spawn-browser-vs-converge decision. Keepable diagnostic
+// (handoff §9.3): it is read-only and writes only to stderr when enabled.
+func plannerTraceEnabled() bool {
+	return os.Getenv("PROJWM_NEXT_PLANNER_TRACE") == "1"
+}
+
+func plannerTracef(format string, args ...interface{}) {
+	if !plannerTraceEnabled() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[PLANNER_TRACE] "+format+"\n", args...)
+}
+
+// traceObservedBrowsers logs every observed window classified WindowBrowser
+// (and, for context, every com.vivaldi.Vivaldi-bundle window regardless of
+// kind, since a managed Vivaldi misclassified as WindowExternal is the exact
+// failure mode under investigation). Read-only.
+func traceObservedBrowsers(observed w.ObservedWorld) {
+	if !plannerTraceEnabled() {
+		return
+	}
+	browserCount := 0
+	vivaldiCount := 0
+	for _, id := range sortedLiveIDs(observed.Windows) {
+		ow := observed.Windows[id]
+		isVivaldi := ow.App.BundleID == "com.vivaldi.Vivaldi"
+		if ow.Kind != w.WindowBrowser && !isVivaldi {
+			continue
+		}
+		if ow.Kind == w.WindowBrowser {
+			browserCount++
+		}
+		if isVivaldi {
+			vivaldiCount++
+		}
+		matched := "<nil>"
+		if ow.MatchedTo != nil {
+			matched = fmt.Sprintf("%s/%s/%d", ow.MatchedTo.Project, ow.MatchedTo.Kind, ow.MatchedTo.Index)
+		}
+		plannerTracef("observed-window live=%s kind=%s bundle=%s ws=%s vis=%s focused=%v title=%q matchedTo=%s",
+			id, ow.Kind, ow.App.BundleID, ow.Workspace, ow.Visibility, ow.Focused, ow.Title.Value, matched)
+	}
+	plannerTracef("observed-summary WindowBrowser=%d vivaldiBundle=%d totalWindows=%d", browserCount, vivaldiCount, len(observed.Windows))
+}
+
+func traceResolveResult(dw w.DesiredWindow, res identity.Resolution, workspace w.WorkspaceID) {
+	if !plannerTraceEnabled() {
+		return
+	}
+	cands := make([]string, 0, len(res.Candidates))
+	for _, c := range res.Candidates {
+		cands = append(cands, string(c))
+	}
+	ev := make([]string, 0, len(res.Evidence))
+	for _, e := range res.Evidence {
+		ev = append(ev, fmt.Sprintf("%s:%s@%s", e.Kind, e.Strength, e.Window))
+	}
+	miss := make([]string, 0, len(res.MissingEvidence))
+	for _, m := range res.MissingEvidence {
+		miss = append(miss, string(m))
+	}
+	plannerTracef("resolve desired=%s/%s/%d kind=%s slotWS=%s -> Class=%s Live=%s Candidates=%v Evidence=%v Missing=%v",
+		dw.ID.Project, dw.ID.Kind, dw.ID.Index, dw.Kind, workspace, res.Class, res.Live, cands, ev, miss)
+}
 
 // userCloseRateLimited returns true when the user has closed the given
 // DesiredWindow at least twice in the last 60 seconds (requirements T4.4).
@@ -60,6 +131,10 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 	mkID := func(kindHint string) w.OperationID {
 		idCounter++
 		return w.OperationID(fmt.Sprintf("op-%s-%d", kindHint, idCounter))
+	}
+	if plannerTraceEnabled() {
+		plannerTracef("=== Plan() command=%s reason=%s epoch=%d activeProfile=%s ===", command, reason, state.Meta.Epoch, target.ActiveProfile)
+		traceObservedBrowsers(state.Observed)
 	}
 	protectedLive := liveCandidatesForActiveDesired(state.Observed, target, state.Meta.WindowProvenance)
 	closeBlocked := closeWindowBlocked(state.Environment)
@@ -180,6 +255,9 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				// colliding same-title user window resolves UniqueStrong to OUR
 				// window (C1/A2) instead of hard-erroring as Ambiguous below.
 				res := identity.ResolveWithFocusTiebreak(dw, state.Observed, identity.ResolveOptions{Provenance: state.Meta.WindowProvenance})
+				if dw.Kind == w.WindowBrowser {
+					traceResolveResult(dw, res, workspace)
+				}
 				if res.Class == identity.ClassUniqueStrong {
 					// Window exists. May need to be moved to its slot workspace.
 					ow := state.Observed.Windows[res.Live]
@@ -635,6 +713,15 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 		ops = append(ops, mkBarrier())
 	}
 	ops = append(ops, phaseLayout...)
+
+	if plannerTraceEnabled() {
+		kinds := make([]string, 0, len(ops))
+		for _, o := range ops {
+			kinds = append(kinds, string(o.Kind))
+		}
+		plannerTracef("emitted-ops count=%d kinds=%v (removals=%d spawns=%d layout=%d)",
+			len(ops), kinds, len(phaseRemovals), len(phaseSpawns), len(phaseLayout))
+	}
 
 	return op.Plan{
 		ID:         w.PlanID(fmt.Sprintf("plan-e%d", state.Meta.Epoch)),
