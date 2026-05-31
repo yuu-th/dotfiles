@@ -1967,17 +1967,28 @@ func (c *Controller) forgetOrphanedBrowserPayloads(ctx context.Context, pre, pos
 	}
 }
 
-// collectBrowserRefs returns the set of every URLPayloadRefs entry across
-// all LIVE projects + windows in d. Archived projects are excluded so
-// archive (SSOT §4.5) becomes a GC trigger: archived browser refs are no
-// longer reachable by UnarchiveProject (SSOT §4.5 park-state, no auto
-// restore) and would otherwise leak in PrivatePayloadStore forever.
+// collectBrowserRefs returns the set of every URLPayloadRefs entry reachable
+// from any project in d — INCLUDING archived projects.
+//
+// An archived project retains its Windows[] (ArchiveProject only flips
+// DesiredProject.Archived = true; see reducer.go), so its browser tokens stay
+// reachable: unarchive→assign re-deploys the same windows with the same tokens
+// and OpenInProfile restores the tabs from PrivatePayloadStore (SSOT §4.4
+// line 913 "再開時にタブ状態を復元", §1.2 recovery). A token therefore becomes a
+// true orphan only when its project is removed from DesiredWorld entirely —
+// i.e. DeleteProject, whose reducer deletes it from d.Projects and whose
+// intent doc (intent.DeleteProject{Purge}) is the spec's purge point
+// ("drops PrivatePayloadStore artifacts"). Archive is NOT a purge point.
+//
+// (History: this used to `continue` on pr.Archived, which made the orphan GC
+// delete the browser payload on ARCHIVE — conflating archive with delete
+// (SSOT line214 削除≠アーカイブ). That broke archive→unarchive→assign browser
+// re-deploy: the re-spawn could not read the GC'd payload and hard-failed into
+// a spawn-browser respawn loop. Fixed by treating delete, not archive, as the
+// GC trigger.)
 func collectBrowserRefs(d w.DesiredWorld) map[string]bool {
 	out := map[string]bool{}
 	for _, pr := range d.Projects {
-		if pr.Archived {
-			continue
-		}
 		for _, win := range pr.Windows {
 			if win.Kind != w.WindowBrowser || win.Browser == nil {
 				continue

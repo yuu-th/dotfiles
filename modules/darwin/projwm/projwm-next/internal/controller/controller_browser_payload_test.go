@@ -217,10 +217,14 @@ func TestControllerBrowserReorderTabs_NoPayloadStoreCalls(t *testing.T) {
 	}
 }
 
-// SSOT §4.4 BR-PRIV-NOSTORE + §4.5 ARCHIVE: archiving a project must
-// Forget every browser tab payload of its windows (orphan GC). The
-// orphan GC stage runs after reducer applies ArchiveProject.
-func TestControllerArchiveProject_ForgetsOrphanedBrowserPayloads(t *testing.T) {
+// SSOT §4.5 ARCHIVE + §1.2 recovery + line214 (削除≠アーカイブ): archiving a
+// project must NOT Forget its browser tab payloads. Archive only flips
+// DesiredProject.Archived=true and keeps Windows[] (+ their tokens), so the
+// tokens stay reachable via unarchive→assign re-deploy, which restores the
+// tabs (SSOT §4.4 line 913). The purge point is DeleteProject, not archive
+// (see TestControllerDeleteProject_ForgetsBrowserPayloads). Regression guard
+// for the archive→unarchive→assign browser respawn-loop bug.
+func TestControllerArchiveProject_KeepsBrowserPayloads(t *testing.T) {
 	ctrl, payloadStore, winID := newControllerWithPayloadStore(t)
 	ctx := context.Background()
 	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID, URL: "https://a"}); err != nil {
@@ -243,13 +247,59 @@ func TestControllerArchiveProject_ForgetsOrphanedBrowserPayloads(t *testing.T) {
 	}
 
 	gotForgets := payloadStore.forgets[forgetsBefore:]
+	if len(gotForgets) != 0 {
+		t.Fatalf("Forget calls after archive = %d, want 0 (archive must keep payloads for unarchive→assign restore): %v", len(gotForgets), gotForgets)
+	}
+	// Tokens must still be referenced by the (now archived) project so a later
+	// unarchive→assign can restore them.
+	survivingTokens := map[string]bool{}
+	for _, ref := range ctrl.state.Desired.Projects["p1"].Windows[0].Browser.URLPayloadRefs {
+		survivingTokens[string(ref)] = true
+	}
+	for tok := range tokensPriorToArchive {
+		if !survivingTokens[tok] {
+			t.Errorf("archived project lost browser token %q (must survive for restore)", tok)
+		}
+	}
+}
+
+// SSOT §4.4 BR-PRIV-NOSTORE: DeleteProject (the spec's purge point —
+// intent.DeleteProject{Purge} "drops PrivatePayloadStore artifacts") removes
+// the project from DesiredWorld entirely, making its browser tokens true
+// orphans, so the post-commit orphan GC Forgets every tab payload.
+func TestControllerDeleteProject_ForgetsBrowserPayloads(t *testing.T) {
+	ctrl, payloadStore, winID := newControllerWithPayloadStore(t)
+	ctx := context.Background()
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID, URL: "https://a"}); err != nil {
+		t.Fatalf("seed AddTab a: %v", err)
+	}
+	if _, err := ctrl.ApplyIntent(ctx, intent.BrowserAddTab{Project: "p1", WindowID: winID, URL: "https://b"}); err != nil {
+		t.Fatalf("seed AddTab b: %v", err)
+	}
+	tokensPriorToDelete := map[string]bool{}
+	for _, ref := range ctrl.state.Desired.Projects["p1"].Windows[0].Browser.URLPayloadRefs {
+		tokensPriorToDelete[string(ref)] = true
+	}
+	if len(tokensPriorToDelete) != 2 {
+		t.Fatalf("setup: expected 2 tokens prior to delete, got %d", len(tokensPriorToDelete))
+	}
+	forgetsBefore := len(payloadStore.forgets)
+
+	if _, err := ctrl.ApplyIntent(ctx, intent.DeleteProject{ID: "p1", Purge: true}); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	gotForgets := payloadStore.forgets[forgetsBefore:]
 	if len(gotForgets) != 2 {
-		t.Fatalf("Forget calls after archive = %d, want 2 (one per tab): %v", len(gotForgets), gotForgets)
+		t.Fatalf("Forget calls after delete = %d, want 2 (one per tab): %v", len(gotForgets), gotForgets)
 	}
 	for _, ft := range gotForgets {
-		if !tokensPriorToArchive[ft] {
+		if !tokensPriorToDelete[ft] {
 			t.Errorf("Forget called with unrecognised token %q", ft)
 		}
+	}
+	if _, exists := ctrl.state.Desired.Projects["p1"]; exists {
+		t.Errorf("DeleteProject must remove p1 from DesiredWorld")
 	}
 }
 
