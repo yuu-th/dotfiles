@@ -13,6 +13,7 @@ import (
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -3808,6 +3809,17 @@ func startHumanDaemon(t *testing.T, ctx context.Context, bin, manifest, manifest
 	)
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
+	// Diagnostic (handoff §14.10): when PROJWM_NEXT_DAEMON_STDERR_FILE is set,
+	// tee the daemon's full stderr (including the timestamped PLANNER_TRACE /
+	// WM_TRACE / settle timeline) to a file so the complete trace is captured
+	// even if the failure-attachment dump truncates. Off by default; never
+	// affects test behavior.
+	if traceFile := os.Getenv("PROJWM_NEXT_DAEMON_STDERR_FILE"); traceFile != "" {
+		if f, ferr := os.OpenFile(traceFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); ferr == nil {
+			cmd.Stderr = io.MultiWriter(stderr, f)
+			t.Cleanup(func() { _ = f.Close() })
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		failAcceptance(t, scenario.FailNotImplemented, "daemon/start", fmt.Sprintf("start projwmd: %v", err))
 	}

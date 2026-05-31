@@ -573,8 +573,12 @@ func (s *SigWM) Observe(ctx context.Context) (w.ObservedWorld, error) {
 		// WindowBrowser (so identity.Resolve finds it) or misclassified as
 		// WindowExternal (so the planner re-emits spawn-browser). Read-only;
 		// stderr only when PROJWM_NEXT_PLANNER_TRACE=1.
+		// Gate on the env BEFORE evaluating vivaldiManaged(cw.PID): that helper
+		// shells out to pgrep, and Observe() runs this per Vivaldi window every
+		// cycle — evaluating it as an unconditional wmTracef arg would pgrep on
+		// the hot path even with tracing off.
 		if os.Getenv("PROJWM_NEXT_PLANNER_TRACE") == "1" && cw.App.BundleID == "com.vivaldi.Vivaldi" {
-			fmt.Fprintf(os.Stderr, "[WM_TRACE] vivaldi-window live=%s pid=%d ws=%s kind=%s managed=%v title=%q\n",
+			wmTracef("vivaldi-window live=%s pid=%d ws=%s kind=%s managed=%v title=%q",
 				live, cw.PID, wsID, kind, vivaldiManaged(cw.PID), cw.Title)
 		}
 		// v2.8 §8.10 ghost-window filter: omniwm can hold a stale window
@@ -1082,8 +1086,10 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 		}
 	case w.WindowBrowser:
 		if err := s.spawnVivaldi(ctx, r); err != nil {
+			wmTracef("spawnVivaldi ERROR (returns before settle dispatch): %v", err)
 			return "", fmt.Errorf("sigwm.Spawn[vivaldi]: %w", err)
 		}
+		wmTracef("spawnVivaldi OK (OpenInProfile created/adopted live)")
 	default:
 		return "", fmt.Errorf("sigwm.Spawn: unsupported kind %q", r.Kind)
 	}
@@ -1136,6 +1142,7 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 	// no longer required because (a) Zed's title may lag the actual
 	// window creation, and (b) the pre/post diff is itself enough to
 	// disambiguate a single new instance.
+	wmTracef("Spawn dispatch kind=%s bundle=%s targetWS=%s before-count=%d", r.Kind, r.BundleID, r.Workspace, len(before))
 	if r.Kind == w.WindowBrowser {
 		live, err = s.settleNewBrowserWindowByDiff(ctx, r.BundleID, before, aliveFn)
 	} else if r.Kind == w.WindowEditor {
@@ -1150,13 +1157,17 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 	// move (we don't have a target live ID yet) and let the next cycle's
 	// observation + planner handle workspace placement.
 	if live == "" {
+		wmTracef("Spawn EMPTY-ACCEPT kind=%s bundle=%s (no live id; deferring placement to next observe)", r.Kind, r.BundleID)
 		return "", nil
 	}
 
 	// Move to target workspace if it isn't already there.
+	wmTracef("Spawn post-spawn move live=%s -> targetWS=%s kind=%s", live, r.Workspace, r.Kind)
 	if err := s.moveLiveToWorkspaceLocked(ctx, live, r.Workspace); err != nil {
+		wmTracef("Spawn post-spawn move FAILED live=%s -> targetWS=%s err=%v", live, r.Workspace, err)
 		return live, fmt.Errorf("sigwm.Spawn: post-spawn move: %w", err)
 	}
+	wmTracef("Spawn post-spawn move OK live=%s -> targetWS=%s", live, r.Workspace)
 	if r.Kind == w.WindowEditor {
 		if err := s.closeNewZedEmptyProjects(ctx, before, hadZedEmptyBefore); err != nil {
 			return live, fmt.Errorf("sigwm.Spawn[zed]: cleanup auxiliary windows: %w", err)
@@ -1310,6 +1321,21 @@ func managedVivaldiProcessAlive() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
+// wmTracef is the adapter-side counterpart to planner.plannerTracef: a
+// read-only, default-OFF diagnostic gated on PROJWM_NEXT_PLANNER_TRACE=1, with a
+// wall-clock timestamp so the browser-settle timeline can be correlated against
+// the planner trace and an external `omniwmctl query windows` recorder
+// (handoff §14.10). Disambiguates whether the 75s browser settle actually runs
+// to its budget and whether the daemon's own queryWindows ever surfaces the
+// managed Vivaldi window.
+func wmTracef(format string, args ...interface{}) {
+	if os.Getenv("PROJWM_NEXT_PLANNER_TRACE") != "1" {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "[WM_TRACE %s] %s\n", time.Now().Format("15:04:05.000"), msg)
+}
+
 // settleNewBrowserWindowByDiff is the browser-specific settle. Unlike
 // settleNewWindowByDiff it (a) polls for the generous browserSettleTimeout so
 // it can wait out a cold --user-data-dir first-run, and (b) does NOT empty-
@@ -1324,41 +1350,65 @@ func managedVivaldiProcessAlive() bool {
 // keeps the executor's failure handling intact while the generous budget makes
 // the success path the common one.
 func (s *SigWM) settleNewBrowserWindowByDiff(ctx context.Context, bundleID string, before map[string]struct{}, processAlive func() bool) (w.LiveWindowID, error) {
-	deadline := time.Now().Add(s.browserSettleTimeout())
-	var lastCount int
+	start := time.Now()
+	budget := s.browserSettleTimeout()
+	deadline := start.Add(budget)
+	wmTracef("settle[browser] START bundle=%s before-count=%d budget=%s alive=%v", bundleID, len(before), budget, processAlive != nil && processAlive())
+	var lastCount = -1
+	var lastBundleTotal = -1
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
+			wmTracef("settle[browser] CTX-CANCEL t=%.1fs err=%v", time.Since(start).Seconds(), ctx.Err())
 			return "", ctx.Err()
 		default:
 		}
 		wins, err := s.queryWindows(ctx)
 		if err != nil {
+			wmTracef("settle[browser] QUERY-ERR t=%.1fs err=%v", time.Since(start).Seconds(), err)
 			return "", err
 		}
 		var cands []ctlWindow
+		bundleTotal := 0
 		for _, cw := range wins {
 			if cw.App.BundleID != bundleID {
 				continue
 			}
+			bundleTotal++
 			if _, existed := before[cw.ID]; !existed {
 				cands = append(cands, cw)
 			}
 		}
-		lastCount = len(cands)
+		// Trace whenever the new-candidate count OR the total bundle window
+		// count changes, so the timeline shows exactly when (if ever) the
+		// managed Vivaldi window surfaces in the daemon's own queryWindows —
+		// the same omniwmctl query an external recorder runs.
+		if len(cands) != lastCount || bundleTotal != lastBundleTotal {
+			ids := make([]string, 0, len(cands))
+			for _, c := range cands {
+				ids = append(ids, fmt.Sprintf("%s@ws:%s/%s", c.ID, c.Workspace.RawName, c.Workspace.DisplayName))
+			}
+			wmTracef("settle[browser] poll t=%.1fs newCands=%d bundleTotal=%d alive=%v new=%v", time.Since(start).Seconds(), len(cands), bundleTotal, processAlive != nil && processAlive(), ids)
+			lastCount = len(cands)
+			lastBundleTotal = bundleTotal
+		}
 		if len(cands) == 1 {
+			wmTracef("settle[browser] FOUND t=%.1fs live=%s ws=%s/%s", time.Since(start).Seconds(), cands[0].ID, cands[0].Workspace.RawName, cands[0].Workspace.DisplayName)
 			return w.LiveWindowID(cands[0].ID), nil
 		}
 		if len(cands) > 1 {
+			wmTracef("settle[browser] AMBIGUOUS t=%.1fs count=%d", time.Since(start).Seconds(), len(cands))
 			return "", fmt.Errorf("sigwm.settle[browser]: ambiguous newly spawned windows (count=%d) for bundle=%s", len(cands), bundleID)
 		}
 		// If the managed Vivaldi process died (e.g. crash) before the window
 		// surfaced, stop waiting early — there is nothing to converge on.
 		if processAlive != nil && !processAlive() {
+			wmTracef("settle[browser] PROCESS-DIED t=%.1fs", time.Since(start).Seconds())
 			return "", fmt.Errorf("sigwm.settle[browser]: managed Vivaldi process exited before window surfaced for bundle=%s", bundleID)
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+	wmTracef("settle[browser] TIMEOUT t=%.1fs lastNewCount=%d", time.Since(start).Seconds(), lastCount)
 	return "", fmt.Errorf("sigwm.settle[browser]: timeout (last new count=%d) for bundle=%s after %s (managed first-run profile generation may have stalled)", lastCount, bundleID, s.browserSettleTimeout())
 }
 

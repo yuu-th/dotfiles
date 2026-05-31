@@ -353,6 +353,8 @@ func (a *VivaldiAdapter) OpenInProfile(ctx context.Context, profile string, payl
 	// once first-run finishes and it surfaces. Only applies on the production
 	// WindowQuerier path; the legacy mock path keeps always-launch semantics.
 	inFlight := a.WindowQuerier != nil && a.UserDataDir != "" && a.managedProcessAlive()
+	// inFlight already encodes managedProcessAlive(); don't re-call it (pgrep) in the trace arg.
+	vivTracef("OpenInProfile: beforeIDs=%d inFlight=%v (WindowQuerier=%v UserDataDir=%q) urls=%d", len(beforeIDs), inFlight, a.WindowQuerier != nil, a.UserDataDir, len(payload.URLs))
 	if !inFlight {
 		// B-05: launch the managed Vivaldi with a dedicated --user-data-dir. This
 		// forks a SEPARATE process (isolated from the user's Vivaldi) whose argv
@@ -366,18 +368,34 @@ func (a *VivaldiAdapter) OpenInProfile(ctx context.Context, profile string, payl
 			args = []string{"--new-window", "--profile-directory=" + profile}
 		}
 		args = append(args, payload.URLs...)
+		vivTracef("OpenInProfile: LAUNCHING open %s %v", a.AppPath, args)
 		if err := a.Opener.Open(ctx, a.AppPath, args...); err != nil {
+			vivTracef("OpenInProfile: LAUNCH ERROR: %v", redactedAppOpenError(ctx, err))
 			return OpenResult{}, redactedAppOpenError(ctx, err)
 		}
+	} else {
+		vivTracef("OpenInProfile: SKIPPED launch (inFlight) — settling for an already-in-flight window")
 	}
 	if a.WindowQuerier == nil {
 		return OpenResult{}, nil
 	}
 	live, err := a.settleNewVivaldiWindow(ctx, beforeIDs)
 	if err != nil {
+		vivTracef("OpenInProfile: settle ERROR: %v", err)
 		return OpenResult{}, err
 	}
+	vivTracef("OpenInProfile: settle FOUND live=%s", live)
 	return OpenResult{BrowserWindowID: string(live), LiveWindow: live}, nil
+}
+
+// vivTracef is a gated (PROJWM_NEXT_PLANNER_TRACE=1), read-only, timestamped
+// diagnostic for the browser-spawn convergence investigation (handoff §14.11).
+func vivTracef(format string, args ...interface{}) {
+	if os.Getenv("PROJWM_NEXT_PLANNER_TRACE") != "1" {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "[VIV_TRACE %s] %s\n", time.Now().Format("15:04:05.000"), msg)
 }
 
 // managedProcessAlive reports whether a managed Vivaldi process is currently

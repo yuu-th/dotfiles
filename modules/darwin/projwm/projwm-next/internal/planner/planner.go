@@ -30,7 +30,13 @@ func plannerTracef(format string, args ...interface{}) {
 	if !plannerTraceEnabled() {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[PLANNER_TRACE] "+format+"\n", args...)
+	// Wall-clock timestamp (handoff §14.10) so the planner trace can be
+	// correlated against an external `omniwmctl query windows` time-series
+	// recorder and the WM_TRACE / settle trace — disambiguating "the 75s
+	// browser settle never ran" vs "it ran but daemon Observe never surfaced
+	// the managed Vivaldi window".
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "[PLANNER_TRACE %s] %s\n", time.Now().Format("15:04:05.000"), msg)
 }
 
 // traceObservedBrowsers logs every observed window classified WindowBrowser
