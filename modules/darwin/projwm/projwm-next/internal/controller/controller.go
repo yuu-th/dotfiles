@@ -104,14 +104,10 @@ func NewFromGeneration(env w.ManagedEnvironment, gen store.CommittedGeneration, 
 	c.state.Meta.Epoch = gen.Checkpoint.Epoch
 	c.state.Meta.DirtyScopes = append([]w.DirtyScope(nil), gen.Checkpoint.DirtyScopes...)
 	// SSOT §6.9.1 G1: restore the persisted provenance cache so a daemon
-	// restart re-matches its live windows instead of respawning.
-	if len(gen.Checkpoint.WindowProvenance) > 0 {
-		prov := make(map[w.DesiredWindowID]w.LiveWindowID, len(gen.Checkpoint.WindowProvenance))
-		for k, v := range gen.Checkpoint.WindowProvenance {
-			prov[k] = v
-		}
-		c.state.Meta.WindowProvenance = prov
-	}
+	// restart re-matches its live windows instead of respawning. The on-disk
+	// form is a slice (struct-keyed maps are not JSON-marshalable); rebuild the
+	// runtime map.
+	c.state.Meta.WindowProvenance = store.ProvenanceMapFromEntries(gen.Checkpoint.WindowProvenance)
 	return c
 }
 
@@ -695,7 +691,7 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 			Checkpoint: store.ControllerCheckpoint{
 				Epoch:            c.state.Meta.Epoch,
 				LastClean:        &txn,
-				WindowProvenance: c.state.Meta.WindowProvenance,
+				WindowProvenance: store.ProvenanceEntriesFromMap(c.state.Meta.WindowProvenance),
 			},
 			Trace: trace,
 		}

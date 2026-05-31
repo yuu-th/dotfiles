@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	w "github.com/yuu-th/projwm-next/internal/world"
@@ -28,7 +29,56 @@ type ControllerCheckpoint struct {
 	// WindowProvenance is the validated-cache of (desired identity → live
 	// window) projwm spawned/adopted (SSOT §6.9.1 G1). Persisted so a
 	// daemon-only restart re-matches its live windows without respawning.
-	WindowProvenance map[w.DesiredWindowID]w.LiveWindowID `json:"windowProvenance,omitempty"`
+	//
+	// On-disk shape is a SLICE, not the runtime map[DesiredWindowID]LiveWindowID:
+	// DesiredWindowID is a struct and Go's encoding/json cannot marshal a
+	// struct-keyed map (it panics with "unsupported type"). The runtime form in
+	// ControllerMeta stays a map; convert with ProvenanceEntriesFromMap /
+	// ProvenanceMapFromEntries at the persistence boundary.
+	WindowProvenance []ProvenanceEntry `json:"windowProvenance,omitempty"`
+}
+
+// ProvenanceEntry persists one (identity → live window) provenance pair.
+type ProvenanceEntry struct {
+	Identity w.DesiredWindowID `json:"identity"`
+	Live     w.LiveWindowID    `json:"live"`
+}
+
+// ProvenanceEntriesFromMap converts the runtime provenance map to the on-disk
+// slice, sorted deterministically (Project, Kind, Index) so equal maps always
+// serialize identically (stable checkpoint bytes for crash-safe/idempotent
+// commits).
+func ProvenanceEntriesFromMap(m map[w.DesiredWindowID]w.LiveWindowID) []ProvenanceEntry {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]ProvenanceEntry, 0, len(m))
+	for id, live := range m {
+		out = append(out, ProvenanceEntry{Identity: id, Live: live})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Identity, out[j].Identity
+		if a.Project != b.Project {
+			return a.Project < b.Project
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Index < b.Index
+	})
+	return out
+}
+
+// ProvenanceMapFromEntries rebuilds the runtime map from the on-disk slice.
+func ProvenanceMapFromEntries(entries []ProvenanceEntry) map[w.DesiredWindowID]w.LiveWindowID {
+	if len(entries) == 0 {
+		return nil
+	}
+	m := make(map[w.DesiredWindowID]w.LiveWindowID, len(entries))
+	for _, e := range entries {
+		m[e.Identity] = e.Live
+	}
+	return m
 }
 
 // ControllerCommit is the controller's request to begin a commit.

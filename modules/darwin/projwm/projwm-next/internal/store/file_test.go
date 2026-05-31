@@ -343,3 +343,44 @@ func testBrowserDesiredWorld(ref w.PrivatePayloadRef) w.DesiredWorld {
 		},
 	}
 }
+
+// TestFileStoreCommitRoundTripsWindowProvenance is the regression owner for the
+// 2026-05-31 production-breaking bug: ControllerCheckpoint.WindowProvenance was a
+// map[DesiredWindowID]LiveWindowID; DesiredWindowID is a struct, and Go's
+// encoding/json CANNOT marshal a struct-keyed map ("json: unsupported type"),
+// so every real (FileStore) daemon commit failed at "marshal checkpoint.json"
+// and the daemon served degraded IPC. The deterministic tests missed it because
+// they used MemoryStore (no JSON). Fix: persist provenance as a SLICE.
+func TestFileStoreCommitRoundTripsWindowProvenance(t *testing.T) {
+	root := t.TempDir()
+	fs, err := OpenFileStore(context.Background(), root, StoreKindTest, testDesiredWorld())
+	if err != nil {
+		t.Fatalf("OpenFileStore: %v", err)
+	}
+	current, err := fs.LoadCurrentGeneration(context.Background())
+	if err != nil {
+		t.Fatalf("LoadCurrentGeneration: %v", err)
+	}
+	ed := w.DesiredWindowID{Project: "dotfiles", Kind: w.WindowEditor, Index: 1}
+	sh := w.DesiredWindowID{Project: "dotfiles", Kind: w.WindowShell, Index: 2}
+	prov := map[w.DesiredWindowID]w.LiveWindowID{ed: "live-zed-1", sh: "live-shell-2"}
+	staged, err := fs.BeginCommit(context.Background(), ControllerCommit{
+		Parent:     current.ID,
+		Desired:    current.Desired,
+		Checkpoint: ControllerCheckpoint{Epoch: 2, WindowProvenance: ProvenanceEntriesFromMap(prov)},
+	})
+	if err != nil {
+		t.Fatalf("BeginCommit with WindowProvenance must marshal (struct-keyed map regression): %v", err)
+	}
+	if _, err := fs.Commit(context.Background(), staged); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	loaded, err := fs.LoadCurrentGeneration(context.Background())
+	if err != nil {
+		t.Fatalf("LoadCurrentGeneration: %v", err)
+	}
+	got := ProvenanceMapFromEntries(loaded.Checkpoint.WindowProvenance)
+	if got[ed] != "live-zed-1" || got[sh] != "live-shell-2" || len(got) != 2 {
+		t.Fatalf("provenance did not round-trip through FileStore: %v", got)
+	}
+}
