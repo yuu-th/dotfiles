@@ -101,27 +101,13 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 	// the daemon's recovery moves only MANAGED windows back to their slots and
 	// leaves external windows where OmniWM's restart placed them.
 	h.rebaselineExternalWorkspaces()
-	// Drive recovery to convergence. The daemon adopts the live tmux sessions
-	// (INV-03) and moves managed windows back to their slots (§3.5: "窓の存在
-	// 確認 → 無ければ再作成、あれば正しい slot に配置"). Per §7.1 a transaction that
-	// fails to settle — e.g. a reorder racing OmniWM's freshly-restarted,
-	// still-settling catalog — records a dirty scope and is retried on the NEXT
-	// event/intent (there is no auto-retry). So we nudge `reconcile` repeatedly
-	// until the ideal slots are reached, within the §3.5 / §9.2③ recovery
-	// budget; transient transaction failures during the settling window are
-	// expected and tolerated, only non-convergence within the budget is fatal.
-	recoveryDeadline := time.Now().Add(90 * time.Second)
-	for {
-		_, _ = h.runOutput("reconcile") // tolerant nudge: ignore transient settling failures
-		if humanAllIdealSlotsReached(t, h.ctx) {
-			break
-		}
-		if time.Now().After(recoveryDeadline) {
-			waitForAllIdealSlots(t, h.ctx, time.Second) // emits the detailed per-slot mismatch failure
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
+	// Drive recovery: the daemon adopts the live tmux sessions (INV-03) and
+	// returns the managed windows to their slots (§3.5). The transaction loop's
+	// existing reorder restores the desired column order — it is a solved,
+	// working primitive (R1-R4 real_ops + S1/S5/S9 acceptance), so we trust it
+	// and assert the full ideal layout converges within the §3.5 / §9.2③ budget.
+	h.sendEvent(event.KindSafetyTimer, event.SourceTimer)
+	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
 
 	after := currentDesiredWorldKey(t, h.storeDir)
 	if before != after {
