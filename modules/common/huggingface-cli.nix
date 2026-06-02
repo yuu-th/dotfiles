@@ -8,7 +8,9 @@ let
     name = "huggingface-cli";
     paths = [ pkgs.python312Packages.huggingface-hub ];
     postBuild = ''
-      ln -s $out/bin/hf $out/bin/huggingface-cli
+      # huggingface-hub 1.x は hf / huggingface-cli の両方を同梱するようになった。
+      # 旧名が存在しない版でだけ互換 symlink を張る(両対応で衝突しない)。
+      [ -e "$out/bin/huggingface-cli" ] || ln -s "$out/bin/hf" "$out/bin/huggingface-cli"
     '';
   };
 in {

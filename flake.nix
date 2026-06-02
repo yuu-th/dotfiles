@@ -4,6 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # wrangler 専用 pin。unstable の wrangler 4.90.0/4.93.0 は aarch64-darwin で
+    # tsup ビルドが EBADF(Node fstat) で壊れているため(nixpkgs#423082 系)、
+    # ビルド確認済みの 4.62.0 を持つ rev (4.90.0 bump 直前) に固定する。
+    # 上流が修正されたら本 input ごと削除して nixpkgs 由来に戻すこと。
+    nixpkgs-wrangler.url = "github:NixOS/nixpkgs/cfcca11389b00c161e78b87d867955defe076966";
+
     nix-darwin = {
       url = "github:LnL7/nix-darwin";
       inputs.nixpkgs.follows = "nixpkgs";

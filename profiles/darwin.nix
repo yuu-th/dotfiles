@@ -78,6 +78,15 @@
     extra-substituters = [ "https://cache.numtide.com" ];
     extra-trusted-public-keys = [ "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g=" ];
   };
+
+  # 世代が無限に溜まってディスクを埋めるのを防ぐ自動 GC（毎週日曜3:00、30日より古い世代を削除）
+  nix.gc = {
+    automatic = true;
+    interval = { Weekday = 0; Hour = 3; Minute = 0; };
+    options = "--delete-older-than 30d";
+  };
+  # store 内の重複を自動でハードリンク化して容量節約
+  nix.optimise.automatic = true;
   security.pam.services.sudo_local.touchIdAuth = true;
 
   system.defaults = {
