@@ -1172,3 +1172,76 @@ func realSpecFirstCommandPrefix(m *mockExec, prefix string) int {
 	}
 	return -1
 }
+
+// TestReorderColumnsWithStackedColumn exercises a reorder whose TARGET contains a
+// STACKED column (two windows in one column) AND requires a move — the case
+// humanIdealSlots["Q"] uses (shell-1+shell-2) that R1-R4 never cover (they use
+// only single-window columns). This is the path ACC-S7 / jump layouts hit; it
+// guards the relative-move reorder's stacked-column handling in isolation (no
+// OmniWM restart needed).
+func TestReorderColumnsWithStackedColumn(t *testing.T) {
+	ctx, cancel := realSpecContext(t, 180*time.Second)
+	defer cancel()
+	realSpecRequireGhostty(t)
+	sw := newRealSigWM()
+	tags := []string{"a", "b", "c", "d"}
+	titles := make([]string, len(tags))
+	sessions := make([]string, len(tags))
+	ids := make([]w.LiveWindowID, len(tags))
+	for i, tag := range tags {
+		titles[i] = realSpecTitle(t, "shell", i+1, "reorder-stack-"+tag)
+		sessions[i] = realSpecSession(t, "reorder-stack-"+tag)
+		realSpecCleanupGhostty(t, sw, titles[i], sessions[i])
+	}
+	for i := range tags {
+		ids[i] = realSpecSpawnGhostty(t, ctx, sw, w.WindowShell, "8", titles[i], sessions[i], "")
+		realSpecAssertObserved(t, ctx, sw, ids[i], "8", "com.mitchellh.ghostty", titles[i])
+	}
+	initial := realSpecObservedOrder(t, ctx, sw, "8", ids...)
+	if len(initial) != 4 {
+		t.Fatalf("setup stacked reorder order = %v, want 4 windows", initial)
+	}
+	// Target: move initial[1] to last AND stack initial[2]+initial[3] into the
+	// middle column → [{0}, {2,3}, {1}]. Combines a move with a stack, like S7.
+	want := [][]w.LiveWindowID{{initial[0]}, {initial[2], initial[3]}, {initial[1]}}
+	if err := sw.ReorderColumns(ctx, "8", want); err != nil {
+		t.Fatalf("ReorderColumns with stacked column did not settle: %v", err)
+	}
+	realSpecAssertColumns(t, ctx, sw, "8", want)
+}
+
+// TestReorderColumnsStackedFiveWindowRotation reproduces ACC-S7's exact reorder
+// shape with ghostty-only windows (no Zed/Vivaldi, no OmniWM restart): 5 windows
+// where the LAST observed window must rotate to the FRONT and a middle pair is
+// stacked — i.e. base [w0,w1,w2,w3,w4] → want [{w4},{w0},{w1,w2},{w3}]. If this
+// fails, the bug is the 5-window rotation+stack permutation itself; if it passes,
+// the S7 failure is specific to the Zed/Vivaldi mix or the post-restart state.
+func TestReorderColumnsStackedFiveWindowRotation(t *testing.T) {
+	ctx, cancel := realSpecContext(t, 240*time.Second)
+	defer cancel()
+	realSpecRequireGhostty(t)
+	sw := newRealSigWM()
+	tags := []string{"a", "b", "c", "d", "e"}
+	titles := make([]string, len(tags))
+	sessions := make([]string, len(tags))
+	ids := make([]w.LiveWindowID, len(tags))
+	for i, tag := range tags {
+		titles[i] = realSpecTitle(t, "shell", i+1, "reorder-rot-"+tag)
+		sessions[i] = realSpecSession(t, "reorder-rot-"+tag)
+		realSpecCleanupGhostty(t, sw, titles[i], sessions[i])
+	}
+	for i := range tags {
+		ids[i] = realSpecSpawnGhostty(t, ctx, sw, w.WindowShell, "8", titles[i], sessions[i], "")
+		realSpecAssertObserved(t, ctx, sw, ids[i], "8", "com.mitchellh.ghostty", titles[i])
+	}
+	initial := realSpecObservedOrder(t, ctx, sw, "8", ids...)
+	if len(initial) != 5 {
+		t.Fatalf("setup 5-window order = %v, want 5", initial)
+	}
+	// Rotate last→front + stack the middle pair: [{4},{0},{1,2},{3}].
+	want := [][]w.LiveWindowID{{initial[4]}, {initial[0]}, {initial[1], initial[2]}, {initial[3]}}
+	if err := sw.ReorderColumns(ctx, "8", want); err != nil {
+		t.Fatalf("ReorderColumns 5-window rotation+stack did not settle: %v", err)
+	}
+	realSpecAssertColumns(t, ctx, sw, "8", want)
+}

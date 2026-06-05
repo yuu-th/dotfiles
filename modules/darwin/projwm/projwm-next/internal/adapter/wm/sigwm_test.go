@@ -1196,3 +1196,33 @@ func TestCloseNewZedEmptyProjects_ProtectsLoadingProjectWindow(t *testing.T) {
 		t.Fatalf("expected spurious empty-project window 'stray' to be closed; closed=%v", closed)
 	}
 }
+
+// TestRetryConnRefusedExecutorDoesNotRetryMutationOnNotReady locks the ACC-S7
+// regression fix: a non-idempotent mutation (move-column) must NOT be retried on
+// the exit-2/empty-stderr "OmniWM not ready" transient, because re-issuing it
+// double-applies and scrambles the layout. (Read-only `query` commands ARE still
+// retried on that transient; connection-refused is retried for any command.)
+func TestRetryConnRefusedExecutorDoesNotRetryMutationOnNotReady(t *testing.T) {
+	m := newMockExec()
+	m.setErr("command move-column", fmt.Errorf("omniwmctl command move-column left: exit status 2 (stderr: )"))
+	r := newRetryConnRefusedExecutor(m)
+	if _, err := r.Run(context.Background(), "command", "move-column", "left"); err == nil {
+		t.Fatal("mutation must not be retried into success on the not-ready transient")
+	}
+	if n := len(m.calls); n != 1 {
+		t.Fatalf("mutation must not be retried on exit-2/not-ready: got %d calls, want 1", n)
+	}
+}
+
+// TestRetryConnRefusedExecutorRetriesMutationOnConnRefused confirms a mutation IS
+// still retried on connection-refused (the command never reached OmniWM).
+func TestRetryConnRefusedExecutorRetriesMutationOnConnRefused(t *testing.T) {
+	m := newMockExec()
+	refused := fmt.Errorf("omniwmctl command move-column left: exit status 2 (stderr: Connection refused (os error 61))")
+	m.setErrSeq("command move-column", refused, nil)
+	m.set("command move-column", []byte(`{"ok":true}`))
+	r := newRetryConnRefusedExecutor(m)
+	if _, err := r.Run(context.Background(), "command", "move-column", "left"); err != nil {
+		t.Fatalf("connection-refused mutation should be retried then succeed: %v", err)
+	}
+}

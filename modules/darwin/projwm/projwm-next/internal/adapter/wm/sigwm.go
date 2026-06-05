@@ -133,20 +133,40 @@ func newRetryConnRefusedExecutor(inner CtlExecutor) *retryConnRefusedExecutor {
 //     that does not mask real errors. CmdCtlExecutor.Run formats empty stderr
 //     as the literal "(stderr: )".
 func isTransientOmniErr(err error) bool {
+	return isConnRefusedErr(err) || isNotReadyExit2Err(err)
+}
+
+// isConnRefusedErr is the omniwmctl "Connection refused" transient (socket
+// briefly absent). The command never reached OmniWM, so retrying is safe for
+// ANY command, including mutations.
+func isConnRefusedErr(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "Connection refused") || strings.Contains(msg, "connection refused") {
-		return true
+	return strings.Contains(msg, "Connection refused") || strings.Contains(msg, "connection refused")
+}
+
+// isNotReadyExit2Err is the post-restart "OmniWM up but not ready" transient:
+// exit status 2 with EMPTY stderr (a genuine error carries a non-empty stderr).
+// Unlike connection-refused, OmniWM RECEIVED the command, so a non-idempotent
+// MUTATION must not be retried on it (a re-issued `move-column left` would
+// double-apply and scramble the layout — observed 2026-06-05 breaking ACC-S7's
+// reorder). Retried only for read-only `query` commands (see the retry wrapper).
+func isNotReadyExit2Err(err error) bool {
+	if err == nil {
+		return false
 	}
-	if strings.Contains(msg, "exit status 2") && strings.Contains(msg, "(stderr: )") {
-		return true
-	}
-	return false
+	msg := err.Error()
+	return strings.Contains(msg, "exit status 2") && strings.Contains(msg, "(stderr: )")
 }
 
 func (r *retryConnRefusedExecutor) Run(ctx context.Context, args ...string) ([]byte, error) {
+	// Connection-refused is safe to retry for ANY command (it never reached
+	// OmniWM). The exit-2/not-ready transient is retried ONLY for read-only
+	// `query` commands: re-issuing a non-idempotent mutation (move-column, move,
+	// focus, command ...) on it could double-apply and scramble state.
+	isQuery := len(args) > 0 && args[0] == "query"
 	var lastOut []byte
 	var lastErr error
 	for attempt := 0; attempt < r.attempts; attempt++ {
@@ -162,8 +182,12 @@ func (r *retryConnRefusedExecutor) Run(ctx context.Context, args ...string) ([]b
 		if err == nil {
 			return out, nil
 		}
-		if !isTransientOmniErr(err) {
+		retriable := isConnRefusedErr(err) || (isQuery && isNotReadyExit2Err(err))
+		if !retriable {
 			return out, err
+		}
+		if attempt == 0 {
+			wmTracef("ctl retry: cmd=%q transient err=%v", strings.Join(args, " "), err)
 		}
 		lastOut = out
 		lastErr = err
@@ -2054,6 +2078,7 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 				if j < 0 {
 					return fmt.Errorf("sigwm.ReorderColumns[%s]: lost target %s while reordering", ws, target)
 				}
+				wmTracef("reorder[%s] move target=%s want-i=%d managed-j=%d raw-j=%d order=%v", ws, target, i, mj, j, current)
 				if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
 					return fmt.Errorf("sigwm.ReorderColumns[%s]: focus %s: %w", ws, target, err)
 				}
