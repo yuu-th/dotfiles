@@ -293,6 +293,12 @@ type SigWM struct {
 	// browserSettleTimeoutDefault.
 	BrowserSettleTimeout time.Duration
 
+	// ZedEmptyCleanupBudget bounds the post-editor-spawn poll that closes the
+	// spurious Zed "empty project" window (closeNewZedEmptyProjects). Zero falls
+	// back to zedEmptyCleanupBudgetDefault (6s). Tests set it small to exercise
+	// the close decision quickly.
+	ZedEmptyCleanupBudget time.Duration
+
 	// EnsureCockpitSession is called by SpawnCockpit to ensure the base tmux
 	// session is running. If nil, ensureCockpitBaseSession is used (production
 	// default). Tests inject a no-op to avoid real tmux invocations.
@@ -1187,7 +1193,7 @@ func (s *SigWM) Spawn(ctx context.Context, r SpawnRequest) (w.LiveWindowID, erro
 	}
 	wmTracef("Spawn post-spawn move OK live=%s -> targetWS=%s", live, r.Workspace)
 	if r.Kind == w.WindowEditor {
-		if err := s.closeNewZedEmptyProjects(ctx, before, hadZedEmptyBefore); err != nil {
+		if err := s.closeNewZedEmptyProjects(ctx, before, hadZedEmptyBefore, string(live)); err != nil {
 			return live, fmt.Errorf("sigwm.Spawn[zed]: cleanup auxiliary windows: %w", err)
 		}
 	}
@@ -1320,6 +1326,11 @@ func (s *SigWM) settleNewWindowByDiff(ctx context.Context, bundleID string, befo
 // is untouched.
 const browserSettleTimeoutDefault = 75 * time.Second
 
+// zedEmptyCleanupBudgetDefault bounds the post-editor-spawn poll that closes the
+// spurious Zed "empty project" window. The window can appear slightly after the
+// project window registers, so we poll for a few seconds.
+const zedEmptyCleanupBudgetDefault = 6 * time.Second
+
 func (s *SigWM) browserSettleTimeout() time.Duration {
 	if s.BrowserSettleTimeout > 0 {
 		return s.BrowserSettleTimeout
@@ -1440,13 +1451,23 @@ func (s *SigWM) settleNewBrowserWindowByDiff(ctx context.Context, bundleID strin
 // (closeWindowByAccessibility), which is scoped to the window's exact PID and
 // title, so it never touches the user's own Zed instance (a distinct process
 // with a distinct PID and the default user-data-dir).
-func (s *SigWM) closeNewZedEmptyProjects(ctx context.Context, before map[string]struct{}, hadEmptyBefore bool) error {
+// protect is the live window-ID of the project window we just spawned (the one
+// settleNewWindow matched by its basename title). It is NEVER closed even if its
+// title is observed as "" — a Zed project window can momentarily report an empty
+// title while still loading, and closing it would destroy the very window we
+// just spawned (SSOT §6.9.1 ATTR-D4: a provenance-captured loading window must
+// not be mistaken for the spurious empty-project window).
+func (s *SigWM) closeNewZedEmptyProjects(ctx context.Context, before map[string]struct{}, hadEmptyBefore bool, protect string) error {
 	_ = hadEmptyBefore // PID+title-scoped close no longer needs the pre-existing-empty guard.
 	if s.CloseWindow == nil {
 		return nil
 	}
+	budget := s.ZedEmptyCleanupBudget
+	if budget <= 0 {
+		budget = zedEmptyCleanupBudgetDefault
+	}
 	attempted := map[string]struct{}{}
-	deadline := time.Now().Add(6 * time.Second)
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -1465,6 +1486,9 @@ func (s *SigWM) closeNewZedEmptyProjects(ctx context.Context, before map[string]
 			}
 			if _, existed := before[win.ID]; existed {
 				continue
+			}
+			if win.ID == protect {
+				continue // ATTR-D4: never close the just-spawned project window, even at a transient empty title.
 			}
 			if _, did := attempted[win.ID]; did {
 				continue

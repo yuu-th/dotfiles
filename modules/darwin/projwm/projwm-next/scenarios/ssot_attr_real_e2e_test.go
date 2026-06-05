@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -56,18 +58,60 @@ const (
 	attrUserWorkspace = "3"
 )
 
-// attrZedMainProcCount counts Zed MAIN processes (excluding the always-present
-// --crash-handler subprocess). Mirrors the L3 real_ops helper of the same name.
-func attrZedMainProcCount() int {
-	out, _ := exec.Command("pgrep", "-fl", "Zed.app/Contents/MacOS/zed").Output()
-	n := 0
+// zedMainPIDs returns the PIDs of Zed MAIN processes — those whose argv[0] is
+// exactly the Zed main binary — excluding the always-present --crash-handler
+// subprocess (and any worker subprocesses, which have a different argv[0]).
+// Matching argv[0] exactly avoids the substring/self-match pitfalls of
+// `pgrep -fl` (a bare pgrep can also catch helper processes whose cmdline merely
+// contains the path).
+func zedMainPIDs() []int {
+	out, _ := exec.Command("ps", "-axo", "pid=,args=").Output()
+	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" || strings.Contains(line, "--crash-handler") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
-		n++
+		if fields[1] != "/Applications/Zed.app/Contents/MacOS/zed" {
+			continue
+		}
+		if strings.Contains(line, "--crash-handler") {
+			continue
+		}
+		if pid, err := strconv.Atoi(fields[0]); err == nil {
+			pids = append(pids, pid)
+		}
 	}
-	return n
+	return pids
+}
+
+// attrZedMainProcCount counts Zed MAIN processes (see zedMainPIDs).
+func attrZedMainProcCount() int { return len(zedMainPIDs()) }
+
+// killTestZedProcesses SIGTERMs (then SIGKILLs stragglers) every Zed main
+// process and waits for the kernel to reap them. It is ONLY ever invoked from
+// requireSoleTestZed's teardown, which runs exclusively after the gate has
+// verified ZERO Zed processes existed at test entry — so the only Zed that can
+// exist now is the harness's own. Killing it isolates sequential ATTR tests (the
+// next test re-enters with 0 Zed and its requireSoleTestZed passes). This is
+// test-isolation in a gated Zed-free session; the PRODUCTION daemon NEVER kills
+// the (single, user-shared) Zed process — that invariant is owned by ATTR-F1.
+func killTestZedProcesses(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		pids := zedMainPIDs()
+		if len(pids) == 0 {
+			return
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	for _, pid := range zedMainPIDs() {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
 }
 
 // requireSoleTestZed is the safety gate. It must be called at the very TOP of
@@ -83,6 +127,15 @@ func requireSoleTestZed(t *testing.T) {
 	if n := attrZedMainProcCount(); n != 0 {
 		t.Skipf("ATTR Zed-safety precondition not met: %d Zed main process(es) already running; this test only runs when the ONLY Zed is the test's own (a user editing Zed must never be at risk)", n)
 	}
+	// Gate passed: ZERO Zed at entry, so this is a dedicated Zed-free session and
+	// every Zed that appears during the test is the harness's own. Kill it at
+	// teardown so the NEXT ATTR test in the batch re-enters with 0 Zed and its
+	// own requireSoleTestZed passes — otherwise Zed's single-instance process
+	// lingers after AXClose and every subsequent ATTR test would skip. Registered
+	// here (before newHumanE2E), so via LIFO it runs LAST — after the harness has
+	// AXClosed its windows and stopped the daemon. Safe only because of the
+	// 0-Zed gate above (see killTestZedProcesses).
+	t.Cleanup(func() { killTestZedProcesses(t) })
 }
 
 // spawnUserZedWindow opens a simulated USER Zed window on the user (non-slot)

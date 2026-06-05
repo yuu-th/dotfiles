@@ -62,9 +62,11 @@ func TestHumanE2ESSOTMacOSRestartRecoverySteps(t *testing.T) {
 
 	h.stopDaemon()
 	cleanupIdealResidue(t, h.ctx)
+	recoveryStart := time.Now()
 	h.daemon, h.daemonStderr = startHumanDaemon(t, h.ctx, h.bins.projwmd, h.manifestPath, h.manifestDigest, h.storeDir, h.privatePayloadDir, h.socketPath, h.provenancePath)
 	assertStartupProvenance(t, h)
 	waitForAllIdealSlots(t, h.ctx, time.Minute)
+	assertRecoveryWithinBudget(t, "SSOT-S6", recoveryStart) // §9.2③
 
 	after := currentDesiredWorldKey(t, h.storeDir)
 	if before != after {
@@ -106,8 +108,10 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 	// existing reorder restores the desired column order — it is a solved,
 	// working primitive (R1-R4 real_ops + S1/S5/S9 acceptance), so we trust it
 	// and assert the full ideal layout converges within the §3.5 / §9.2③ budget.
+	recoveryStart := time.Now()
 	h.sendEvent(event.KindSafetyTimer, event.SourceTimer)
 	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
+	assertRecoveryWithinBudget(t, "SSOT-S7", recoveryStart) // §9.2③
 
 	after := currentDesiredWorldKey(t, h.storeDir)
 	if before != after {
@@ -154,6 +158,25 @@ func waitForOmniWMStable(t *testing.T, ctx context.Context, timeout time.Duratio
 func omniQueryOK(ctx context.Context, what string) bool {
 	_, err := exec.CommandContext(ctx, "omniwmctl", "query", what, "--format", "json").CombinedOutput()
 	return err == nil
+}
+
+// recoveryBudget is SSOT §9.2③: automatic recovery must complete within one
+// minute of the triggering disruption.
+const recoveryBudget = 60 * time.Second
+
+// assertRecoveryWithinBudget records the wall-clock from a recovery trigger to
+// convergence and fails if it exceeds the SSOT §9.2③ one-minute budget. `start`
+// must be captured immediately before the recovery is triggered (the crash /
+// restart event), and this must be called immediately after convergence is
+// observed (waitForLayout / waitForAllIdealSlots returned).
+func assertRecoveryWithinBudget(t *testing.T, step string, start time.Time) {
+	t.Helper()
+	elapsed := time.Since(start)
+	if elapsed > recoveryBudget {
+		failAcceptance(t, scenario.FailInvariant, step+"/recovery-timing",
+			fmt.Sprintf("SSOT §9.2③ requires automatic recovery within %s; took %s", recoveryBudget, elapsed))
+	}
+	t.Logf("%s: recovery converged in %s (SSOT §9.2③ budget %s)", step, elapsed, recoveryBudget)
 }
 
 func TestHumanE2ESSOTSummonIdempotencySteps(t *testing.T) {
@@ -411,8 +434,10 @@ func TestHumanE2ESSOTCrashRecoverySteps(t *testing.T) {
 	victim := liveWindowByTitle(t, h.ctx, "Q", "shell-1:projwm-test-main")
 	terminateLiveWindowProcess(t, victim)
 	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "shell-1:projwm-test-main"}})
+	ghosttyRecoveryStart := time.Now()
 	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	assertRecoveryWithinBudget(t, "SSOT-S10/ghostty", ghosttyRecoveryStart) // §9.2③
 
 	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/ghostty-desired-authority",
@@ -442,23 +467,43 @@ func TestHumanE2ESSOTCrashRecoverySteps(t *testing.T) {
 	for _, s := range killable {
 		killTmuxSession(t, s)
 	}
+	tmuxRecoveryStart := time.Now()
 	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
 	waitForTmuxSessions(t, killable, 30*time.Second)
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	assertRecoveryWithinBudget(t, "SSOT-S10/tmux", tmuxRecoveryStart) // §9.2③
 	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
 		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/tmux-desired-authority",
 			fmt.Sprintf("tmux crash recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
 	}
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S10-tmux")
 
-	// SSOT §8.9 Zed crash: SAFETY BOUNDARY — Zed is single-process (GPUI
-	// ignores --user-data-dir; the managed Zed windows live in the user's
-	// own zed process, observed pid is shared). terminateLiveWindowProcess on
-	// a managed Zed window would SIGTERM the user's editor and lose unsaved
-	// work. A real Zed-crash fixture therefore requires a dedicated session
-	// with no user Zed running; it is intentionally NOT exercised here.
-	failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/zed-crash-needs-clean-env",
-		"SSOT §9.1 S10 Zed-crash recovery is unsafe to exercise while the user's Zed is running (Zed is single-process; killing the managed window's process would kill the user's editor). Requires a dedicated clean session.")
+	// SSOT §8.9 Zed crash: the editor window vanishes; the transaction loop
+	// re-spawns `zed -n <cwd>` and auto-closes the spurious empty-project window
+	// (ATTR-D1 / §10.4 S4). SAFETY: Zed is single-process (GPUI ignores
+	// --user-data-dir), so killing the test editor's PID also kills any user Zed
+	// sharing the process. We only proceed when EXACTLY ONE Zed main process
+	// exists — the test's own spawned editor — so a user editing session is
+	// never destroyed; otherwise we skip with a clear precondition note. The
+	// ACC-S10 run procedure provides that dedicated Zed-free session (the user
+	// authorised killing their Zed for this). attrZedMainProcCount excludes the
+	// always-present --crash-handler subprocess (see ssot_attr_real_e2e_test.go).
+	if n := attrZedMainProcCount(); n != 1 {
+		failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/zed-crash-needs-sole-zed",
+			fmt.Sprintf("Zed-crash recovery requires the test's editor to be the sole Zed process (Zed is single-process and shares pids); found %d Zed main process(es). Run in a dedicated session with no user Zed.", n))
+	}
+	editor := liveWindowByTitle(t, h.ctx, "Q", "projwm-test-main")
+	terminateLiveWindowProcess(t, editor)
+	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "projwm-test-main", BundleID: "dev.zed.Zed"}})
+	zedRecoveryStart := time.Now()
+	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
+	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
+	assertRecoveryWithinBudget(t, "SSOT-S10/zed", zedRecoveryStart) // §9.2③
+	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
+		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/zed-desired-authority",
+			fmt.Sprintf("Zed crash recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
+	}
+	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S10-zed")
 }
 
 // killTmuxSession kills a single tmux session by exact name (test project

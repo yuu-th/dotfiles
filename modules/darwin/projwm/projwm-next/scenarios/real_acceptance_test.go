@@ -335,16 +335,28 @@ func TestHumanE2ESwitchProfileSteps(t *testing.T) {
 	h.reconcileIdeal()
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.3")
 
+	// SSOT §9.2④ "プロファイル切替が5秒以内": we measure and LOG the switch
+	// durations rather than hard-asserting 5s, because the §4.5 model is
+	// close→observe-barrier→spawn — a switch INTO a profile that must cold-spawn
+	// Zed/Vivaldi cannot physically meet 5s (those follow §3.5 per-app spawn
+	// budgets). The close-only transition (switch to the empty profile) is the
+	// bounded sub-5s candidate. The §9.2④ budget's exact scope (close-transition
+	// vs switch-between-already-live-profiles vs intent-acceptance latency) is an
+	// open SSOT question; these logs produce the real numbers to settle it.
+	switchToEmptyStart := time.Now()
 	h.run("switch-profile", "empty")
 	waitForManagedGhosttyMissing(t, h.ctx, allManagedGhosttyMatchers())
+	t.Logf("SSOT-S1/§9.2④ switch→empty (close transition) took %s", time.Since(switchToEmptyStart))
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.4")
 
 	h.run("switch-profile", "empty")
 	waitForManagedGhosttyMissing(t, h.ctx, allManagedGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.2")
 
+	switchToWorkStart := time.Now()
 	h.run("switch-profile", "work")
 	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
+	t.Logf("SSOT-S1/§9.2④ switch→work (full re-deploy incl. cold spawn) took %s", time.Since(switchToWorkStart))
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.1")
 }
 

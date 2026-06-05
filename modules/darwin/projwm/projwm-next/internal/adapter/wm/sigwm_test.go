@@ -1151,3 +1151,48 @@ func TestRetryConnRefusedExecutorDoesNotRetryGenuineError(t *testing.T) {
 		t.Fatalf("genuine error must not be retried: got %d calls, want 1", n)
 	}
 }
+
+// TestCloseNewZedEmptyProjects_ProtectsLoadingProjectWindow locks SSOT §6.9.1
+// ATTR-D4: the just-spawned managed project window can momentarily report an
+// empty title while still loading, and must NOT be mistaken for the spurious
+// "empty project" window and closed. The spurious empty window must still be
+// closed. Deterministic at the mock-executor layer (the close decision reasons
+// over observed bundle/title/id), so it does not need the racy real title=""
+// moment.
+func TestCloseNewZedEmptyProjects_ProtectsLoadingProjectWindow(t *testing.T) {
+	env := newTestEnv()
+	m := newMockExec()
+	// "proj" = the just-spawned project window, momentarily title="" (loading).
+	// "stray" = the spurious empty-project window Zed opens alongside it. Both
+	// are dev.zed.Zed and NEW (not in `before`).
+	m.set("query windows", okEnvelope("windows", `{"windows":[
+		{"id":"proj","title":"","app":{"bundleId":"dev.zed.Zed","name":"Zed"},
+		 "workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}},
+		{"id":"stray","title":"empty project","app":{"bundleId":"dev.zed.Zed","name":"Zed"},
+		 "workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}
+	]}`))
+	sw := NewSigWM(env, m, &mockLauncher{})
+	sw.ZedEmptyCleanupBudget = 300 * time.Millisecond
+	var closed []string
+	sw.CloseWindow = func(ctx context.Context, win ctlWindow) error {
+		closed = append(closed, win.ID)
+		return nil
+	}
+	if err := sw.closeNewZedEmptyProjects(context.Background(), map[string]struct{}{}, false, "proj"); err != nil {
+		t.Fatalf("closeNewZedEmptyProjects: %v", err)
+	}
+	for _, id := range closed {
+		if id == "proj" {
+			t.Fatalf("ATTR-D4 violated: closed the protected loading project window 'proj' (title=\"\"); closed=%v", closed)
+		}
+	}
+	foundStray := false
+	for _, id := range closed {
+		if id == "stray" {
+			foundStray = true
+		}
+	}
+	if !foundStray {
+		t.Fatalf("expected spurious empty-project window 'stray' to be closed; closed=%v", closed)
+	}
+}
