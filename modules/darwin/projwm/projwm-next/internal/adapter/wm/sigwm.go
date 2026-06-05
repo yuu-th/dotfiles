@@ -1530,6 +1530,44 @@ func (s *SigWM) closeNewZedEmptyProjects(ctx context.Context, before map[string]
 	return nil
 }
 
+// closeStrayZedEmptyProjects AXCloses every Zed window titled exactly
+// "empty project" on the given managed workspace. Unlike closeNewZedEmptyProjects
+// (spawn-time, diff-scoped, also matches the transient empty title), this is a
+// non-diff reconcile-time sweep keyed ONLY on the literal "empty project" title,
+// which a real project window never has (it carries the folder basename) — so it
+// is unambiguous and safe to close regardless of when/which spawn produced it,
+// and it never touches the transient title=="" loading window (ATTR-D4) nor the
+// user's own project windows. Close is PID+title-scoped (closeWindowByAccessibility).
+func (s *SigWM) closeStrayZedEmptyProjects(ctx context.Context, ws w.WorkspaceID) {
+	if s.CloseWindow == nil {
+		return
+	}
+	num, _, err := s.resolveWorkspaceNumber(ctx, ws)
+	if err != nil {
+		return
+	}
+	wins, err := s.queryWindows(ctx)
+	if err != nil {
+		return
+	}
+	closedAny := false
+	for i := range wins {
+		win := wins[i]
+		if win.App.BundleID != "dev.zed.Zed" || win.Title != "empty project" || win.Workspace.Number != num {
+			continue
+		}
+		wmTracef("reorder[%s] closing stray Zed empty-project window id=%s", ws, win.ID)
+		if err := s.CloseWindow(ctx, win); err == nil {
+			closedAny = true
+		}
+	}
+	if closedAny {
+		// Brief settle so the AXClose propagates out of the omniwmctl catalog
+		// before the caller observes the column order.
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
 func (s *SigWM) Close(ctx context.Context, id w.LiveWindowID) error {
 	// Cockpit SystemWindows are the one exception to the close-block
 	// policy (impl-design §6 safety matrix): they have no user data,
@@ -2015,6 +2053,16 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 		return fmt.Errorf("sigwm.ReorderColumns[%s]: focus workspace: %w", ws, err)
 	}
 	time.Sleep(reorderFocusGrace)
+	// Close any spurious Zed "empty project" window on this managed workspace
+	// before observing/moving. Zed opens one when launched (and during
+	// multi-editor recovery the spawn-time closeNewZedEmptyProjects diff-poll
+	// can miss it — it appears late or from a sibling editor spawn in the same
+	// single Zed process), where it lands as an EXTRA column that corrupts the
+	// layout (ACC-S7/S10 root, handoff §13.4). Its title is the literal
+	// "empty project" — a real project window always carries its folder
+	// basename — so closing it here is unambiguous and safe; the transient
+	// title=="" loading window is deliberately NOT touched (ATTR-D4).
+	s.closeStrayZedEmptyProjects(ctx, ws)
 	current, err := s.liveOrderInWorkspace(ctx, ws)
 	if err != nil {
 		return err
