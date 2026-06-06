@@ -1226,3 +1226,58 @@ func TestRetryConnRefusedExecutorRetriesMutationOnConnRefused(t *testing.T) {
 		t.Fatalf("connection-refused mutation should be retried then succeed: %v", err)
 	}
 }
+
+// TestLiveOrderComplete_WaitsOutFlickerThenReturnsComplete locks SSOT §2.1 原則3
+// for the reorder: when OmniWM transiently drops a desired window from a
+// workspace's catalog (handoff §3.5 flicker), liveOrderComplete re-observes
+// rather than acting on the partial view, and returns the complete order once
+// OmniWM presents all desired windows.
+func TestLiveOrderComplete_WaitsOutFlickerThenReturnsComplete(t *testing.T) {
+	env := newTestEnv()
+	m := newMockExec()
+	m.set("query workspaces", okEnvelope("workspaces", `{"workspaces":[{"id":"omni-A","rawName":"A","displayName":"A","number":1}]}`))
+	winJSON := func(ids ...string) []byte {
+		parts := make([]string, 0, len(ids))
+		for _, id := range ids {
+			parts = append(parts, fmt.Sprintf(`{"id":%q,"title":%q,"app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"},"workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}`, id, id))
+		}
+		return okEnvelope("windows", `{"windows":[`+strings.Join(parts, ",")+`]}`)
+	}
+	calls := 0
+	m.fn = func(args []string) ([]byte, error, bool) {
+		if strings.HasPrefix(strings.Join(args, " "), "query windows") {
+			calls++
+			if calls <= 3 {
+				return winJSON("a", "b"), nil, true // flicker: window "c" transiently absent
+			}
+			return winJSON("a", "b", "c"), nil, true // complete
+		}
+		return nil, nil, false
+	}
+	sw := NewSigWM(env, m, &mockLauncher{})
+	got, err := sw.liveOrderComplete(context.Background(), "ws-A", []w.LiveWindowID{"a", "b", "c"}, 4*time.Second)
+	if err != nil {
+		t.Fatalf("liveOrderComplete should wait out the flicker then return complete: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected complete 3-window order, got %v", got)
+	}
+	if calls < 4 {
+		t.Fatalf("expected re-observation past the partial reads; calls=%d", calls)
+	}
+}
+
+// TestLiveOrderComplete_DefersOnPersistentFlicker locks the §7.1/§6.8 side: when
+// OmniWM never presents a complete observation within the budget, liveOrderComplete
+// returns an error so the transaction defers and replans instead of reordering
+// against a permanently-partial view.
+func TestLiveOrderComplete_DefersOnPersistentFlicker(t *testing.T) {
+	env := newTestEnv()
+	m := newMockExec()
+	m.set("query workspaces", okEnvelope("workspaces", `{"workspaces":[{"id":"omni-A","rawName":"A","displayName":"A","number":1}]}`))
+	m.set("query windows", okEnvelope("windows", `{"windows":[{"id":"a","title":"a","app":{"bundleId":"com.mitchellh.ghostty","name":"Ghostty"},"workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}]}`)) // always partial: "b","c" absent
+	sw := NewSigWM(env, m, &mockLauncher{})
+	if _, err := sw.liveOrderComplete(context.Background(), "ws-A", []w.LiveWindowID{"a", "b", "c"}, 500*time.Millisecond); err == nil {
+		t.Fatal("persistent incomplete observation must defer with an error, not act on the partial view")
+	}
+}

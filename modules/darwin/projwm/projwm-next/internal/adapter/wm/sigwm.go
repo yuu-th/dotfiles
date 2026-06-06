@@ -2026,6 +2026,57 @@ func (s *SigWM) MoveWindowToWorkspace(ctx context.Context, id w.LiveWindowID, ws
 	return s.moveLiveToWorkspaceLocked(ctx, id, ws)
 }
 
+// reorderCompleteObsBudget bounds how long liveOrderComplete waits for OmniWM to
+// present a COMPLETE observation (all desired windows visible) before deferring.
+const reorderCompleteObsBudget = 4 * time.Second
+
+// liveOrderComplete returns the workspace's live order ONLY once OmniWM reports a
+// COMPLETE observation — every `want` window present. SSOT §2.1 原則3: the system
+// does not assume perfect conditions; it observes reality and replans. OmniWM
+// intermittently drops a workspace's windows from its catalog (handoff §3.5
+// flicker — most often on a no-EDID-name external display, the slot Q case), and
+// acting on such a PARTIAL observation makes the reorder move loop compute a
+// wrong managed index and mis-place columns. So we re-observe until the
+// observation is complete instead of acting on a partial one. If completeness
+// never holds within timeout the catalog is persistently degraded for this
+// workspace: we return an error so the transaction defers and the controller
+// replans on the next event (§7.1 / §6.8 graceful degradation) rather than
+// forcing a wrong layout.
+func (s *SigWM) liveOrderComplete(ctx context.Context, ws w.WorkspaceID, want []w.LiveWindowID, timeout time.Duration) ([]w.LiveWindowID, error) {
+	wantSet := make(map[w.LiveWindowID]bool, len(want))
+	for _, id := range want {
+		wantSet[id] = true
+	}
+	deadline := time.Now().Add(timeout)
+	var lastGot []w.LiveWindowID
+	lastPresent := 0
+	for {
+		got, err := s.liveOrderInWorkspace(ctx, ws)
+		if err != nil {
+			return nil, err
+		}
+		present := 0
+		for _, id := range got {
+			if wantSet[id] {
+				present++
+			}
+		}
+		if present >= len(want) {
+			return got, nil
+		}
+		lastGot, lastPresent = got, present
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+	return nil, fmt.Errorf("sigwm.ReorderColumns[%s]: workspace not fully observable within %s (OmniWM transiently lost %d/%d desired windows; last order=%v) — deferring to replan", ws, timeout, len(want)-lastPresent, len(want), lastGot)
+}
+
 func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns [][]w.LiveWindowID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2063,7 +2114,9 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 	// basename — so closing it here is unambiguous and safe; the transient
 	// title=="" loading window is deliberately NOT touched (ATTR-D4).
 	s.closeStrayZedEmptyProjects(ctx, ws)
-	current, err := s.liveOrderInWorkspace(ctx, ws)
+	// 原則3: act only on a COMPLETE observation — wait out OmniWM's transient
+	// workspace-loss flicker (§3.5) rather than reorder against a partial view.
+	current, err := s.liveOrderComplete(ctx, ws, want, reorderCompleteObsBudget)
 	if err != nil {
 		return err
 	}
@@ -2097,7 +2150,7 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 		// move loop plans against a stable base rather than racing OmniWM's own
 		// re-layout (see waitWorkspaceOrderStable).
 		s.waitWorkspaceOrderStable(ctx, ws, want, 6*time.Second)
-		current, err = s.liveOrderInWorkspace(ctx, ws)
+		current, err = s.liveOrderComplete(ctx, ws, want, reorderCompleteObsBudget)
 		if err != nil {
 			return err
 		}
@@ -2153,7 +2206,9 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 				if err := s.waitWindowIndexLess(ctx, ws, target, j, 3000*time.Millisecond); err != nil {
 					return err
 				}
-				current, err = s.liveOrderInWorkspace(ctx, ws)
+				// 原則3: re-observe completely before the next move decision —
+				// never compute the managed index from a flicker-partial view.
+				current, err = s.liveOrderComplete(ctx, ws, want, reorderCompleteObsBudget)
 				if err != nil {
 					return err
 				}

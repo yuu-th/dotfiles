@@ -1221,6 +1221,15 @@ func TestReorderColumnsStackedFiveWindowRotation(t *testing.T) {
 	defer cancel()
 	realSpecRequireGhostty(t)
 	sw := newRealSigWM()
+	// Workspace under test is overridable so the SAME ghostty-only reorder can
+	// run on a NAMED-display ws (default "8" = HP) vs Q's UNNAMED-display ws
+	// ("13"), isolating whether the workspace/display — not the Zed/Vivaldi mix
+	// or a disconnected-display moment — is what breaks the ACC-S7 reorder.
+	rws := w.WorkspaceID(os.Getenv("PROJWM_TEST_REORDER_WS"))
+	if rws == "" {
+		rws = "8"
+	}
+	rwsStr := string(rws)
 	tags := []string{"a", "b", "c", "d", "e"}
 	titles := make([]string, len(tags))
 	sessions := make([]string, len(tags))
@@ -1231,17 +1240,17 @@ func TestReorderColumnsStackedFiveWindowRotation(t *testing.T) {
 		realSpecCleanupGhostty(t, sw, titles[i], sessions[i])
 	}
 	for i := range tags {
-		ids[i] = realSpecSpawnGhostty(t, ctx, sw, w.WindowShell, "8", titles[i], sessions[i], "")
-		realSpecAssertObserved(t, ctx, sw, ids[i], "8", "com.mitchellh.ghostty", titles[i])
+		ids[i] = realSpecSpawnGhostty(t, ctx, sw, w.WindowShell, rwsStr, titles[i], sessions[i], "")
+		realSpecAssertObserved(t, ctx, sw, ids[i], rws, "com.mitchellh.ghostty", titles[i])
 	}
-	initial := realSpecObservedOrder(t, ctx, sw, "8", ids...)
+	initial := realSpecObservedOrder(t, ctx, sw, rws, ids...)
 	if len(initial) != 5 {
 		t.Fatalf("setup 5-window order = %v, want 5", initial)
 	}
 	// Rotate last→front + stack the middle pair: [{4},{0},{1,2},{3}].
 	want := [][]w.LiveWindowID{{initial[4]}, {initial[0]}, {initial[1], initial[2]}, {initial[3]}}
-	if err := sw.ReorderColumns(ctx, "8", want); err != nil {
-		t.Fatalf("ReorderColumns 5-window rotation+stack did not settle: %v", err)
+	if err := sw.ReorderColumns(ctx, rws, want); err != nil {
+		t.Fatalf("ReorderColumns 5-window rotation+stack on ws %s did not settle: %v", rws, err)
 	}
-	realSpecAssertColumns(t, ctx, sw, "8", want)
+	realSpecAssertColumns(t, ctx, sw, rws, want)
 }
