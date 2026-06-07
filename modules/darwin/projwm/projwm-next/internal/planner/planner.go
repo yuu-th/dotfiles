@@ -664,7 +664,29 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 		}
 	}
 
-	// 5) Final focus: per command policy. Idempotency: skip if already focused.
+	// Cockpit SystemWindows (unified design v2 — park-workspace model §5):
+	//   1) For each desired SystemWindow, find the live ghostty whose
+	//      title equals the controller-owned Title. If absent → spawn op.
+	//   2) Check show/hide convergence: if display active workspace != desired
+	//      (ParkWorkspace for Shown, PriorWorkspace for Hidden), emit op.
+	//   3) For displays that no longer have a SystemWindow (unplug) ->
+	//      close any leftover cockpit window with that title prefix.
+	planCockpitOps(state, target, &phaseRemovals, &phaseSpawns, &phaseLayout, mkID)
+	planScratchOps(state, target, &phaseLayout, mkID)
+	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
+	planSummonWindowOps(state, target, command, &phaseLayout, mkID)
+	planSwitchProjectOps(state, target, command, &phaseLayout, mkID)
+	planCycleSlotWindowOps(state, target, command, &phaseLayout, mkID)
+
+	// Final focus: per command policy. Emitted LAST so it is the final layout
+	// op — after cockpit/scratch/summon ops, which themselves switch a display's
+	// workspace (notably hide-cockpit switches the cockpit's display back to its
+	// prior workspace, stealing global focus). Placing final-focus earlier let
+	// hide-cockpit override it (ACC-S7 INV-10 flake: focus landed on M instead of
+	// the policy's A whenever a hide-cockpit op was emitted that recovery).
+	// Idempotency: skip if already focused. Only emits when FinalFocus[command]
+	// is set, so summon/cycle (which set their own focus and have no policy
+	// entry) are unaffected.
 	if ws, ok := target.FocusPolicy.FinalFocus[string(command)]; ok && ws != "" {
 		if state.Observed.Focus.Workspace != ws {
 			wsCopy := ws
@@ -680,20 +702,6 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 			})
 		}
 	}
-
-	// Cockpit SystemWindows (unified design v2 — park-workspace model §5):
-	//   1) For each desired SystemWindow, find the live ghostty whose
-	//      title equals the controller-owned Title. If absent → spawn op.
-	//   2) Check show/hide convergence: if display active workspace != desired
-	//      (ParkWorkspace for Shown, PriorWorkspace for Hidden), emit op.
-	//   3) For displays that no longer have a SystemWindow (unplug) ->
-	//      close any leftover cockpit window with that title prefix.
-	planCockpitOps(state, target, &phaseRemovals, &phaseSpawns, &phaseLayout, mkID)
-	planScratchOps(state, target, &phaseLayout, mkID)
-	planSummonViewerOps(state, target, command, &phaseLayout, mkID)
-	planSummonWindowOps(state, target, command, &phaseLayout, mkID)
-	planSwitchProjectOps(state, target, command, &phaseLayout, mkID)
-	planCycleSlotWindowOps(state, target, command, &phaseLayout, mkID)
 
 	// Assemble the phase-separated operation sequence with KindObserveBarrier
 	// inserted between consecutive phases that both produce ops. The barrier
