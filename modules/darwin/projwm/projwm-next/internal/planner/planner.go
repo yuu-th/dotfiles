@@ -1523,6 +1523,14 @@ func planCockpitOps(state w.WorldState, target w.DesiredWorld,
 	}
 }
 
+// fmtDWIDPtr renders a *DesiredWindowID for diagnostics ("nil" when absent).
+func fmtDWIDPtr(p *w.DesiredWindowID) string {
+	if p == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%s/%v/%d", p.Project, p.Kind, p.Index)
+}
+
 // planSummonViewerOps emits focus ops realising SSOT §4.1 OP06.
 //
 // 動作:
@@ -1548,21 +1556,26 @@ func planSummonViewerOps(state w.WorldState, target w.DesiredWorld, command Comm
 		return
 	}
 
-	// Step 1: identify the currently focused window's project-DesiredWindow identity.
-	var focusedDesired *w.DesiredWindowID
+	// Step 1+2: identify the AI window whose viewer to focus. A viewer mirror
+	// SHARES its AI source's DesiredWindowID (internal/identity: "Viewer mirrors
+	// share DesiredWindowID with their AI source but have Kind=WindowViewer"), so
+	// the target is identified by the AI's DesiredWindowID (Kind=AI) + the live
+	// window's Kind=Viewer — NOT a Kind=Viewer DesiredWindowID. No observed window
+	// ever carries a Kind=Viewer MatchedTo: viewers are not part of a project's
+	// Windows (they are derived from its AI windows by the viewer-maintenance
+	// section above), so the previous Kind=Viewer lookup matched nothing and the
+	// summon-viewer focus op was never emitted (OP-06 jump root).
+	var targetAI *w.DesiredWindowID
 	if focusedID := state.Observed.Focus.Window; focusedID != "" {
-		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil {
-			focusedDesired = ow.MatchedTo
+		// Focused on an AI window (or its viewer mirror, which shares the AI's
+		// DesiredWindowID): summon that AI's viewer.
+		if ow, ok := state.Observed.Windows[focusedID]; ok && ow.MatchedTo != nil && ow.MatchedTo.Kind == w.WindowAI {
+			targetAI = ow.MatchedTo
 		}
 	}
-
-	// Step 2: compute target viewer DesiredWindowID.
-	var targetDesired *w.DesiredWindowID
-	if focusedDesired != nil && focusedDesired.Kind == w.WindowAI {
-		tdw := w.DesiredWindowID{Project: focusedDesired.Project, Kind: w.WindowViewer, Index: focusedDesired.Index}
-		targetDesired = &tdw
-	} else {
-		// Fallback: first viewer in slot order of the active profile.
+	if targetAI == nil {
+		// Fallback: first AI in slot order of the active profile (INV-12: viewer
+		// order follows slot order).
 		prof, ok := target.ActiveProfileObj()
 		if !ok {
 			return
@@ -1573,36 +1586,59 @@ func planSummonViewerOps(state w.WorldState, target w.DesiredWorld, command Comm
 				continue
 			}
 			proj, ok := target.Projects[projID]
-			if !ok {
+			if !ok || proj.Archived {
 				continue
 			}
-			// Look up the first WindowViewer in this project's Windows.
-			for _, win := range proj.Windows {
-				if win.Kind == w.WindowViewer {
-					tdw := win.ID
-					targetDesired = &tdw
-					break
+			var firstAI *w.DesiredWindowID
+			for i := range proj.Windows {
+				if proj.Windows[i].Kind != w.WindowAI {
+					continue
+				}
+				if firstAI == nil || proj.Windows[i].ID.Index < firstAI.Index {
+					id := proj.Windows[i].ID
+					firstAI = &id
 				}
 			}
-			if targetDesired != nil {
+			if firstAI != nil {
+				targetAI = firstAI
 				break
 			}
 		}
 	}
-	if targetDesired == nil {
+	if targetAI == nil {
 		return
 	}
 
-	// Step 3: resolve target DesiredWindowID to LiveWindowID via observed.Windows.
+	// Step 3: resolve the live VIEWER window mirroring targetAI. Real viewers are
+	// NOT in a project's desired Windows, so identity never populates their
+	// MatchedTo (it stays nil); they are identified by their mirror TITLE —
+	// viewerTitleForAI of the AI's expected title — exactly as the viewer-
+	// maintenance section above does (viewerMatchedDesired). Accept either signal:
+	// MatchedTo == targetAI (flows/fixtures that link the mirror) OR the mirror
+	// title on the viewer workspace.
+	viewerTitle := ""
+	if proj, ok := target.Projects[targetAI.Project]; ok {
+		for i := range proj.Windows {
+			if proj.Windows[i].ID == *targetAI {
+				viewerTitle = viewerTitleForAI(proj.Windows[i].TitleContract.Expected)
+				break
+			}
+		}
+	}
 	var targetLive w.LiveWindowID
 	for id, ow := range state.Observed.Windows {
-		if ow.MatchedTo == nil {
+		if ow.Kind != w.WindowViewer {
 			continue
 		}
-		if *ow.MatchedTo == *targetDesired {
+		byMatch := ow.MatchedTo != nil && *ow.MatchedTo == *targetAI
+		byTitle := viewerTitle != "" && ow.Title.Value == viewerTitle && ow.Workspace == viewerWs
+		if byMatch || byTitle {
 			targetLive = id
 			break
 		}
+	}
+	if plannerTraceEnabled() {
+		plannerTracef("summon-viewer: targetAI=%s viewerTitle=%q targetLive=%q", fmtDWIDPtr(targetAI), viewerTitle, targetLive)
 	}
 	if targetLive == "" {
 		// Viewer not yet spawned — let transaction loop spawn on next cycle.

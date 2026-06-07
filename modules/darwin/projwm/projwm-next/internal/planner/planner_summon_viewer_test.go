@@ -31,9 +31,11 @@ func summonViewerEnv() w.ManagedEnvironment {
 
 func summonViewerDesired() w.DesiredWorld {
 	aiID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1}
-	viewerID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowViewer, Index: 1}
 	aiID2 := w.DesiredWindowID{Project: "p2", Kind: w.WindowAI, Index: 1}
-	viewerID2 := w.DesiredWindowID{Project: "p2", Kind: w.WindowViewer, Index: 1}
+	// Projects carry AI windows only. Viewers are NOT project Windows — they are
+	// derived from AI windows by the viewer-maintenance planner section, and the
+	// live viewer mirror SHARES its AI's DesiredWindowID (Kind=WindowViewer), so
+	// the observed viewers below carry MatchedTo == the AI's DesiredWindowID.
 	return w.DesiredWorld{
 		ActiveProfile: "prof",
 		Profiles: map[w.ProfileID]w.DesiredProfile{
@@ -45,11 +47,9 @@ func summonViewerDesired() w.DesiredWorld {
 		Projects: map[w.ProjectID]w.DesiredProject{
 			"p1": {ID: "p1", Windows: []w.DesiredWindow{
 				{ID: aiID1, Kind: w.WindowAI},
-				{ID: viewerID1, Kind: w.WindowViewer},
 			}},
 			"p2": {ID: "p2", Windows: []w.DesiredWindow{
 				{ID: aiID2, Kind: w.WindowAI},
-				{ID: viewerID2, Kind: w.WindowViewer},
 			}},
 		},
 	}
@@ -61,13 +61,13 @@ func TestPlanner_SummonViewer_FromFocusedAITargetsItsViewer(t *testing.T) {
 	env := summonViewerEnv()
 	desired := summonViewerDesired()
 	aiID := w.DesiredWindowID{Project: "p2", Kind: w.WindowAI, Index: 1}
-	viewerID := w.DesiredWindowID{Project: "p2", Kind: w.WindowViewer, Index: 1}
 	state := w.WorldState{
 		Environment: env, Desired: desired,
 		Observed: w.ObservedWorld{
 			Windows: map[w.LiveWindowID]w.ObservedWindow{
 				"ai-omni-p2": {ID: "ai-omni-p2", Kind: w.WindowAI, MatchedTo: &aiID, Workspace: "WS2"},
-				"v-omni-p2":  {ID: "v-omni-p2", Kind: w.WindowViewer, MatchedTo: &viewerID, Workspace: "A"},
+				// Viewer mirror shares its AI source's DesiredWindowID.
+				"v-omni-p2": {ID: "v-omni-p2", Kind: w.WindowViewer, MatchedTo: &aiID, Workspace: "A"},
 			},
 			Focus: w.ObservedFocus{Window: "ai-omni-p2", Workspace: "WS2"},
 		},
@@ -100,14 +100,15 @@ func TestPlanner_SummonViewer_FromFocusedAITargetsItsViewer(t *testing.T) {
 func TestPlanner_SummonViewer_FromNonAIFallsBackToFirstSlot(t *testing.T) {
 	env := summonViewerEnv()
 	desired := summonViewerDesired()
-	viewerID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowViewer, Index: 1}
+	aiID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1}
 	shellID := w.DesiredWindowID{Project: "p2", Kind: w.WindowShell, Index: 1}
 	state := w.WorldState{
 		Environment: env, Desired: desired,
 		Observed: w.ObservedWorld{
 			Windows: map[w.LiveWindowID]w.ObservedWindow{
 				"shell-omni": {ID: "shell-omni", Kind: w.WindowShell, MatchedTo: &shellID, Workspace: "WS2"},
-				"v-omni-p1":  {ID: "v-omni-p1", Kind: w.WindowViewer, MatchedTo: &viewerID1, Workspace: "A"},
+				// Viewer mirror shares its AI source's DesiredWindowID.
+				"v-omni-p1": {ID: "v-omni-p1", Kind: w.WindowViewer, MatchedTo: &aiID1, Workspace: "A"},
 			},
 			Focus: w.ObservedFocus{Window: "shell-omni", Workspace: "WS2"},
 		},
@@ -133,12 +134,13 @@ func TestPlanner_SummonViewer_FromNonAIFallsBackToFirstSlot(t *testing.T) {
 func TestPlanner_SummonViewer_WhenAlreadyFocusedNoFocusOp(t *testing.T) {
 	env := summonViewerEnv()
 	desired := summonViewerDesired()
-	viewerID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowViewer, Index: 1}
+	aiID1 := w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1}
 	state := w.WorldState{
 		Environment: env, Desired: desired,
 		Observed: w.ObservedWorld{
 			Windows: map[w.LiveWindowID]w.ObservedWindow{
-				"v-omni-p1": {ID: "v-omni-p1", Kind: w.WindowViewer, MatchedTo: &viewerID1, Workspace: "A"},
+				// Viewer mirror shares its AI source's DesiredWindowID.
+				"v-omni-p1": {ID: "v-omni-p1", Kind: w.WindowViewer, MatchedTo: &aiID1, Workspace: "A"},
 			},
 			// 既に viewer に focus
 			Focus: w.ObservedFocus{Window: "v-omni-p1", Workspace: "A"},
@@ -191,13 +193,13 @@ func TestPlanner_SummonViewer_OnlyFiresOnIntentCommandKey(t *testing.T) {
 	env := summonViewerEnv()
 	desired := summonViewerDesired()
 	aiID := w.DesiredWindowID{Project: "p1", Kind: w.WindowAI, Index: 1}
-	viewerID := w.DesiredWindowID{Project: "p1", Kind: w.WindowViewer, Index: 1}
 	state := w.WorldState{
 		Environment: env, Desired: desired,
 		Observed: w.ObservedWorld{
 			Windows: map[w.LiveWindowID]w.ObservedWindow{
-				"ai-omni":  {ID: "ai-omni", Kind: w.WindowAI, MatchedTo: &aiID, Workspace: "WS1"},
-				"v-omni":   {ID: "v-omni", Kind: w.WindowViewer, MatchedTo: &viewerID, Workspace: "A"},
+				"ai-omni": {ID: "ai-omni", Kind: w.WindowAI, MatchedTo: &aiID, Workspace: "WS1"},
+				// Viewer mirror shares its AI source's DesiredWindowID.
+				"v-omni": {ID: "v-omni", Kind: w.WindowViewer, MatchedTo: &aiID, Workspace: "A"},
 			},
 			Focus: w.ObservedFocus{Window: "ai-omni", Workspace: "WS1"},
 		},
