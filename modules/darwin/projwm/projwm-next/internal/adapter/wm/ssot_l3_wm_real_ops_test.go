@@ -35,6 +35,11 @@ func realOpsEnv() w.ManagedEnvironment {
 			Workspaces: []w.WorkspaceSpec{
 				{ID: "8", RawName: "8", DisplayName: "8", Role: w.WorkspaceGeneral},
 				{ID: "9", RawName: "9", DisplayName: "9", Role: w.WorkspaceGeneral},
+				// ws13 = Q, on the UNNAMED external display (display:2, name="").
+				// Lets the reorder real_ops tests run on the same nameless-display
+				// workspace that breaks ACC-S7 / Jump, isolating display-specific
+				// reorder behaviour from the named-display ws8.
+				{ID: "13", RawName: "13", DisplayName: "Q", Role: w.WorkspaceGeneral},
 			},
 		},
 		Apps: w.AppEnvironment{ManagedApps: []w.ManagedAppPolicy{
