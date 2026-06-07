@@ -411,7 +411,20 @@ func Plan(state w.WorldState, target w.DesiredWorld, command CommandKey, reason 
 				}
 			}
 			obs := state.Observed.Layouts[ws]
-			if !sameSemanticLayout(managedObservedColumns(obs.Columns, managed), liveCols) {
+			obsCols := managedObservedColumns(obs.Columns, managed)
+			match := sameSemanticLayout(obsCols, liveCols)
+			if plannerTraceEnabled() {
+				obsSizes := make([]int, len(obsCols))
+				for i, c := range obsCols {
+					obsSizes[i] = len(c.Windows)
+				}
+				wantSizes := make([]int, len(liveCols))
+				for i, c := range liveCols {
+					wantSizes[i] = len(c)
+				}
+				plannerTracef("reorder-decision ws=%s match=%v obsN=%d obsSizes=%v wantN=%d wantSizes=%v", ws, match, len(obsCols), obsSizes, len(liveCols), wantSizes)
+			}
+			if !match {
 				wsCopy := ws
 				phaseLayout = append(phaseLayout, op.Operation{
 					ID:     mkID("reorder"),

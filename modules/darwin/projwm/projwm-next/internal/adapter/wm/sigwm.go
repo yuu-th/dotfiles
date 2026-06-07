@@ -786,13 +786,29 @@ func observedColumnsFromCtl(wins []ctlWindow) []w.ObservedColumn {
 		return nil
 	}
 	allZeroFrame := true
-	anyWorkspaceInactive := false
+	anyHidden := false
 	for _, win := range wins {
 		if win.Frame.X != 0 || win.Frame.Y != 0 || win.Frame.Height != 0 {
 			allZeroFrame = false
 		}
-		if win.HiddenReason == "workspace-inactive" {
-			anyWorkspaceInactive = true
+		// OmniWM marks a window whose frame.x is NOT a reliable column anchor
+		// with a HiddenReason: "workspace-inactive" for windows on an unfocused
+		// workspace, and "layout-transient" for windows mid-layout-transition
+		// (and for the non-foreground members of a stacked column). In BOTH cases
+		// the reported frame.x is a sentinel (e.g. -1) shared across unrelated
+		// windows, so the |Δx|<=5 grouping below would either fuse unrelated
+		// columns or — because canFrameGroup excludes such windows — force every
+		// stacked member into its own solo column, mis-splitting the stack. That
+		// transient split, read by the planner/verifier/invariants from a SINGLE
+		// Observe snapshot, makes the planner perpetually re-emit a reorder and
+		// burns the replan budget (the confirmed OP-02-jump / S10 convergence
+		// root). The height-based grouping is frame.x-independent and stays
+		// correct through the transition (stacked members share a reduced height),
+		// so route to it whenever any window carries such a HiddenReason — not
+		// only the original "workspace-inactive" string, which did NOT match what
+		// OmniWM actually emits for these windows ("layout-transient").
+		if win.HiddenReason == "workspace-inactive" || win.HiddenReason == "layout-transient" {
+			anyHidden = true
 		}
 	}
 	if allZeroFrame {
@@ -802,7 +818,7 @@ func observedColumnsFromCtl(wins []ctlWindow) []w.ObservedColumn {
 		}
 		return cols
 	}
-	if anyWorkspaceInactive {
+	if anyHidden {
 		return inactiveObservedColumnsFromCtl(wins)
 	}
 	type group struct {
@@ -2129,19 +2145,31 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 			return fmt.Errorf("sigwm.ReorderColumns[%s]: desired window %s is not in workspace", ws, id)
 		}
 	}
-	// wantSet lets the move loop work in MANAGED-relative index space (SSOT
-	// §6.3: layout concerns only managed/desired windows). Any non-managed
-	// window interleaved on the workspace — a Zed "empty project" window, a
-	// user window that drifted in — is then transparent to the column
-	// placement arithmetic, matching managedOrderSettled (the settle check
-	// already filters to this set). Without this the raw index could exceed
-	// the managed target position and over-move a column past already-placed
-	// ones.
-	wantSet := make(map[w.LiveWindowID]bool, len(want))
-	for _, id := range want {
-		wantSet[id] = true
+	// A desired layout containing a STACKED column (≥2 windows) is converged in
+	// COLUMN units, per SSOT §6.3 (L3 ordering = DesiredLayout.Columns vs
+	// ObservedLayout.Columns — a stacked column counts as ONE column), NOT by the
+	// flat per-window order. The two same-app shells destined for one stack sit
+	// at near-identical frame.x on the name-less external display and OmniWM
+	// reports their relative column order unstably; gating the reorder on that
+	// flat order (waitColumnOrder) made it loop forever even when the final
+	// layout was already correct (the OP-02-jump / S10 root: waitColumnOrder NOT
+	// settled ×135, the stacking step never reached). So for a stacked layout we
+	// order best-effort, FORM the stacks (collapseStackColumn), then gate on the
+	// SEMANTIC column layout (waitSemanticColumns) — where the two shells are one
+	// membership-checked column and the adjacent-order flicker disappears.
+	hasStack := false
+	for _, col := range columns {
+		if len(col) >= 2 {
+			hasStack = true
+			break
+		}
 	}
-	var orderErr error
+	colSizes := make([]int, len(columns))
+	for i, c := range columns {
+		colSizes[i] = len(c)
+	}
+	wmTracef("reorder[%s] BEGIN columns=%d hasStack=%v colSizes=%v", ws, len(columns), hasStack, colSizes)
+	var settleErr error
 	for pass := 0; pass < 3; pass++ {
 		if err := s.unstackWorkspaceLocked(ctx, ws, len(want)); err != nil {
 			return err
@@ -2231,37 +2259,141 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 				return oerr2
 			}
 		}
-		orderErr = s.waitColumnOrder(ctx, ws, want, s.SettleTimeout)
-		if orderErr == nil {
+		if !hasStack {
+			// Solo-only layout: the flat window order IS the column order (each
+			// window is its own column at a distinct frame.x — no adjacent-column
+			// flicker), so gate on it directly.
+			settleErr = s.waitColumnOrder(ctx, ws, want, s.SettleTimeout)
+			if settleErr == nil {
+				break
+			}
+			continue
+		}
+		// Stacked layout: the to-first loop above placed each stacked column's
+		// members as a contiguous run; collapse each into one stacked column,
+		// then gate on the SEMANTIC column layout (§6.3). We deliberately do NOT
+		// gate on the flat window order here (see the hasStack comment above). A
+		// failure drops to the next pass, whose unstack (expel) re-flattens the
+		// workspace for a clean retry.
+		settleErr = nil
+		for _, col := range columns {
+			if len(col) < 2 {
+				continue
+			}
+			if err := s.collapseStackColumn(ctx, ws, col); err != nil {
+				settleErr = err
+				break
+			}
+		}
+		if settleErr != nil {
+			continue
+		}
+		settleErr = s.waitSemanticColumns(ctx, ws, columns, s.SettleTimeout)
+		if settleErr == nil {
 			break
 		}
 	}
-	if orderErr != nil {
-		return orderErr
-	}
-	hasStack := false
-	for _, col := range columns {
-		if len(col) < 2 {
-			continue
-		}
-		hasStack = true
-		for i := 1; i < len(col); i++ {
-			target := col[i]
-			if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
-				return fmt.Errorf("sigwm.ReorderColumns[%s]: focus stack target %s: %w", ws, target, err)
-			}
-			if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
-				return err
-			}
-			if _, err := s.Exec.Run(ctx, "command", "move", "left"); err != nil {
-				return fmt.Errorf("sigwm.ReorderColumns[%s]: stack move left: %w", ws, err)
-			}
-		}
-	}
-	if !hasStack {
+	return settleErr
+}
+
+// collapseStackColumn merges every window of a desired multi-window column into
+// a single OmniWM stacked column, robustly against the windows' flickering
+// relative order on the name-less display. It is driven by OBSERVED column
+// position, not by the windows' desired identity order: while the column's
+// members span more than one observed column, it focuses a member in the
+// RIGHTMOST such column and `move left`s it, merging that column into the one
+// immediately to its left. ReorderColumns' to-first step leaves the members as
+// a contiguous run, so the rightmost member's left neighbor is always another
+// member — the merge is always between two members, never a member and a stray,
+// and the outcome is correct whichever member OmniWM happens to report leftmost
+// (the old identity-driven `focus col[i]; move left` merged the wrong way when
+// the observed order was swapped). A contiguity guard refuses to merge when the
+// left neighbor is NOT a member, surfacing an error so the caller's next pass
+// re-orders. waitSemanticColumns then verifies the result (accepting any
+// intra-stack order). Caller holds s.mu.
+func (s *SigWM) collapseStackColumn(ctx context.Context, ws w.WorkspaceID, col []w.LiveWindowID) error {
+	if len(col) < 2 {
 		return nil
 	}
-	return s.waitSemanticColumns(ctx, ws, columns, s.SettleTimeout)
+	members := make(map[w.LiveWindowID]bool, len(col))
+	for _, id := range col {
+		members[id] = true
+	}
+	maxAttempts := len(col) * 4
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		cols, err := s.observedColumnsLocked(ctx, ws)
+		if err != nil {
+			return err
+		}
+		var memberCols []int // indices into cols, ascending (left→right)
+		for ci, c := range cols {
+			for _, id := range c.Windows {
+				if members[id] {
+					memberCols = append(memberCols, ci)
+					break
+				}
+			}
+		}
+		wmTracef("reorder[%s] collapseStack attempt=%d observed-member-cols=%v of %d total cols", ws, attempt, memberCols, len(cols))
+		if len(memberCols) <= 1 {
+			return nil // all members already share one column
+		}
+		rightIdx := memberCols[len(memberCols)-1]
+		// The column immediately left of the rightmost member-column must also be
+		// a member column, else `move left` would stack a member onto a stray.
+		leftIsMember := false
+		for _, mi := range memberCols {
+			if mi == rightIdx-1 {
+				leftIsMember = true
+				break
+			}
+		}
+		if !leftIsMember {
+			return fmt.Errorf("sigwm.ReorderColumns[%s]: stack members not contiguous (observed member columns %v) — needs re-order", ws, memberCols)
+		}
+		var target w.LiveWindowID
+		for _, id := range cols[rightIdx].Windows {
+			if members[id] {
+				target = id
+				break
+			}
+		}
+		if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
+			return fmt.Errorf("sigwm.ReorderColumns[%s]: focus stack target %s: %w", ws, target, err)
+		}
+		if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
+			// Focus settle is a hint; proceed best-effort like the to-first loop.
+			wmTracef("reorder[%s] collapseStack focus soft-miss for %s: %v", ws, target, err)
+		}
+		if _, err := s.Exec.Run(ctx, "command", "move", "left"); err != nil {
+			return fmt.Errorf("sigwm.ReorderColumns[%s]: stack move left: %w", ws, err)
+		}
+		// Let OmniWM commit the merge before the next observation, mirroring the
+		// unstack expel grace.
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("sigwm.ReorderColumns[%s]: stack did not collapse for column %v", ws, col)
+}
+
+// observedColumnsLocked returns the observed columns on ws (scoped to ws),
+// using the same frame.x grouping as the settle checks (observedColumnsFromCtl).
+// Caller holds s.mu.
+func (s *SigWM) observedColumnsLocked(ctx context.Context, ws w.WorkspaceID) ([]w.ObservedColumn, error) {
+	num, _, err := s.resolveWorkspaceNumber(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	wins, err := s.queryWindows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scoped := make([]ctlWindow, 0, len(wins))
+	for _, cw := range wins {
+		if cw.Workspace.Number == num {
+			scoped = append(scoped, cw)
+		}
+	}
+	return observedColumnsFromCtl(scoped), nil
 }
 
 // waitWindowAtFront polls until `id` is the leftmost (raw index 0) column on
@@ -2333,67 +2465,28 @@ func (s *SigWM) unstackWorkspaceLocked(ctx context.Context, ws w.WorkspaceID, wi
 		if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
 			return err
 		}
-		// `move-to-root` lifts the focused window out of any stack into a
-		// new top-level column. `move right` is a no-op inside a stacked
-		// column on OmniWM (it just shifts the active stack member), so it
-		// cannot flatten a stacked column on its own.
-		//
-		// move-to-root has an observed transient failure mode where it
-		// returns `exit status 1` if the focused window's stack-membership
-		// is being concurrently reshaped by OmniWM's settle pipeline (the
-		// `Connection refused` retry decorator does not apply because this
-		// is an exit-1, not a socket failure). Treat it as a transient
-		// production-shaped retry: re-focus and try again up to 3 times
-		// with a short backoff before bubbling the error up.
-		moveErr := error(nil)
-		alreadyAtRoot := false
-		for retry := 0; retry < 3; retry++ {
-			if retry > 0 {
-				if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
-					return fmt.Errorf("sigwm.ReorderColumns[%s]: re-focus unstack target %s: %w", ws, target, err)
-				}
-				if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
-					return err
-				}
-				time.Sleep(time.Duration(150*(1<<retry)) * time.Millisecond)
-			}
-			if out, err := s.Exec.Run(ctx, "command", "move-to-root"); err != nil {
-				// OmniWM returns "ignored: layout_mismatch" with exit 1
-				// when the focused window is already at root level (no
-				// stack to lift out of). This means OmniWM internal
-				// layout state disagrees with the observed-columns
-				// grouping (likely frame-overlap heuristic over-reports
-				// stacking). The right behavior: declare unstack done.
-				// The string surfaces via stdout (captured in `out`),
-				// not stderr (which is what err.Error() embeds).
-				outStr := strings.TrimSpace(string(out))
-				if strings.Contains(err.Error(), "layout_mismatch") ||
-					strings.Contains(err.Error(), "ignored:") ||
-					strings.Contains(outStr, "layout_mismatch") ||
-					strings.Contains(outStr, "ignored:") {
-					alreadyAtRoot = true
-					moveErr = nil
-					break
-				}
-				moveErr = err
-				continue
-			}
-			moveErr = nil
-			break
+		// Flatten the stack with the niri-native `expel-window-from-column`
+		// (layoutCompatibility=niri), NOT `move-to-root` (layoutCompatibility=
+		// dwindle). EVERY projwm workspace is niri layout (verified via
+		// `omniwmctl query capabilities` / `query workspaces`), so `move-to-root`
+		// returns "ignored: layout_mismatch" and NEVER flattens a real stack —
+		// the prior code then WRONGLY treated that mismatch as "already at root,
+		// unstack done" and returned, leaving the {shell-1,shell-2} stack intact.
+		// The subsequent move-column-to-first loop then operated on a still-
+		// stacked column and could never converge (the S10 / OP-02-jump root,
+		// confirmed by a real-machine probe on a niri stack: move-to-root is a
+		// no-op, `expel-window-from-column` splits the stack and PRESERVES order).
+		// expel pops the BOTTOM window of the focused column into a new column to
+		// the right; this re-observation loop drives one expel per iteration until
+		// observedColumnsFromCtl shows every managed column solo (so a deeper N-
+		// window stack flattens in N-1 iterations). `consume-or-expel-window-left`
+		// also unstacks but SWAPS the member order (probe-verified), so it is not
+		// used here.
+		if _, err := s.Exec.Run(ctx, "command", "expel-window-from-column"); err != nil {
+			return fmt.Errorf("sigwm.ReorderColumns[%s]: unstack expel-window-from-column: %w", ws, err)
 		}
-		if moveErr != nil {
-			return fmt.Errorf("sigwm.ReorderColumns[%s]: unstack move-to-root: %w", ws, moveErr)
-		}
-		if alreadyAtRoot {
-			// OmniWM signaled the focused window is already root-level.
-			// The observation-grouping heuristic likely over-reported
-			// stacking. Trust OmniWM's authoritative layout and exit.
-			return nil
-		}
-		// 400ms (was 150ms): omniwm/niri sometimes takes ~250ms to
-		// surface the post-`move-to-root` window list, and the next
-		// observation loop iteration would otherwise see the
-		// pre-flatten layout and try to flatten the same column twice.
+		// Let omniwm/niri surface the post-expel window list before the next
+		// observation, so we don't re-detect the pre-flatten stack and over-expel.
 		time.Sleep(400 * time.Millisecond)
 	}
 	return fmt.Errorf("sigwm.ReorderColumns[%s]: existing stacked columns did not flatten", ws)
