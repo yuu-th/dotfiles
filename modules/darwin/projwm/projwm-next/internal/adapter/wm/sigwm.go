@@ -2155,63 +2155,80 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 			return err
 		}
 		wmTracef("reorder[%s] pass=%d post-unstack order=%v want=%v", ws, pass, current, want)
-		for i, target := range want {
-			// Bound by total live windows, not just len(want): each move-column
-			// left advances the target one PHYSICAL column which may be a stray,
-			// so reaching managed-index i can take more steps than there are
-			// managed windows.
-			maxAttempts := len(current)*2 + 4
-			for attempts := 0; attempts < maxAttempts; attempts++ {
-				// Break on the MANAGED-relative index (strays ignored): a
-				// non-managed window to the left must never cause us to
-				// over-move the target past already-placed managed columns.
-				mj := managedIndexInOrder(current, wantSet, target)
-				if mj < 0 {
-					return fmt.Errorf("sigwm.ReorderColumns[%s]: lost target %s while reordering", ws, target)
-				}
-				if mj <= i {
-					break
-				}
-				// rawJ drives the physical-progress wait below: a single
-				// move-column left always lowers the target's raw index by one
-				// (swapping past whatever neighbor — managed or stray).
-				j := indexLive(current, target)
-				if j < 0 {
-					return fmt.Errorf("sigwm.ReorderColumns[%s]: lost target %s while reordering", ws, target)
-				}
-				wmTracef("reorder[%s] move target=%s want-i=%d managed-j=%d raw-j=%d order=%v", ws, target, i, mj, j, current)
-				if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
-					return fmt.Errorf("sigwm.ReorderColumns[%s]: focus %s: %w", ws, target, err)
-				}
-				if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
-					return err
-				}
-				if _, err := s.Exec.Run(ctx, "command", "move-column", "left"); err != nil {
-					return fmt.Errorf("sigwm.ReorderColumns[%s]: move-column left: %w", ws, err)
-				}
-				// 200ms grace lets niri/OmniWM commit the column-reorder
-				// before we begin polling for the index decrement. Without
-				// this, the very first observation can race the move and
-				// surface the pre-move index, wasting one of the inner
-				// poll iterations.
-				time.Sleep(200 * time.Millisecond)
-				// 3000ms (was 1500ms): under heavy load (multi-Vivaldi
-				// reorder, the reconcile epoch flushing concurrent
-				// settle work, AX-disowned viewer windows whose frame.x
-				// is statically driven by Ghostty viewer mode) the
-				// post-move observation can take longer than 1.5s to
-				// surface in the omniwmctl query cache. We extend the
-				// budget to 3000ms which empirically covers >99% of
-				// observed reorder transitions.
-				if err := s.waitWindowIndexLess(ctx, ws, target, j, 3000*time.Millisecond); err != nil {
-					return err
-				}
-				// 原則3: re-observe completely before the next move decision —
-				// never compute the managed index from a flicker-partial view.
-				current, err = s.liveOrderComplete(ctx, ws, want, reorderCompleteObsBudget)
-				if err != nil {
-					return err
-				}
+		// Place columns by moving each to the FRONT in REVERSE want order:
+		// move want[n-1] to first, then want[n-2], … then want[0]. After all
+		// n moves the order is exactly want[0..n-1] (the last column moved to
+		// first is want[0], which then sits ahead of want[1], … which sit
+		// ahead of want[n-1] — every column lands in front of the ones moved
+		// before it, so their final relative order is the want order).
+		//
+		// We use the ABSOLUTE `move-column-to-first` instead of the relative
+		// `move-column left`. The relative left-move is position-DEPENDENT: it
+		// re-observes after every step and recomputes a delta, so on the
+		// name-less external display — where OmniWM's post-restart query lags
+		// the live layout — a stale read makes one pass undo another's work and
+		// the loop OSCILLATES without converging (ACC-S7 root: windows
+		// 410/427/435 swapped indices 1–3 endlessly, 27 moves, never settled).
+		// `move-column-to-first` is position-INDEPENDENT and idempotent (a
+		// column already at the front is a no-op), so it cannot oscillate, and
+		// "first" is unambiguous regardless of OmniWM's column index base
+		// (focus-column is 0-based but move-column-to-index's base is unclear —
+		// move-column-to-first sidesteps that entirely). Strays (a Zed "empty
+		// project" window, a drifted user window) are simply jumped over and
+		// end up trailing the managed columns, which managedOrderSettled
+		// already filters out — matching the prior managed-relative arithmetic.
+		for k := len(want) - 1; k >= 0; k-- {
+			target := want[k]
+			j := indexLive(current, target)
+			if j < 0 {
+				// Target transiently not in the observed order (OmniWM flicker
+				// drops a window from the query mid-reorder, §2.1 原則3). Skip
+				// this placement and let a later pass / the next replan retry —
+				// do NOT abort, which would starve the columns still to be placed.
+				// (ACC-S7 root: the per-move complete-observation requirement kept
+				// failing after ~3 moves on the post-restart instance, so the
+				// editor — want[0], placed LAST — never reached the front.)
+				wmTracef("reorder[%s] to-first target=%s k=%d transiently unobserved — skipping this pass", ws, target, k)
+				continue
+			}
+			if j == 0 {
+				// Already at the front; nothing to do. (Idempotent — avoids a
+				// redundant focus+move and its settle wait.)
+				continue
+			}
+			wmTracef("reorder[%s] to-first target=%s want-k=%d raw-j=%d order=%v", ws, target, k, j, current)
+			if _, err := s.Exec.Run(ctx, "window", "focus", string(target)); err != nil {
+				return fmt.Errorf("sigwm.ReorderColumns[%s]: focus %s: %w", ws, target, err)
+			}
+			if err := s.waitFocusedWindow(ctx, target, 1500*time.Millisecond); err != nil {
+				// Focus settle is a hint; a slow focus observation must not abort
+				// the placement of the remaining columns. Proceed best-effort.
+				wmTracef("reorder[%s] to-first target=%s focus soft-miss: %v", ws, target, err)
+			}
+			if _, err := s.Exec.Run(ctx, "command", "move-column-to-first"); err != nil {
+				return fmt.Errorf("sigwm.ReorderColumns[%s]: move-column-to-first %s: %w", ws, target, err)
+			}
+			// 200ms grace lets OmniWM commit the column move before we poll for
+			// the target reaching the front, so the first read doesn't race it.
+			time.Sleep(200 * time.Millisecond)
+			// Settle hint ONLY — non-fatal. A slow/flickery post-move observation
+			// must not abort the whole reorder; the final waitColumnOrder + the
+			// 3-pass loop + replan are the correctness guarantee (§6.8 graceful
+			// degradation, §2.1 原則3: observe and keep converging, don't abort).
+			if err := s.waitWindowAtFront(ctx, ws, target, 2000*time.Millisecond); err != nil {
+				wmTracef("reorder[%s] to-first target=%s front-wait soft-miss: %v", ws, target, err)
+			}
+			// Re-observe before the next placement. Prefer a COMPLETE view, but if
+			// OmniWM is transiently dropping a window, fall back to the partial
+			// live order and keep placing — never return here (that starved the
+			// editor). Only a hard query failure (conn refused) aborts.
+			if obs, oerr := s.liveOrderComplete(ctx, ws, want, reorderCompleteObsBudget); oerr == nil {
+				current = obs
+			} else if obs2, oerr2 := s.liveOrderInWorkspace(ctx, ws); oerr2 == nil {
+				wmTracef("reorder[%s] to-first re-observe incomplete (%v) — continuing on partial view", ws, oerr)
+				current = obs2
+			} else {
+				return oerr2
 			}
 		}
 		orderErr = s.waitColumnOrder(ctx, ws, want, s.SettleTimeout)
@@ -2247,7 +2264,11 @@ func (s *SigWM) ReorderColumns(ctx context.Context, ws w.WorkspaceID, columns []
 	return s.waitSemanticColumns(ctx, ws, columns, s.SettleTimeout)
 }
 
-func (s *SigWM) waitWindowIndexLess(ctx context.Context, ws w.WorkspaceID, id w.LiveWindowID, previous int, timeout time.Duration) error {
+// waitWindowAtFront polls until `id` is the leftmost (raw index 0) column on
+// `ws`, confirming a `move-column-to-first` committed. Includes a final
+// fresh-observation grace so we don't declare failure on a query-cache lag
+// when the move actually landed within the deadline.
+func (s *SigWM) waitWindowAtFront(ctx context.Context, ws w.WorkspaceID, id w.LiveWindowID, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -2259,27 +2280,21 @@ func (s *SigWM) waitWindowIndexLess(ctx context.Context, ws w.WorkspaceID, id w.
 		if err != nil {
 			return err
 		}
-		next := indexLive(order, id)
-		if next >= 0 && next < previous {
+		if indexLive(order, id) == 0 {
 			return nil
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
-	// Final fresh-observation grace: under heavy load the omniwmctl query
-	// cache can lag the live truth by ~200ms. Take one uncached observation
-	// after a small grace window before declaring failure so we don't
-	// surface a "did not move left" error when the move actually
-	// committed within the deadline + grace window.
 	time.Sleep(300 * time.Millisecond)
 	if order, err := s.liveOrderInWorkspace(ctx, ws); err == nil {
-		next := indexLive(order, id)
-		if next >= 0 && next < previous {
+		if indexLive(order, id) == 0 {
 			return nil
 		}
 	}
 	order, _ := s.liveOrderInWorkspace(ctx, ws)
-	return fmt.Errorf("sigwm.ReorderColumns[%s]: %s did not move left from index %d (order=%v)", ws, id, previous, order)
+	return fmt.Errorf("sigwm.ReorderColumns[%s]: %s did not reach front (order=%v)", ws, id, order)
 }
+
 
 func (s *SigWM) unstackWorkspaceLocked(ctx context.Context, ws w.WorkspaceID, windowCount int) error {
 	num, _, err := s.resolveWorkspaceNumber(ctx, ws)
@@ -2642,25 +2657,6 @@ func indexLive(ids []w.LiveWindowID, target w.LiveWindowID) int {
 	for i, id := range ids {
 		if id == target {
 			return i
-		}
-	}
-	return -1
-}
-
-// managedIndexInOrder returns target's index among ONLY the managed windows
-// (those in set) of order, skipping any interleaved non-managed/stray windows.
-// Returns -1 if target is absent. This is the managed-relative position the
-// reorder move loop converges on, keeping it consistent with managedOrderSettled
-// (SSOT §6.3: layout concerns only managed windows) so strays are transparent.
-func managedIndexInOrder(order []w.LiveWindowID, set map[w.LiveWindowID]bool, target w.LiveWindowID) int {
-	idx := -1
-	for _, id := range order {
-		if !set[id] {
-			continue
-		}
-		idx++
-		if id == target {
-			return idx
 		}
 	}
 	return -1

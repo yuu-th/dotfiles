@@ -122,6 +122,24 @@ func TestHumanE2ESSOTOmniWMRestartRecoverySteps(t *testing.T) {
 			break
 		}
 		if time.Now().After(recoveryDeadline) {
+			// PROJWM_NEXT_INSPECT_PAUSE: hold the live (mis)converged state so a
+			// human can compare OmniWM's query order against the PHYSICAL monitor
+			// layout — distinguishing "OmniWM reverted the move" from "the query
+			// is stale but the screen is correct". Not committed behavior; a
+			// diagnostic gate.
+			if os.Getenv("PROJWM_NEXT_INSPECT_PAUSE") != "" {
+				holdFile := "/tmp/projwm-s7-hold"
+				_ = os.WriteFile(holdFile, []byte("hold"), 0o644)
+				fmt.Fprintln(os.Stderr, "PROJWM_INSPECT_PAUSE_BEGIN: Q held live — delete "+holdFile+" to release (max 300s)")
+				deadline := time.Now().Add(300 * time.Second)
+				for time.Now().Before(deadline) {
+					if _, err := os.Stat(holdFile); os.IsNotExist(err) {
+						break
+					}
+					time.Sleep(1 * time.Second)
+				}
+				fmt.Fprintln(os.Stderr, "PROJWM_INSPECT_PAUSE_END")
+			}
 			waitForAllIdealSlots(t, h.ctx, time.Second) // emits the detailed per-slot mismatch failure
 			break
 		}

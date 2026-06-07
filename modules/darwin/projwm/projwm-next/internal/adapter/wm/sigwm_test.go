@@ -653,8 +653,8 @@ func TestSigWM_ReorderColumns_SingleWindowColumns(t *testing.T) {
 		 "workspace":{"id":"omni-A","rawName":"A","displayName":"A","number":1}}
 	]}`)
 	// State-aware: `query windows` returns the pre-move order [a,b] until a
-	// `move-column left` is issued, then the post-move order [b,a]. This makes
-	// the test robust to HOW MANY times the reorder observes the workspace
+	// `move-column-to-first` is issued, then the post-move order [b,a]. This
+	// makes the test robust to HOW MANY times the reorder observes the workspace
 	// (the quiescence pre-pass + per-move re-observation), rather than coupling
 	// it to a fixed query-count sequence.
 	moved := false
@@ -681,12 +681,12 @@ func TestSigWM_ReorderColumns_SingleWindowColumns(t *testing.T) {
 	}
 	found := false
 	for _, c := range m.calls {
-		if len(c.args) == 3 && c.args[0] == "command" && c.args[1] == "move-column" && c.args[2] == "left" {
+		if len(c.args) == 2 && c.args[0] == "command" && c.args[1] == "move-column-to-first" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("move-column left not called; calls=%+v", m.calls)
+		t.Fatalf("move-column-to-first not called; calls=%+v", m.calls)
 	}
 }
 
