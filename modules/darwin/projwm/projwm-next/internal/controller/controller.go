@@ -485,10 +485,22 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 				// keeps generating a spawn op next iteration, so it rejoins
 				// the replan path (bullet 2) and, if it never recovers, the
 				// converge loop falls through to the §7.1 max-replans path.
-				// Removal/layout failures keep hard-abort because §6.10
-				// ordering depends on them.
-				if isDegradableSpawn(oper.Kind) {
-					c.appendActiveCards([]w.Card{spawnFailureCard(oper, err)})
+				// Removal and L2 move failures keep hard-abort because §6.10
+				// ordering depends on them. reorder-columns (L3, the lowest-
+				// priority drift per §6.3) is the EXCEPTION: it runs in the final
+				// layout phase and is independent per workspace, so a failed
+				// reorder on one workspace must not abort the transaction and
+				// STARVE other workspaces' reorders (ACC-S7: a grinding
+				// reorder[Q] aborted before reorder[A] ever ran). The still-mis-
+				// ordered workspace re-emits its reorder next reconcile, so it
+				// rejoins the replan path and converges — the column order is NOT
+				// abandoned, just retried without blocking siblings.
+				if isDegradableSpawn(oper.Kind) || isDegradableLayout(oper.Kind) {
+					card := spawnFailureCard(oper, err)
+					if isDegradableLayout(oper.Kind) {
+						card = layoutFailureCard(oper, err)
+					}
+					c.appendActiveCards([]w.Card{card})
 					if obs, oerr := c.Settler.Settle(ctx); oerr == nil {
 						c.state.Observed = identity.PopulateMatchedToWithProvenance(c.state.Desired, obs, c.state.Meta.WindowProvenance)
 					}
@@ -1666,6 +1678,45 @@ func isDegradableSpawn(kind op.Kind) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// isDegradableLayout reports whether a failed LAYOUT op should be tolerated under
+// §6.8 graceful degradation. Only reorder-columns qualifies: column order is the
+// LOWEST-priority drift (§6.3 L3), it runs in the final layout phase (§6.10
+// Phase C — nothing within the transaction depends on it), and it is INDEPENDENT
+// per workspace. So a failed reorder on one workspace must not abort the
+// transaction and starve OTHER workspaces' reorders (ACC-S7 root: a grinding,
+// non-settling reorder[Q] on the freshly-restarted OmniWM aborted before
+// reorder[A] ran). The mis-ordered workspace re-emits its reorder next reconcile
+// (the planner compares observed vs desired layout), rejoining the replan path
+// (§7.1 / §2.1 原則3) and converging — the column order is RETRIED until correct,
+// never abandoned. move-to-workspace (L2 placement) stays hard-abort: a window on
+// the wrong workspace breaks the L2 contract that L3 reorder depends on.
+func isDegradableLayout(kind op.Kind) bool {
+	return kind == op.KindReorderColumns
+}
+
+// layoutFailureCard builds the [INVARIANT] card for a workspace whose column
+// reorder did not settle under graceful degradation (§6.8). Keyed by workspace
+// so retries across replan iterations dedup into one surfaced card.
+func layoutFailureCard(oper op.Operation, cause error) w.Card {
+	ws := "?"
+	if oper.Target.Workspace != nil {
+		ws = string(*oper.Target.Workspace)
+	}
+	return w.Card{
+		Type:    w.CardTypeInvariant,
+		Subject: fmt.Sprintf("workspace %s column reorder did not settle — other workspaces continue, will retry", ws),
+		Context: map[string]string{
+			"workspace": ws,
+			"cause":     cause.Error(),
+			"degraded":  "true",
+		},
+		Actions: []w.CardAction{
+			{Key: "Enter", Label: "acknowledge"},
+			{Key: "Esc", Label: "dismiss"},
+		},
 	}
 }
 
