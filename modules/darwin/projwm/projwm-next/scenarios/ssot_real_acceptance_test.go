@@ -229,10 +229,15 @@ func TestHumanE2ESSOTJumpOperationsFocusExpectedWindowsSteps(t *testing.T) {
 		title     string
 		bundleID  string
 		workspace string
+		// byBundle: verify focus by bundle+workspace, not title. Required for the
+		// browser (SSOT §4.4 / B-05: Vivaldi carries the page title — here the
+		// seeded canary URL — not a projwm-controlled "browser-N:project" name;
+		// identified by bundle, like humanIdealSlots' colBundle).
+		byBundle bool
 	}{
 		{step: "SSOT-OP01/shell-jump", args: []string{"summon-shell", "Q"}, title: "shell-1:projwm-test-main", bundleID: "com.mitchellh.ghostty", workspace: "Q"},
 		{step: "SSOT-OP02/editor-jump", args: []string{"summon-editor", "Q"}, title: "projwm-test-main", bundleID: "dev.zed.Zed", workspace: "Q"},
-		{step: "SSOT-OP03/browser-jump", args: []string{"summon-browser", "Q"}, title: "browser-1:projwm-test-main", bundleID: "com.vivaldi.Vivaldi", workspace: "Q"},
+		{step: "SSOT-OP03/browser-jump", args: []string{"summon-browser", "Q"}, bundleID: "com.vivaldi.Vivaldi", workspace: "Q", byBundle: true},
 		{step: "SSOT-OP06/viewer-jump", args: []string{"summon-viewer"}, title: "ai-view-1:projwm-test-main", bundleID: "com.mitchellh.ghostty", workspace: "A"},
 	}
 	for _, tc := range cases {
@@ -240,6 +245,12 @@ func TestHumanE2ESSOTJumpOperationsFocusExpectedWindowsSteps(t *testing.T) {
 		if err != nil {
 			failAcceptance(t, scenario.FailNotImplemented, tc.step,
 				fmt.Sprintf("SSOT §4.1 requires user operation %v to focus/reuse %s on workspace %s; command failed: %v\n%s", tc.args, tc.title, tc.workspace, err, out))
+		}
+		if tc.byBundle {
+			// Focus landing on the managed browser (kind=browser, the project's
+			// Vivaldi on the slot) IS the assertion; the title is the live page.
+			waitForFocusedWindowBundleWorkspace(t, h.ctx, tc.bundleID, tc.workspace, 30*time.Second)
+			continue
 		}
 		win := waitForFocusedWindowTitleBundle(t, h.ctx, tc.title, tc.bundleID, 30*time.Second)
 		if win.Workspace != tc.workspace {
@@ -662,6 +673,31 @@ func waitForFocusedWindowTitleBundle(t *testing.T, ctx context.Context, title, b
 	}
 	failAcceptance(t, scenario.FailInvariant, "SSOT-OP11/focus-scratch",
 		fmt.Sprintf("focused window did not become %s/%s within %s; windows: %s", bundleID, title, timeout, dumpWindows(queryAllWindows(t, ctx))))
+	return e2eLiveWindow{}
+}
+
+// waitForFocusedWindowBundleWorkspace waits until the focused window is the
+// given app (bundleID) on the given workspace, with ANY title. Used for the
+// managed browser: per SSOT §4.4 / B-05 a Vivaldi window carries the page title
+// (here the seeded canary URL, see seedHumanBrowserPayload), NOT a projwm-
+// controlled "browser-N:project" title — spawnVivaldi rejects a controller-
+// owned browser title and desiredWindow marks the browser TitleAppOwned — so
+// the managed browser is identified by bundle+workspace (mirrors humanIdealSlots'
+// colBundle), not by the logical "browser-1:project" name.
+func waitForFocusedWindowBundleWorkspace(t *testing.T, ctx context.Context, bundleID, workspace string, timeout time.Duration) e2eLiveWindow {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		focusedID := observedFocusedLiveWindowID(t, ctx)
+		for _, win := range queryAllWindows(t, ctx) {
+			if win.ID == focusedID && win.BundleID == bundleID && win.Workspace == workspace {
+				return win
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	failAcceptance(t, scenario.FailInvariant, "SSOT-OP03/focus-browser",
+		fmt.Sprintf("focused window did not become %s on workspace %s within %s; windows: %s", bundleID, workspace, timeout, dumpWindows(queryAllWindows(t, ctx))))
 	return e2eLiveWindow{}
 }
 
