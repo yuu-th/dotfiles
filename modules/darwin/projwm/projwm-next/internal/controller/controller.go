@@ -8,6 +8,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yuu-th/projwm-next/internal/adapter/browser"
@@ -31,6 +32,16 @@ import (
 // Controller. design.md §12.
 type Controller struct {
 	wmMutationLock sync.Mutex
+
+	// degraded is set true when a transaction exhausts MaxReplans without
+	// converging (the durable "serving degraded IPC" state) and false on the
+	// next converged commit. The self-heal ticker (runOmniwmRecoveryTicker)
+	// reads it via IsDegraded() to RE-DRIVE a startup transaction once OmniWM is
+	// healthy again — without this the daemon could observe a transient failure
+	// (e.g. a slow-OmniWM query timeout), fall into degraded IPC, and never
+	// retry the startup event on its own (the ticker only health-probed). atomic
+	// so the ticker goroutine can read it without taking wmMutationLock.
+	degraded atomic.Bool
 
 	Adapter          wm.Adapter
 	Executor         *executor.Executor
@@ -639,9 +650,13 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 		if err := c.recordTransactionTrace(ctx, trace); err != nil {
 			return TransactionResult{}, fmt.Errorf("controller: record failed transaction trace: %w", err)
 		}
+		// Enter the durable degraded state; the self-heal ticker will re-drive a
+		// startup transaction once OmniWM is healthy again (P1 self-recovery).
+		c.degraded.Store(true)
 		return TransactionResult{TransactionID: txn, Trace: trace}, &ReplanExceededError{MaxReplans: maxIter, LastDiff: lastDiff, LastPlan: lastPlan}
 	}
 	trace.Converged = true
+	c.degraded.Store(false) // converged → leave the degraded state
 	if !trace.VerifierRan {
 		lastDiff = verifier.Diff(c.state.Observed, c.state.Observed)
 		c.LastDiff = lastDiff
@@ -809,6 +824,12 @@ func (c *Controller) recordEarlyNoCommitTrace(ctx context.Context, trace store.T
 func (c *Controller) bestEffortObserve(ctx context.Context) error {
 	return c.observe(ctx)
 }
+
+// IsDegraded reports whether the last transaction exhausted MaxReplans without
+// converging (the durable "serving degraded IPC" state). The self-heal ticker
+// uses it to decide whether to re-drive a startup transaction. Safe to call
+// from another goroutine (atomic).
+func (c *Controller) IsDegraded() bool { return c.degraded.Load() }
 
 func (c *Controller) markGlobalDirty(key string) {
 	scope := w.DirtyScope{Kind: "global", Key: key}

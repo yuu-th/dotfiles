@@ -1092,6 +1092,23 @@ func runOmniwmRecoveryTicker(ctx context.Context, healer wm.OmniwmSelfHealer, en
 			if reaper != nil {
 				reaper.ReapDuplicateCockpits(ctx)
 			}
+			// P1 self-recovery: if a prior transaction left the daemon in the
+			// durable degraded ("serving degraded IPC") state, re-drive a
+			// startup transaction now that runOmniwmRecovery has re-probed (and,
+			// if needed, restarted) OmniWM. Once OmniWM answers and the
+			// transaction converges, IsDegraded() clears and this stops; while it
+			// stays degraded the 30s tick rate-limits the retries. Without this
+			// the daemon never retried the startup event on its own (the ticker
+			// only health-probed) and stayed degraded indefinitely — the
+			// 2026-06-08 incident's "never exits degraded" gap.
+			if ctrl.IsDegraded() {
+				fmt.Fprintln(os.Stderr, "projwmd: [SELF-RECOVERY] daemon degraded; re-driving startup transaction")
+				if _, err := ctrl.ApplyEvent(ctx, event.Event{Source: event.SourceSystem, Kind: event.KindStartup}); err != nil {
+					fmt.Fprintf(os.Stderr, "projwmd: [SELF-RECOVERY] re-drive not yet converged (will retry next tick): %v\n", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "projwmd: [SELF-RECOVERY] re-drive converged; left degraded state")
+				}
+			}
 		}
 	}
 }
