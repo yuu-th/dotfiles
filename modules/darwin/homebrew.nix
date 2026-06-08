@@ -12,7 +12,14 @@ let cfg = config.myConfig.darwin.homebrew; in {
       onActivation = {
         autoUpdate = true;
         upgrade = true;
-        cleanup = "zap";
+        # cleanup "zap" を一時的に "none" に。Homebrew PR #22395 (2026-05-24) で
+        # `brew bundle cleanup` が破壊的化(Brewfile に無い MAS アプリまで無差別削除)
+        # + `--force`/`$HOMEBREW_ASK` ゲート化され、nix-darwin が非対話で `--cleanup`
+        # を呼ぶと activation が失敗する (Homebrew#22450 / nix-darwin#1787)。
+        # nix-darwin の修正 (PR #1774, `cleanup --force --zap` 化) が merge されたら
+        # "zap" に戻す。現状 drift=0(全インストールが宣言済)+ mas 未導入なので
+        # "none" による実損失は無し(dry-run で uninstall 対象 0 件を確認済)。
+        cleanup = "none";
       };
       taps = [ "FelixKratz/formulae" ];
       brews = [ "pake" ];
