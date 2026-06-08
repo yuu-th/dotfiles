@@ -335,18 +335,17 @@ func TestHumanE2ESwitchProfileSteps(t *testing.T) {
 	h.reconcileIdeal()
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.3")
 
-	// SSOT §9.2④ "プロファイル切替が5秒以内": we measure and LOG the switch
-	// durations rather than hard-asserting 5s, because the §4.5 model is
-	// close→observe-barrier→spawn — a switch INTO a profile that must cold-spawn
-	// Zed/Vivaldi cannot physically meet 5s (those follow §3.5 per-app spawn
-	// budgets). The close-only transition (switch to the empty profile) is the
-	// bounded sub-5s candidate. The §9.2④ budget's exact scope (close-transition
-	// vs switch-between-already-live-profiles vs intent-acceptance latency) is an
-	// open SSOT question; these logs produce the real numbers to settle it.
+	// SSOT §9.2④ "プロファイル切替が5秒以内": §4.5 models a switch as
+	// close→observe-barrier→spawn, and a switch INTO a profile that must
+	// COLD-spawn Zed/Vivaldi/Ghostty cannot physically meet 5s (those obey §3.5
+	// per-app spawn budgets, e.g. Zed ~25s). Per the SSOT owner's decision
+	// (2026-06-08), the tight 5s is aspirational and the binding criterion is the
+	// §9.2③ one-minute umbrella; we hard-assert BOTH the close transition and the
+	// full cold re-deploy against it (measured ~29s / ~36s — both within 1m).
 	switchToEmptyStart := time.Now()
 	h.run("switch-profile", "empty")
 	waitForManagedGhosttyMissing(t, h.ctx, allManagedGhosttyMatchers())
-	t.Logf("SSOT-S1/§9.2④ switch→empty (close transition) took %s", time.Since(switchToEmptyStart))
+	assertProfileSwitchWithinBudget(t, "SSOT-S1/§9.2④/switch→empty (close transition)", switchToEmptyStart)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.4")
 
 	h.run("switch-profile", "empty")
@@ -356,7 +355,7 @@ func TestHumanE2ESwitchProfileSteps(t *testing.T) {
 	switchToWorkStart := time.Now()
 	h.run("switch-profile", "work")
 	waitForAllIdealSlots(t, h.ctx, 90*time.Second)
-	t.Logf("SSOT-S1/§9.2④ switch→work (full re-deploy incl. cold spawn) took %s", time.Since(switchToWorkStart))
+	assertProfileSwitchWithinBudget(t, "SSOT-S1/§9.2④/switch→work (full re-deploy incl. cold spawn)", switchToWorkStart)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S1.1")
 }
 

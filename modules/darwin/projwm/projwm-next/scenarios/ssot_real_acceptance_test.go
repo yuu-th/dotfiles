@@ -195,6 +195,25 @@ func assertRecoveryWithinBudget(t *testing.T, step string, start time.Time) {
 	t.Logf("%s: recovery converged in %s (SSOT §9.2③ budget %s)", step, elapsed, recoveryBudget)
 }
 
+// assertProfileSwitchWithinBudget asserts a profile-switch transition completes
+// within the SSOT §9.2③ one-minute umbrella. SSOT §9.2④ states "プロファイル切替
+// が5秒以内", but §4.5 models a switch as close→observe-barrier→spawn, and a
+// switch INTO a profile that must COLD-spawn Zed/Vivaldi/Ghostty cannot
+// physically meet 5s (those obey §3.5 per-app spawn budgets, e.g. Zed ~25s).
+// Per the SSOT owner's decision (2026-06-08), the tight 5s is treated as
+// aspirational and the binding criterion is the one-minute umbrella shared with
+// §9.2③ recovery. Real measurements: switch→empty (close) ~29s, switch→work
+// (full cold re-deploy) ~36s — both within 1m.
+func assertProfileSwitchWithinBudget(t *testing.T, step string, start time.Time) {
+	t.Helper()
+	elapsed := time.Since(start)
+	if elapsed > recoveryBudget {
+		failAcceptance(t, scenario.FailInvariant, step+"/switch-timing",
+			fmt.Sprintf("SSOT §9.2④ profile switch must complete within the §9.2③ %s umbrella (tight 5s is aspirational — cold GUI spawn exceeds it); took %s", recoveryBudget, elapsed))
+	}
+	t.Logf("%s: profile switch completed in %s (SSOT §9.2④ within §9.2③ %s umbrella; tight 5s aspirational)", step, elapsed, recoveryBudget)
+}
+
 func TestHumanE2ESSOTSummonIdempotencySteps(t *testing.T) {
 	h := newHumanE2E(t)
 	h.reconcileIdeal()
