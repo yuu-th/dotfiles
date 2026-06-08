@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -190,6 +191,9 @@ func (c *Controller) ApplyIntent(ctx context.Context, in intent.Intent) (Transac
 	// DesiredWorld.AcceptedLayouts before plan/execute, regardless of
 	// whether the kicking transaction came in via an intent or an event.
 	c.applyTier2AutoSyncLayout()
+	// SSOT §4.3 / N-15: also adopt OBSERVED same-set reorders (no explicit
+	// event) into AcceptedLayouts when the ws is steady (handle-set unchanged).
+	c.autoAcceptObservedReorders()
 
 	commandKey := commandKeyForIntent(in)
 	trace.Command = commandKey
@@ -268,6 +272,8 @@ func (c *Controller) ApplyEvent(ctx context.Context, ev event.Event) (Transactio
 	// invariant "DesiredWorld is only written by intents" intact —
 	// external events still don't mutate it, only the controller does.
 	c.applyTier2AutoSyncLayout()
+	// SSOT §4.3 / N-15: adopt OBSERVED same-set reorders on a steady ws.
+	c.autoAcceptObservedReorders()
 	// Cockpit (unified design v1 §4): Bootstrap / Wake / DisplayChanged
 	// events emit a cockpit-sync DirtyScope. Apply the internal
 	// SyncCockpitSystemWindows intent so SystemWindows length tracks
@@ -650,6 +656,11 @@ func (c *Controller) runConvergeLoop(ctx context.Context, command string, reason
 	c.state.Meta.DirtyScopes = nil
 	c.state.Meta.Epoch++
 
+	// SSOT §4.3 / N-15 recovery-gate: snapshot the converged managed handle-set
+	// per slot ws so autoAcceptObservedReorders can tell a later same-set
+	// reorder (same OmniWM session) from a restart/structural change.
+	c.recordConvergedLayoutHandles()
+
 	// Run invariants. SSOT N-12: AllowManualLayoutCandidates removed.
 	_ = reason
 	vs := invariant.CheckAll(c.state, invariant.CheckOptions{
@@ -879,6 +890,21 @@ func cloneControllerMeta(meta w.ControllerMeta) w.ControllerMeta {
 			prov[k] = v
 		}
 		out.WindowProvenance = prov
+	}
+	// Deep-clone ConvergedLayoutHandles (SSOT §4.3 / N-15 recovery-gate) for the
+	// same rollback-safety reason: recordConvergedLayoutHandles mutates this map
+	// in place on the converge-success path, and a later post-converge failure
+	// (invariant violation / store error) must roll the record back. A shallow
+	// copy would alias the live map and leak the record into the snapshot. Unlike
+	// WindowProvenance this is NOT preserved across rollback (it is a derived
+	// snapshot, not a physical side effect) — it is restored to its
+	// pre-transaction value and re-recorded by the next successful converge.
+	if meta.ConvergedLayoutHandles != nil {
+		clh := make(map[w.WorkspaceID][]w.LiveWindowID, len(meta.ConvergedLayoutHandles))
+		for k, v := range meta.ConvergedLayoutHandles {
+			clh[k] = append([]w.LiveWindowID(nil), v...)
+		}
+		out.ConvergedLayoutHandles = clh
 	}
 	return out
 }
@@ -1367,6 +1393,227 @@ func observedColumnsForProject(state w.WorldState, proj w.ProjectID, ws w.Worksp
 		return nil, false
 	}
 	return cols, true
+}
+
+// autoAcceptObservedReorders implements SSOT §4.3 / N-15 Tier-2 observe-accept.
+// Before planning, for each active managed (project, slot-workspace): when the
+// observed column order differs from the desired order but the window SET is
+// identical (a reorder, not a structural change) AND the ws's managed handle-set
+// is UNCHANGED since the last converged commit (same OmniWM session — a user
+// reorder, not a restart/recovery), ADOPT the observed order into AcceptedLayouts
+// (AutoSyncLayout). The planner then sees a converged layout and emits no
+// reorder, so the user's rearrange sticks. A changed handle-set (OmniWM restart
+// re-mints every handle with a fresh instance-UUID, or a window was added/closed)
+// means recovery or a structural change → skip, letting the planner
+// restore/place the saved layout (ACC-S7 / §3.5 unaffected). The viewer
+// workspace is never iterated here (it is not a slot workspace), so viewer-order
+// drift stays a planner-enforced reorder per INV-12.
+func (c *Controller) autoAcceptObservedReorders() {
+	prof, ok := c.state.Desired.Profiles[c.state.Desired.ActiveProfile]
+	if !ok {
+		return
+	}
+	for slotID, pid := range prof.Assignments {
+		pr, ok := c.state.Desired.Projects[pid]
+		if !ok || pr.Archived {
+			continue
+		}
+		ws := slotWorkspace(c.state.Environment, slotID)
+		if ws == "" {
+			continue
+		}
+		obsCols, ok := observedColumnsForProject(c.state, pid, ws)
+		if !ok {
+			// Observation incomplete (mid-spawn / mid-restart / not all
+			// project windows matched on ws) — not a clean steady reorder.
+			continue
+		}
+		// Desired columns the planner would enforce, filtered to the windows
+		// that actually live on this slot workspace (viewers live on the viewer
+		// ws and are excluded from the observed columns, so exclude them here
+		// too — otherwise the set comparison below never matches for projects
+		// that have a viewer mirror).
+		desired := filterNonViewerColumns(planner.ProjectDesiredColumns(pr, ws, c.state.Desired.AcceptedLayouts))
+		if sameDesiredColumnOrder(obsCols, desired) {
+			continue // already converged — nothing to accept
+		}
+		if !sameDesiredColumnSet(obsCols, desired) {
+			continue // different window SET = structural change, not a reorder
+		}
+		if !c.layoutHandlesUnchanged(pid, ws) {
+			continue // OmniWM restart / structural change → planner restores
+		}
+		newDesired, err := reducer.ReduceIntent(c.state, intent.AutoSyncLayout{
+			Project:   pid,
+			Workspace: ws,
+			Columns:   obsCols,
+		})
+		if err != nil {
+			continue
+		}
+		c.state.Desired = newDesired
+	}
+}
+
+// recordConvergedLayoutHandles snapshots, per managed slot workspace, the set of
+// managed live window IDs at a converged commit. autoAcceptObservedReorders uses
+// this as the recovery-gate (SSOT §4.3 / N-15): a same-set reorder is treated as
+// a user reorder only when the handle-set is unchanged since this snapshot.
+func (c *Controller) recordConvergedLayoutHandles() {
+	prof, ok := c.state.Desired.Profiles[c.state.Desired.ActiveProfile]
+	if !ok {
+		return
+	}
+	if c.state.Meta.ConvergedLayoutHandles == nil {
+		c.state.Meta.ConvergedLayoutHandles = map[w.WorkspaceID][]w.LiveWindowID{}
+	}
+	for slotID, pid := range prof.Assignments {
+		ws := slotWorkspace(c.state.Environment, slotID)
+		if ws == "" {
+			continue
+		}
+		c.state.Meta.ConvergedLayoutHandles[ws] = c.managedHandlesOnWS(pid, ws)
+	}
+}
+
+// managedHandlesOnWS returns the sorted set of observed live window IDs on ws
+// that the identity resolver matched to project pid.
+func (c *Controller) managedHandlesOnWS(pid w.ProjectID, ws w.WorkspaceID) []w.LiveWindowID {
+	var ids []w.LiveWindowID
+	for id, ow := range c.state.Observed.Windows {
+		if ow.Workspace != ws {
+			continue
+		}
+		if ow.MatchedTo == nil || ow.MatchedTo.Project != pid {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// layoutHandlesUnchanged reports whether the current managed handle-set on ws
+// matches the snapshot taken at the last converged commit. False when no
+// snapshot exists yet (never converged this session — the safe default that
+// makes projwm enforce the saved layout first) or the set differs (OmniWM
+// restart re-minted handles, or a window was added/closed).
+func (c *Controller) layoutHandlesUnchanged(pid w.ProjectID, ws w.WorkspaceID) bool {
+	prev, ok := c.state.Meta.ConvergedLayoutHandles[ws]
+	if !ok || len(prev) == 0 {
+		return false
+	}
+	return sameLiveHandleSet(prev, c.managedHandlesOnWS(pid, ws))
+}
+
+// slotWorkspace returns the workspace bound to slotID in the environment.
+func slotWorkspace(env w.ManagedEnvironment, slotID w.SlotID) w.WorkspaceID {
+	for _, s := range env.Workspaces.Slots {
+		if s.ID == slotID {
+			return s.Workspace
+		}
+	}
+	return ""
+}
+
+// sameLiveHandleSet compares two live-window-ID slices as sets (order-independent).
+func sameLiveHandleSet(a, b []w.LiveWindowID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[w.LiveWindowID]int{}
+	for _, id := range a {
+		seen[id]++
+	}
+	for _, id := range b {
+		seen[id]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// filterNonViewerColumns drops viewer DesiredWindowIDs from the columns and any
+// column that becomes empty. Viewers live on the viewer workspace, not the slot
+// workspace, so they are not part of a slot ws's observed/desired comparison.
+func filterNonViewerColumns(cols []w.DesiredColumn) []w.DesiredColumn {
+	out := make([]w.DesiredColumn, 0, len(cols))
+	for _, col := range cols {
+		kept := make([]w.DesiredWindowID, 0, len(col.Windows))
+		for _, id := range col.Windows {
+			if id.Kind == w.WindowViewer {
+				continue
+			}
+			kept = append(kept, id)
+		}
+		if len(kept) > 0 {
+			out = append(out, w.DesiredColumn{Windows: kept, Mode: col.Mode})
+		}
+	}
+	return out
+}
+
+// sameDesiredColumnOrder reports whether two column layouts have the same number
+// of columns in the same order with the same per-column membership (set-equal
+// within a stacked column). Mirrors planner.sameSemanticLayout in DesiredID space.
+func sameDesiredColumnOrder(a, b []w.DesiredColumn) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if len(a[i].Windows) != len(b[i].Windows) {
+			return false
+		}
+		if len(a[i].Windows) == 1 {
+			if a[i].Windows[0] != b[i].Windows[0] {
+				return false
+			}
+			continue
+		}
+		seen := map[w.DesiredWindowID]int{}
+		for _, id := range a[i].Windows {
+			seen[id]++
+		}
+		for _, id := range b[i].Windows {
+			seen[id]--
+		}
+		for _, n := range seen {
+			if n != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// sameDesiredColumnSet reports whether two column layouts contain the same flat
+// multiset of window IDs (regardless of arrangement). Distinguishes a reorder
+// (same set) from a structural change (different set).
+func sameDesiredColumnSet(a, b []w.DesiredColumn) bool {
+	sa := map[w.DesiredWindowID]int{}
+	for _, col := range a {
+		for _, id := range col.Windows {
+			sa[id]++
+		}
+	}
+	sb := map[w.DesiredWindowID]int{}
+	for _, col := range b {
+		for _, id := range col.Windows {
+			sb[id]++
+		}
+	}
+	if len(sa) != len(sb) {
+		return false
+	}
+	for id, n := range sa {
+		if sb[id] != n {
+			return false
+		}
+	}
+	return true
 }
 
 // applyCardIntent mutates ControllerMeta.ActiveCards in response to

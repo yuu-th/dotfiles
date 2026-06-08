@@ -1174,6 +1174,15 @@ func projectDesiredColumns(pr w.DesiredProject, ws w.WorkspaceID, accepted map[w
 	return out
 }
 
+// ProjectDesiredColumns exposes the effective desired column layout
+// (AcceptedLayouts override > project Layouts > canonical solo order) for the
+// controller's SSOT §4.3 / N-15 Tier-2 observe-accept gate, which compares it
+// against the observed layout to decide whether a divergence is a user reorder
+// (accept) or a structural/recovery difference (let the planner enforce).
+func ProjectDesiredColumns(pr w.DesiredProject, ws w.WorkspaceID, accepted map[w.ProjectID]map[w.WorkspaceID]w.DesiredLayout) []w.DesiredColumn {
+	return projectDesiredColumns(pr, ws, accepted)
+}
+
 // managedObservedColumns filters external/unmanaged windows out of the observed
 // columns, keeping only windows in the managed set and dropping any column that
 // becomes empty. SSOT §6.3 L3 reorder concerns only managed (desired) windows;

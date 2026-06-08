@@ -49,6 +49,21 @@ type ControllerMeta struct {
 	// window not in this map is never claimed by provenance — user windows with
 	// colliding titles stay External. Persisted with the store.
 	WindowProvenance map[DesiredWindowID]LiveWindowID
+	// ConvergedLayoutHandles is the SSOT §4.3 / N-15 recovery-gate. For each
+	// managed workspace it records the SET of managed live window IDs observed
+	// at the last converged commit (where the column layout matched the
+	// desired / AcceptedLayouts). The Tier-2 observe-accept path
+	// (autoAcceptObservedReorders) treats an observed same-set-but-different-
+	// order layout as a USER reorder (→ accept) ONLY when the ws's current
+	// managed handle-set is UNCHANGED since that converged commit. A changed
+	// handle-set means recovery or a structural change — OmniWM restart re-mints
+	// every handle with a fresh instance-UUID (ow_<base64(<instanceUUID>:…)>),
+	// and window add/close changes membership — so the layout is restored/placed
+	// by the planner, NOT adopted. This is how "定常=accept / 復旧=restore" is
+	// distinguished without an OmniWM intent channel. Not persisted: rebuilt on
+	// the first converged commit each session (empty → autoAccept skips until
+	// projwm has enforced the saved layout, the safe default).
+	ConvergedLayoutHandles map[WorkspaceID][]LiveWindowID
 }
 
 // WorldState is the controller's view. design.md §8.
