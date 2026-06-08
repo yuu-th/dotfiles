@@ -298,8 +298,15 @@ func (e *Executor) Execute(ctx context.Context, oper op.Operation, observed w.Ob
 		if matches > 0 {
 			return fmt.Errorf("executor: spawn-viewer: viewer %q already matched %d live windows", title, matches)
 		}
-		viewerSession := naming.ViewerTmuxSession(d.Index+1, string(d.Project))
-		sourceSession := naming.TmuxSession(naming.KindAI, d.Index+1, string(d.Project))
+		// d is the AI's DesiredWindowID (viewers share their AI source's
+		// DesiredWindowID with Kind=Viewer — see planSummonViewerOps), so
+		// d.Index is the AI's own index N. The viewer mirrors ai-N, so both its
+		// own grouped session (ai-N/<proj>_v) and its source (ai-N/<proj>) use
+		// d.Index directly. A previous "+1" mis-sourced ai-view-N from ai-(N+1)
+		// — e.g. ai-view-1 (for ai-1=claude) mirrored ai-2 (an idle shell),
+		// matching naming/ssot_l0_identity_test: ai-view-1 → ai-1/<proj>_v.
+		viewerSession := naming.ViewerTmuxSession(d.Index, string(d.Project))
+		sourceSession := naming.TmuxSession(naming.KindAI, d.Index, string(d.Project))
 		_, err = e.Adapter.Spawn(ctx, wm.SpawnRequest{
 			Workspace:               *oper.Target.Workspace,
 			Kind:                    kind,

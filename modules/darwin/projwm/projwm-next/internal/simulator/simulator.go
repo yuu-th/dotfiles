@@ -135,7 +135,13 @@ func Apply(pred w.PredictedWorld, oper op.Operation) (w.PredictedWorld, error) {
 
 func predictedTitle(d w.DesiredWindowID, k w.WindowKind) string {
 	if k == w.WindowViewer {
-		return fmt.Sprintf("ai-view-%d:%s", d.Index+1, d.Project)
+		// d is the AI's DesiredWindowID (viewers share it with Kind=Viewer), so
+		// d.Index is the AI's own index N. The viewer's title mirrors its AI:
+		// ai-view-N (matching naming.viewerTitleForAI = "ai-view"+strip("ai") and
+		// naming/ssot_l0_identity_test: ai-view-1 ↔ ai-1). A previous "+1"
+		// predicted ai-view-(N+1), so the verifier compared a wrong predicted
+		// title against the real ai-view-N and never matched the viewer.
+		return fmt.Sprintf("ai-view-%d:%s", d.Index, d.Project)
 	}
 	return fmt.Sprintf("%s:%s:%d", d.Project, d.Kind, d.Index)
 }
