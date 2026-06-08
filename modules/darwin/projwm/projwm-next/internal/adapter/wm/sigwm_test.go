@@ -1227,6 +1227,43 @@ func TestRetryConnRefusedExecutorRetriesMutationOnConnRefused(t *testing.T) {
 	}
 }
 
+// TestRetryConnRefusedExecutorRetriesQueryTimeout locks the 2026-06-08
+// degraded-IPC robustness fix: a read-only `query` that hits the daemon's
+// per-command timeout (OmniWM transiently SLOW — "timed out after 5s") is
+// retried (idempotent) and then succeeds, instead of cascading into a
+// transaction abort → ops executed=false → MaxReplans → "serving degraded IPC".
+func TestRetryConnRefusedExecutorRetriesQueryTimeout(t *testing.T) {
+	m := newMockExec()
+	timedOut := fmt.Errorf("omniwmctl query windows --format json: timed out after 5s")
+	m.setErrSeq("query windows", timedOut, timedOut, nil)
+	m.set("query windows", []byte(`{"ok":true}`))
+
+	r := newRetryConnRefusedExecutor(m)
+	out, err := r.Run(context.Background(), "query", "windows", "--format", "json")
+	if err != nil {
+		t.Fatalf("query timeout should be retried then succeed, got err=%v", err)
+	}
+	if string(out) != `{"ok":true}` {
+		t.Fatalf("unexpected output after timeout retry: %q", out)
+	}
+}
+
+// TestRetryConnRefusedExecutorDoesNotRetryMutationOnTimeout: a non-idempotent
+// mutation that times out must NOT be retried — OmniWM may have applied it
+// before the deadline, so re-issuing would double-apply (same rule as the
+// not-ready exit-2 transient). Only read-only queries are retried on timeout.
+func TestRetryConnRefusedExecutorDoesNotRetryMutationOnTimeout(t *testing.T) {
+	m := newMockExec()
+	m.setErr("command move-column", fmt.Errorf("omniwmctl command move-column left: timed out after 5s"))
+	r := newRetryConnRefusedExecutor(m)
+	if _, err := r.Run(context.Background(), "command", "move-column", "left"); err == nil {
+		t.Fatal("mutation must not be retried into success on timeout")
+	}
+	if n := len(m.calls); n != 1 {
+		t.Fatalf("mutation must not be retried on timeout: got %d calls, want 1", n)
+	}
+}
+
 // TestLiveOrderComplete_WaitsOutFlickerThenReturnsComplete locks SSOT §2.1 原則3
 // for the reorder: when OmniWM transiently drops a desired window from a
 // workspace's catalog (handoff §3.5 flicker), liveOrderComplete re-observes

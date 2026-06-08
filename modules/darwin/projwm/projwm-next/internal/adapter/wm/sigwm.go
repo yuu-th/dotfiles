@@ -161,6 +161,22 @@ func isNotReadyExit2Err(err error) bool {
 	return strings.Contains(msg, "exit status 2") && strings.Contains(msg, "(stderr: )")
 }
 
+// isTimeoutErr is the omniwmctl query-timeout transient: the daemon's own
+// per-command deadline killed the subprocess (CmdCtlExecutor.Run formats this as
+// "omniwmctl ...: timed out after 5s") because OmniWM was transiently SLOW to
+// answer — an AX walk during a spawn, OmniWM under load — but NOT down. Like the
+// not-ready exit-2 case, OmniWM may have RECEIVED a mutation before the deadline,
+// so this is retried ONLY for read-only `query` commands; re-issuing a mutation
+// could double-apply. Robustness rationale (2026-06-08 degraded-IPC incident): a
+// slow-but-alive OmniWM previously cascaded a single query timeout into a
+// whole-transaction abort (context canceled → ops executed=false → MaxReplans
+// exhausted → "serving degraded IPC"). Retrying the idempotent query absorbs the
+// transient instead of degrading. If the outer transaction context is itself
+// expired, the backoff select below returns via ctx.Done() — so this is safe.
+func isTimeoutErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "timed out after")
+}
+
 func (r *retryConnRefusedExecutor) Run(ctx context.Context, args ...string) ([]byte, error) {
 	// Connection-refused is safe to retry for ANY command (it never reached
 	// OmniWM). The exit-2/not-ready transient is retried ONLY for read-only
@@ -182,7 +198,7 @@ func (r *retryConnRefusedExecutor) Run(ctx context.Context, args ...string) ([]b
 		if err == nil {
 			return out, nil
 		}
-		retriable := isConnRefusedErr(err) || (isQuery && isNotReadyExit2Err(err))
+		retriable := isConnRefusedErr(err) || (isQuery && (isNotReadyExit2Err(err) || isTimeoutErr(err)))
 		if !retriable {
 			return out, err
 		}
