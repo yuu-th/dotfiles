@@ -225,11 +225,15 @@ func TestHumanE2ECanonicalStory(t *testing.T) {
 	waitForManagedGhosttyMissing(t, h.ctx, testMainGhosttyMatchers())
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S2.2")
 
-	// S3.1 / S3.2: unarchive into target slot and idempotent re-unarchive.
-	h.run("unarchive", "projwm-test-main", "Q")
+	// S3.1 / S3.2: §4.5 — unarchive returns the project to PARK (no auto-assign /
+	// auto-spawn); a subsequent assign re-deploys it onto the target slot. The
+	// pair is idempotent.
+	h.run("unarchive", "projwm-test-main")
+	h.run("assign", "Q", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S3.1")
-	h.run("unarchive", "projwm-test-main", "Q")
+	h.run("unarchive", "projwm-test-main")
+	h.run("assign", "Q", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/canonical/S3.2")
 
@@ -296,7 +300,8 @@ func TestHumanE2EFullInvariantAuditSteps(t *testing.T) {
 	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "projwm-test-main"}, {Title: "ai-1:projwm-test-main"}, {Title: "shell-1:projwm-test-main"}, {Title: "shell-2:projwm-test-main"}, {Title: "browser-1:projwm-test-main"}})
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S2.2")
 
-	h.run("unarchive", "projwm-test-main", "Q")
+	h.run("unarchive", "projwm-test-main")
+	h.run("assign", "Q", "projwm-test-main")
 	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S3.1")
 
@@ -315,7 +320,7 @@ func TestHumanE2EFullInvariantAuditSteps(t *testing.T) {
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.3")
 
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "projwm-test-main")
+	h.emitUserReorderedManualDotfilesLayout()
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.1")
 
@@ -689,7 +694,7 @@ func TestHumanE2EAcceptManualLayoutSteps(t *testing.T) {
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.3")
 
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "projwm-test-main")
+	h.emitUserReorderedManualDotfilesLayout()
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
 	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/S6.1")
@@ -1510,7 +1515,7 @@ func TestHumanE2ERestartVisiblePersistenceSteps(t *testing.T) {
 	h.reconcileIdeal()
 	manualLayout := manualDotfilesLayout()
 	h.performManualDotfilesLayout(manualLayout)
-	h.run("accept-manual-layout", "projwm-test-main")
+	h.emitUserReorderedManualDotfilesLayout()
 	waitForLayout(t, h.ctx, "Q", manualLayout, 90*time.Second)
 	assertAcceptedLayout(t, h.storeDir, "projwm-test-main", "Q", manualLayout)
 	assertFullInvariantAudit(t, h, "INV.1-INV.13/AUTH.7.2-pre-restart")
@@ -1603,13 +1608,15 @@ func TestHumanE2EPrivacyRequirementsSteps(t *testing.T) {
 		assertCanaryInPrivatePayload(t, h, humanBrowserCanaryToken)
 		assertNoCanaryInPersistentStore(t, h, humanBrowserCanaryToken, humanBrowserCanaryHost)
 
-		h.run("unarchive", "projwm-test-main", "Q")
+		// §4.5: unarchive returns the project to park; assign re-deploys it onto Q.
+		h.run("unarchive", "projwm-test-main")
+		h.run("assign", "Q", "projwm-test-main")
 		waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
-		// After unarchive completes, OpenInProfile must have spawned a
-		// new Vivaldi window in workspace Q with the controller-owned
-		// browser identity title and a payload resolved through the
-		// PrivatePayloadStore.
-		liveBrowser := liveWindowByTitle(t, h.ctx, "Q", "browser-1:projwm-test-main")
+		// After re-deploy, OpenInProfile must have spawned a new Vivaldi window in
+		// workspace Q with a payload resolved through the PrivatePayloadStore. The
+		// browser is identified by bundle id, NOT a projwm-controlled title (SSOT
+		// §4.4 / B-05: a Vivaldi window carries the live page title).
+		liveBrowser := liveWindowByBundle(t, h.ctx, "Q", "com.vivaldi.Vivaldi")
 		if liveBrowser.BundleID != "com.vivaldi.Vivaldi" {
 			failAcceptance(t, scenario.FailInvariant, "PRIV.6.5/restore-spawn",
 				fmt.Sprintf("unarchive produced %q with bundle %q, want Vivaldi: %+v", liveBrowser.Title, liveBrowser.BundleID, liveBrowser))
@@ -2459,6 +2466,23 @@ func (h *humanE2E) performManualDotfilesLayout(expected e2eLayout) {
 
 func manualDotfilesLayout() e2eLayout {
 	return swappedStackDotfilesLayout()
+}
+
+// emitUserReorderedManualDotfilesLayout simulates the OmniWM user-reorder event
+// for the test-main project on Q. Per SSOT §4.3 / N-12, the abolished
+// accept-manual-layout command is replaced by automatic Tier 2 acceptance: a
+// USER-origin same-workspace reorder is reduced to AutoSyncLayout and written
+// into DesiredWorld.AcceptedLayouts (system-detected drift is reverted instead).
+// Mirrors TestHumanE2ESameWorkspaceReorderEventSteps so callers establish an
+// accepted manual layout the spec-conformant way.
+func (h *humanE2E) emitUserReorderedManualDotfilesLayout() {
+	proj := w.ProjectID("projwm-test-main")
+	ws := w.WorkspaceID("Q")
+	h.sendEventData(event.KindUserReorderedColumns, event.SourceUser, event.Data{
+		Project:   &proj,
+		Workspace: &ws,
+		Columns:   manualDotfilesDesiredColumns(),
+	})
 }
 
 func manualDotfilesDesiredColumns() []w.DesiredColumn {
