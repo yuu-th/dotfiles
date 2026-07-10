@@ -11,6 +11,7 @@
     ../modules/darwin/discord.nix
     ../modules/darwin/spotify.nix
     ../modules/darwin/obsidian.nix
+    ../modules/darwin/anki.nix
     ../modules/darwin/dia.nix
     ../modules/darwin/aerospace
     ../modules/darwin/omniwm
@@ -36,6 +37,7 @@
     ../modules/common/go.nix
     ../modules/common/python.nix
     ../modules/common/claude-code.nix
+    ../modules/common/cursor-cli.nix
     ../modules/common/codex.nix
     ../modules/common/gcloud.nix
     ../modules/common/firebase.nix
@@ -50,6 +52,7 @@
     ../modules/common/terraform.nix
     ../modules/common/github-copilot-cli.nix
     ../modules/common/opencode.nix
+    ../modules/common/mimo-code.nix
     ../modules/common/fish.nix
     ../modules/common/zellij.nix
     ../modules/common/tmux.nix
@@ -141,6 +144,7 @@
   myConfig.darwin.discord.enable        = true;
   myConfig.darwin.spotify.enable        = true;
   myConfig.darwin.obsidian.enable       = true;
+  myConfig.darwin.anki.enable           = true;
   myConfig.darwin.dia.enable            = true;
   myConfig.darwin.aerospace.enable      = false; # projwm-next 実機検証では OmniWM を authority にする
   myConfig.darwin.omniwm.enable         = true;
@@ -168,6 +172,7 @@
   myConfig.go.enable          = true;
   myConfig.python.enable      = true;
   myConfig.claudeCode.enable  = true;
+  myConfig.cursorCli.enable   = true;
   myConfig.codex.enable       = true;
   myConfig.gcloud.enable      = true;
   myConfig.firebase.enable    = true;
@@ -182,6 +187,7 @@
   myConfig.terraform.enable   = true;
   myConfig.githubCopilotCli.enable = true;
   myConfig.opencode.enable         = true;
+  myConfig.mimoCode.enable         = true;
   myConfig.fish.enable             = true;
   myConfig.zellij.enable           = true;
   myConfig.tmux.enable             = true;

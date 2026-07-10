@@ -86,11 +86,11 @@
       },
       "locked": {
         "dir": "pkgs/firefox-addons",
-        "lastModified": 1780286561,
-        "narHash": "sha256-73UvAlulbn6cSaoq+Wllj7WxKrhti8wkT+zYKvFD9d0=",
+        "lastModified": 1780804967,
+        "narHash": "sha256-Z2nOP600ATQLLHHemhHtYDjWyAqgLrVsozznIkvnkYY=",
         "owner": "rycee",
         "repo": "nur-expressions",
-        "rev": "2838055f920c314b0731f71a53a6b878de0309cc",
+        "rev": "f15cdd20d0845728919ad067ff43bdd334b4b344",
         "type": "gitlab"
       },
       "original": {
@@ -128,11 +128,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780002343,
-        "narHash": "sha256-hg/lmgC4Y4iCCJoVUXspXtoM27oVnmFVD68/yq/tXvs=",
+        "lastModified": 1780821058,
+        "narHash": "sha256-eHfsA/pKQAK60jmyGzGP7BvcJOXAPZJY0lEQJC2xlGc=",
         "owner": "amaanq",
         "repo": "helium-flake",
-        "rev": "aa06960b748d91219c61b59d6f49b62b4c679e77",
+        "rev": "d765e1962dbe3fa08e0bf4f6abd3dd53806cf826",
         "type": "github"
       },
       "original": {
@@ -148,11 +148,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780347968,
-        "narHash": "sha256-I8ibSDQx+E8cgw6k3UxX6Bm7awmGoKSTXc8Gt1Zbpp4=",
+        "lastModified": 1780885330,
+        "narHash": "sha256-aMA5oAq2Iv467U9s8YOb50DYQT9w0WJbyWqwlzHuLMs=",
         "owner": "nix-community",
         "repo": "home-manager",
-        "rev": "d0af9b8bf3b4a1d449be7034bebc9f8f9fd6ee99",
+        "rev": "4fe95527cbe952713318ada8a4d122e1a6ab120f",
         "type": "github"
       },
       "original": {
@@ -171,11 +171,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1780362950,
-        "narHash": "sha256-jWHc4ib841JKvr/ViDy0DScfK2stDX4D7SjUDjPORrQ=",
+        "lastModified": 1780881774,
+        "narHash": "sha256-rerEuAetLDa/0drxCKlG3FOm+IaERC85bjePsEAgNqI=",
         "owner": "numtide",
         "repo": "llm-agents.nix",
-        "rev": "9653dc94f94cf618d984fe49b4d7d23bac4cb3c0",
+        "rev": "d2516f1045bcce250f7116232899b33252c2866a",
         "type": "github"
       },
       "original": {
@@ -191,11 +191,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1779036909,
-        "narHash": "sha256-zXcwYQGCT6pzinK+1dBB2ekTVtfxGZAapb3Evdcu4fY=",
+        "lastModified": 1780795403,
+        "narHash": "sha256-AkWx4Zt9pQbD/f82Z8N57+d0HGLN/rV3gdMKJTpBPKs=",
         "owner": "LnL7",
         "repo": "nix-darwin",
-        "rev": "56c666e108467d87d13508936aade6d567f2a501",
+        "rev": "6a771120d607dcccb279a27d227650e324815c35",
         "type": "github"
       },
       "original": {
@@ -206,11 +206,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1780336545,
-        "narHash": "sha256-vhVhuXzFrIOfcssC/9hDHx7MHzDKjF3keHuREOQqQiQ=",
+        "lastModified": 1780747962,
+        "narHash": "sha256-IX7G1dlKrOqPOImfbo7ADDfV5yU1+j+MRChI3TL4tAA=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "4df1b885d76a54e1aa1a318f8d16fd6005b6401f",
+        "rev": "cbb5cf358f50aa6acc9efd6113b7bcfbc352cd73",
         "type": "github"
       },
       "original": {
@@ -238,11 +238,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1780243769,
-        "narHash": "sha256-x5UQuRsH3MqI0U9afaXSNqzTPSeZlRLvFAav2Ux1pNw=",
+        "lastModified": 1780749050,
+        "narHash": "sha256-3av0pIjlOWQ6rDbNOmpUSvbNnJkGORQKKjb4LtCZsIY=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "331800de5053fcebacf6813adb5db9c9dca22a0c",
+        "rev": "a799d3e3886da994fa307f817a6bc705ae538eeb",
         "type": "github"
       },
       "original": {
@@ -285,11 +285,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1778901413,
-        "narHash": "sha256-GSKXTAnFqRAMlZkJrIPcQMYf+lpMr66K3i60mB9STvc=",
+        "lastModified": 1780416763,
+        "narHash": "sha256-rRK3IFixgsrK6S3e14Xz9HAZm7+kMAIl3oi5zZlcwYI=",
         "owner": "pyproject-nix",
         "repo": "pyproject.nix",
-        "rev": "a228447c3e179d477c1b6246ef3efa8cfe3c469a",
+        "rev": "ad83f1ead0e78e57b188f35cb57298affb06fc5f",
         "type": "github"
       },
       "original": {
@@ -365,11 +365,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780358675,
-        "narHash": "sha256-n4jX4svZwmoWpzhz3If9wkvEYKv3WuDvprE8vi57MRY=",
+        "lastModified": 1780418295,
+        "narHash": "sha256-yZVQNvmDx1SFjvlwevywsXWJnieSRqmQr7/fCTMyyd0=",
         "owner": "pyproject-nix",
         "repo": "uv2nix",
-        "rev": "3a557a9e78cc5b11bc9a610f27da4bdd5599edfe",
+        "rev": "0497ccef038da091002be7c05263a7f27820974f",
         "type": "github"
       },
       "original": {
@@ -381,11 +381,11 @@
     "vast-cli-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1780056482,
-        "narHash": "sha256-8MAh+ZOhSYVmZniOj7Eo6SHCBvWOeWqin80lnL5K5CA=",
+        "lastModified": 1780611004,
+        "narHash": "sha256-FWESeKJ9BPtX1DFbBHAfRssSTvHhpuCRt5K9th56GLE=",
         "owner": "vast-ai",
         "repo": "vast-cli",
-        "rev": "32b9382005e760ba4126dc5ce706f55553bb1beb",
+        "rev": "87348ea8b7c1539c1f6e25e522660ca47aa9ce51",
         "type": "github"
       },
       "original": {
@@ -397,7 +397,7 @@
     "vsci-feed-darwin-arm64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-1PDPbHuUNb9pfkTu6FnmSE/9ZsUgbiPyS7M+O/6yJeo=",
+        "narHash": "sha256-WXdXHpU2xZKjpHKMOgEOs4p7oHn+6CLDZk27pkwNL2o=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/darwin-arm64/insider/latest"
       },
@@ -409,7 +409,7 @@
     "vsci-feed-darwin-x64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-X4tl+UsFqkiJphCcwEae2lmASGQWB1hbRECtdptgCGE=",
+        "narHash": "sha256-3pbTpXIr26L9nhhvlM/8cAqIxmjNWMDBCwWbil7etYA=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/darwin/insider/latest"
       },
@@ -421,7 +421,7 @@
     "vsci-feed-linux-arm64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-ecVEspOGLGLDpYRDq2OcCLtZzG3c/O9vIqm1TwnYhLQ=",
+        "narHash": "sha256-Ky5X0ZgxfklXIdxYm9x2jFwyR20J4sd0uEohyOCMpYs=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/linux-arm64/insider/latest"
       },
@@ -433,7 +433,7 @@
     "vsci-feed-linux-x64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-+egYJiyLogOWXSQmZMtkskWFDmpO1pmw5LL2AB2sR7c=",
+        "narHash": "sha256-Jquc4s7uN8E3iEjYkPtr3IZ0p1px0vlZe4MJamnVvyQ=",
         "type": "file",
         "url": "https://update.code.visualstudio.com/api/update/linux-x64/insider/latest"
       },
@@ -452,11 +452,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780309250,
-        "narHash": "sha256-XE9QhtahY3C3/6DA0f7CsJ+RWDR4Y0OEucRFeTUpWFo=",
+        "lastModified": 1780844008,
+        "narHash": "sha256-o0qkBlySSsbA9ZCOb36Sysy4RD92k1McPIa6Whri14o=",
         "owner": "0xc000022070",
         "repo": "zen-browser-flake",
-        "rev": "9c1e768c5cdf4be1db2989d14856022cfedb2fa1",
+        "rev": "dbbb396d52d2746505017e5d84d87e4f333df085",
         "type": "github"
       },
       "original": {
