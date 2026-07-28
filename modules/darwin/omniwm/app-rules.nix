@@ -7,7 +7,7 @@
 # このファイルでは以下のみ扱う:
 #   - layout = "float"          (現 WS に float で居続けるダイアログ系)
 #   - minWidth / minHeight      (極小ウィンドウ防止)
-#   - titleRegex                (Ghostty の projwm 規約 title のみ tile)
+#   - titleRegex                (title で対象を絞り込む場合)
 { lib ? (import <nixpkgs> { }).lib, ... }:
 let
   # ── id 生成 ──────────────────────────────────────────────────────────────
@@ -61,41 +61,7 @@ let
     { bundleId = "com.apple.MobileSMS";          layout = "float"; minWidth = 600.0; minHeight = 500.0; }
     { bundleId = "com.tinkoffsystems.utm";       layout = "float"; }
 
-    # ── Ghostty cockpit (SSOT v1.11 §7.3 / §8.1 — projwm-managed monitor only) ──
-    # Exactly one cockpit on the projwm-managed monitor (workspace A / Q-P).
-    # SSOT §7.3 COCKPIT-TITLE: `projwm-cockpit-<display>` (例 `projwm-cockpit-0`).
-    # Display 0 → CP1. SSOT v2.4-era `projwm-cockpit-D0` (D prefix) was removed
-    # in SSOT v1.11 NAMI-03; the rule must match the post-rename title.
-    { bundleId          = "com.mitchellh.ghostty";
-      titleRegex        = "^projwm-cockpit-[0-9]+$";
-      assignToWorkspace = "CP1";
-      layout            = "tile";
-      minWidth          = 480.0;
-      minHeight         = 240.0; }
-
-    # ── Ghostty (projwm-managed: ai-N:, shell-N:, ai-view-N:) ─────────────
-    # projwm が起動する terminal は title="<kind>-<id>:<project>" 規約 (例: ai-1:dotfiles,
-    # shell-1:dotfiles, ai-view-1:dotfiles)。Ghostty の SwiftUI WindowGroup が出す
-    # hidden helper windows (1440x30 layer-0、title 無し) と分離するため、
-    # titleRegex で projwm 規約 title のみ tile 強制管理する。
-    # (Notion #243 で OmniWM owner 推奨の workaround パターン)
-    { bundleId   = "com.mitchellh.ghostty";
-      titleRegex = "^(ai|shell|ai-view)-[0-9]+:";
-      layout     = "tile";
-      minWidth   = 480.0;
-      minHeight  = 240.0; }
-
-    # ── Ghostty scratch shell (SSOT §2.2 / §4.1 op11 / §7.3 SCRATCH-TITLE) ──
-    # Global system-level scratch shell, title=`projwm-scratch-shell` (exact).
-    # MUST sit before the catch-all Ghostty rule below so OmniWM matches it by
-    # titleRegex and catalogs it — otherwise ShowScratchShell cannot observe the
-    # window and falls back to an empty LiveWindowID (L3 U1 fail).
-    { bundleId   = "com.mitchellh.ghostty";
-      titleRegex = "^projwm-scratch-shell$";
-      layout     = "tile";
-      minWidth   = 480.0;
-      minHeight  = 240.0; }
-    # Ghostty 一般 (projwm 管理外、最小サイズだけ確保)
+    # Ghostty 一般 (最小サイズだけ確保)
     { bundleId  = "com.mitchellh.ghostty";
       minWidth  = 480.0;
       minHeight = 240.0; }

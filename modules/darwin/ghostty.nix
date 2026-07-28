@@ -71,7 +71,7 @@ let cfg = config.myConfig.darwin.ghostty; in {
         # アクション一覧: https://ghostty.org/docs/config/keybind/reference
         # Quake terminal は OmniWM 内蔵に一本化（karabiner-rules.nix 参照）
 
-        # ── Accessibility 権限を要求するための global keybind（projwm v11.5）
+        # ── Accessibility 権限を要求するための global keybind ─────────────
         # Ghostty は global keybind が設定されると起動時に macOS Accessibility
         # 権限を要求するダイアログを出す。これにより Ghostty.app が AX 許可
         # リストに追加され、OmniWM の `AXUIElementCopyAttributeValue` 経由の

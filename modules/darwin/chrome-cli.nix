@@ -5,8 +5,8 @@
 # - 対応: Chrome, Brave, Vivaldi, Edge, Arc, Chromium 等
 # - Bundle ID は環境変数 CHROME_BUNDLE_IDENTIFIER で切替可能
 #
-# projwm v12 (paradigm C) で利用予定。focus 奪わない non-intrusive な制御が
-# 必要 (paradigm B の AX hack を捨てた経緯は projwm-history.md)。
+# focus を奪わない non-intrusive な browser 制御手段として導入
+# (AX API 経由の制御は focus を奪うため採用しない)。
 { config, lib, ... }:
 let cfg = config.myConfig.darwin.chromeCli; in {
   imports = [ ./homebrew.nix ];

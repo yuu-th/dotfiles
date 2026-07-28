@@ -4,8 +4,8 @@
 # - GUI: /Applications/Zed.app  (bundleId: dev.zed.Zed)
 # - CLI: zed <path>  → cask が /opt/homebrew/bin/zed shim を配置
 #         (binary "#{appdir}/Zed.app/Contents/MacOS/cli", target: "zed")
-# - 設計: queue/projwm-design.md §5.2 / §5.3 / §6.3 — projwm が `zed <cwd>` で
-#   project 単位の Zed window を spawn、bundleId + title=basename(cwd) で識別
+#   `zed <cwd>` で project 単位の window を開く。window は
+#   bundleId + title=basename(cwd) で識別できる。
 #
 # 注: nixpkgs の zed-editor は aarch64-darwin で CLI が壊れている
 #     (NixOS/nixpkgs#365465) ため使わない。homebrew cask 一択。

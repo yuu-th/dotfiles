@@ -1,20 +1,19 @@
 # modules/common/tmux.nix
 #
-# tmux — projwm が AI/shell の永続化に使う terminal multiplexer
-# 設計: queue/projwm-design.md §5.1 / §5.3
+# tmux — AI/shell セッションの永続化に使う terminal multiplexer
 #   - set-titles off / allow-rename off  → ghostty --title= を踏まない
 #   - window-size latest / aggressive-resize on → grouped session のリサイズ衝突回避
 { config, lib, pkgs, ... }:
 let cfg = config.myConfig.tmux; in {
-  options.myConfig.tmux.enable = lib.mkEnableOption "tmux multiplexer (projwm 用)";
+  options.myConfig.tmux.enable = lib.mkEnableOption "tmux multiplexer";
 
   config = lib.mkIf cfg.enable {
     home-manager.users.${config.myConfig.primaryUser} = {
       home.packages = with pkgs; [ tmux ];
 
       home.file.".tmux.conf".text = ''
-        # ── projwm 必須項目 ─────────────────────────────────────────────
-        # ghostty --title= を踏まない（projwm の title 規約 <kind>-<id>:<proj> 維持）
+        # ── title 制御 ──────────────────────────────────────────────────
+        # ghostty --title= を踏まない（外から付けた window title を維持）
         set -g set-titles off
         set -g allow-rename off
 
@@ -38,7 +37,7 @@ let cfg = config.myConfig.tmux; in {
         set -g default-shell ${pkgs.fish}/bin/fish
         set -g default-command ${pkgs.fish}/bin/fish
 
-        # status は最小（projwm は viewer/launcher で集約表示するので tmux 内 status は不要）
+        # status は出さない（ghostty の window title 側で識別する）
         set -g status off
       '';
     };

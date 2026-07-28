@@ -20,7 +20,7 @@ in {
       "7" = secondary;
       "8" = secondary;
       "9" = secondary;
-      # ── projwm slots (queue/projwm-design.md §4.1) ─────────────────────
+      # ── slot workspaces (Q-P + A) ──────────────────────────────────────
       "A" = main;
       "Q" = main;
       "W" = main;
@@ -32,12 +32,12 @@ in {
       "O" = main;
       "P" = main;
       # ── cockpit park workspace (requirements v2.4 §8.1) ──────────────────
-      # CP1 goes to main — same monitor as workspace A (projwm-managed monitor).
+      # CP1 goes to main — same monitor as workspace A.
       # CP2-CP6 removed (requirements v2.4: 1 cockpit only).
       "CP1" = main;
     };
     layoutMap = {
-      # E は projwm では niri に戻す（旧 Editor 用の dwindle は projwm では不要）
+      # E は niri に戻す（旧 Editor 用の dwindle は不要）
     };
   };
 }

@@ -9,8 +9,8 @@
 #
 # rawID:
 #   1〜9 = 数値 WS / 10 = M (Media) / 11 = B (Browser)
-#   12 = E (旧 Editor、projwm では AI slot 3 として再利用)
-#   13 = A (projwm AI Viewer) / 14-22 = projwm AI slots Q/W/R/T/Y/U/I/O/P
+#   12 = E (旧 Editor、AI slot 3 として再利用)
+#   13 = A (AI Viewer) / 14-22 = AI slots Q/W/R/T/Y/U/I/O/P
 {
   # ── Browsers → WS B (11) ───────────────────────────────────────────────
   "com.google.Chrome"      = "11";
@@ -19,11 +19,11 @@
   "company.thebrowser.dia" = "11";
   "app.zen-browser.zen"    = "11";
 
-  # ── Editors → 起動時 WS 固定は廃止（projwm 導入に伴う、queue/projwm-design.md §4.3 / FR-24） ─
-  # WS E は projwm の AI slot 3 として再利用されるため、editor を一律 WS 12 (E) に
+  # ── Editors → 起動時 WS 固定は廃止 ────────────────────────────────────
+  # WS E は AI slot 3 として再利用されるため、editor を一律 WS 12 (E) に
   # 集めると AI ワークスペースに editor が混ざってしまう。
   # 代替運用:
-  #   - Zed: projwm が per-project に slot 配置（projwm reconcile で動的）
+  #   - Zed: project ごとに手動で slot に配置する
   #   - VSCode/Cursor/JetBrains: ad-hoc 起動なので開いた WS に留める。
   #     必要なら手動で `alt+shift+<letter>` で送る（NR-01「動的 appRule で固定しない」）
   # 削除前: "com.microsoft.VSCodeInsiders" = "12"; "com.microsoft.VSCode" = "12";

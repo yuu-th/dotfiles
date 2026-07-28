@@ -28,7 +28,7 @@
         "9" = { rawName = "9";  displayName = null; };
         "M" = { rawName = "10"; displayName = "M"; };
         "B" = { rawName = "11"; displayName = "B"; };
-        # ── projwm slots (queue/projwm-spec.md §4.1) ──────────────────────
+        # ── slot workspaces (Q-P + A) ─────────────────────────────────────
         # A = AI Viewer, Q-P = AI project slot 1〜10 (QWERTY 行順)。
         "A" = { rawName = "12"; displayName = "A"; };
         "Q" = { rawName = "13"; displayName = "Q"; };
@@ -41,8 +41,8 @@
         "I" = { rawName = "20"; displayName = "I"; };
         "O" = { rawName = "21"; displayName = "O"; };
         "P" = { rawName = "22"; displayName = "P"; };
-        # ── cockpit park workspace (projwm-next requirements v2.4 §8.1) ────────
-        # Exactly one cockpit on the projwm-managed monitor (workspace A / Q-P).
+        # ── cockpit park workspace ─────────────────────────────────────────────
+        # Exactly one cockpit on the slot monitor (workspace A / Q-P).
         # CP2-CP6 removed per v2.4 縮退: other monitors get no cockpit.
         "CP1" = { rawName = "23"; displayName = "CP1"; };
       };
