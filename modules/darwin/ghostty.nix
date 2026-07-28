@@ -26,7 +26,9 @@ let cfg = config.myConfig.darwin.ghostty; in {
     homebrew.casks = [ "ghostty" ];
 
     home-manager.users.${config.myConfig.primaryUser} = {
-      home.file.".config/ghostty/config".text = ''
+      home.file.".config/ghostty/config" = {
+        force = true;
+        text = ''
         # ── フォント ─────────────────────────────────────────────────────
         # フォントの変更は profiles/fav_fonts.nix を編集（ここは自動反映）
         font-family = ${cfg.fontFamily}
@@ -68,7 +70,19 @@ let cfg = config.myConfig.darwin.ghostty; in {
         # ── キーバインド ─────────────────────────────────────────────────
         # アクション一覧: https://ghostty.org/docs/config/keybind/reference
         # Quake terminal は OmniWM 内蔵に一本化（karabiner-rules.nix 参照）
-      '';
+
+        # ── Accessibility 権限を要求するための global keybind（projwm v11.5）
+        # Ghostty は global keybind が設定されると起動時に macOS Accessibility
+        # 権限を要求するダイアログを出す。これにより Ghostty.app が AX 許可
+        # リストに追加され、OmniWM の `AXUIElementCopyAttributeValue` 経由の
+        # window enumeration から見えるようになる（ghostty-org/ghostty docs:
+        # 「On macOS, launching with global keybinds requires accessibility
+        # permissions to be granted to Ghostty」）。
+        # 使わない組み合わせを割当：global+ctrl+opt+cmd+shift+F19=ignore は
+        # 物理的に押されにくく副作用がない。
+        keybind = global:ctrl+option+command+shift+f19=ignore
+        '';
+      };
     };
   };
 }

@@ -5,7 +5,7 @@ let
   # ── 設定ソース ───────────────────────────────────────────────────────────
   common       = import ./common.nix     { inherit pkgs; };
   hotkeys      = import ./hotkeys.nix    { inherit pkgs; };
-  appRules     = import ./app-rules.nix  { inherit pkgs; };
+  appRules     = import ./app-rules.nix  { inherit pkgs lib; };
   helpers      = import ./workspace-builder.nix { inherit pkgs; };
   wsAssignment = import ./workspace-assignment.nix;
 

@@ -13,3 +13,9 @@ result-*
 id_rsa
 id_ed25519
 deploy/temp/
+
+# Scratch / drafts (not tracked)
+queue/
+
+# Runtime locks
+.claude/scheduled_tasks.lock

@@ -16,6 +16,13 @@ let
       url    = feed.url;
       sha256 = feed.sha256hash;
     };
+    # nixpkgs vscode-generic の postPatch は旧パス @vscode/ripgrep/bin/rg を
+    # 無条件 chmod するが、最近の Insiders は @vscode/ripgrep-universal/bin/<plat>/rg
+    # にリネームしたため落ちる。存在する rg だけ chmod する寛容版に差し替える。
+    postPatch = ''
+      find Contents/Resources/app/node_modules/@vscode -type f -name rg \
+        -exec chmod +x {} + 2>/dev/null || true
+    '';
     installPhase = if isDarwin then ''
       mkdir -p "$out/Applications"
       if [ -d Contents ] && [ -f Contents/Info.plist ]; then

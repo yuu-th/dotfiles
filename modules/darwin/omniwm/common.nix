@@ -17,6 +17,16 @@
   # ── 外観 ──────────────────────────────────────────────────────────────────
   appearance = { mode = "dark"; };
 
+  # ── クリップボード履歴（0.4.9 で追加された必須セクション） ─────────────
+  # OmniWM 0.4.9 は `[clipboard]` セクション欠如だと settings.toml を corrupt 判定する。
+  # 個人情報を残したくないので historyEnabled は false。値は 0.4.9 既定。
+  clipboard = {
+    historyEnabled = false;
+    maxItemBytes   = 8388608;
+    maxItems       = 200;
+    maxTotalBytes  = 67108864;
+  };
+
   # ── 内蔵ボーダー（JankyBorders を置換）──────────────────────────────────
   # AeroSpace 時の borders 設定: active=0xFFE8D44D (#E8D44D), inactive=0xFF3C3C3C, width=3
   borders = {
@@ -43,12 +53,18 @@
   #   maxVisibleColumns        : 同時表示する column 数（広いモニタで増やすと見渡しやすい）
   niri = {
     alwaysCenterSingleColumn = true;
-    centerFocusedColumn = "on-overflow";  # 通常は左端 packing、画面に収まらない時のみ中央寄せ
-                                          # ("always" だとフォーカス左の column が画面外に押し出される)
+    # user 議論結果: 常に中央 ("always") は欲しい時と欲しくない時の trade-off が
+    # ある。 viewport-only "半分 scroll" cmd は OmniWM API に存在しないため、
+    # 中央寄せをユーザの判断で得る代替案も組めない。 普段は左寄り packing が
+    # 自然なので "never" を採用 (user 提案)。
+    centerFocusedColumn = "never";
+    # 全新規 window の default 幅 = 画面幅の 50%。 OmniWM の rule schema に
+    # app 別 / workspace 別の default width field は無いため、 全 niri 共通で
+    # 50% にする。 user は option+, / option+. で cycle して他幅に resize 可。
     columnWidthPresets = [ 0.4 0.5 0.66 0.8 0.95 ];
-    defaultColumnWidth = 0.66;
+    defaultColumnWidth = 0.5;
     infiniteLoop = false;
-    maxVisibleColumns = 3;
+    maxVisibleColumns = 4;
     maxWindowsPerColumn = 4;
     singleWindowAspectRatio = "16:10";
   };
@@ -124,16 +140,23 @@
 
   # ── Quake terminal（OmniWM 内蔵 libghostty） ───────────────────────────
   # `Option+\`` でフォーカス中のモニタにスライド表示される。既存 Ghostty.app と併存可能。
+  #
+  # 以前 50%/50%/center だったが画面外に上端がはみ出すバグ確認 (user report)。
+  # widthPercent/heightPercent を実用範囲（90%）に拡大して中央配置を maintain。
+  # 上下に余白を残すことで menubar / statusBar / dock と重ならない。
+  # v2.3 / design v3 §11.4: Quake terminal を廃止。
+  # cockpit Ghostty が space+f で表示される構造に切替済み。
+  # opt+space binding も karabiner-rules.nix から削除済み (v3).
   quakeTerminal = {
     animationDuration = 0.2;
     autoHide = false;
-    enabled = true;
-    heightPercent = 50.0;
+    enabled = false;
+    heightPercent = 85.0;
     monitorMode = "focusedWindow";
     opacity = 1.0;
     position = "center";
     useCustomFrame = false;
-    widthPercent = 50.0;
+    widthPercent = 90.0;
   };
 
   # ── ステータスバー ────────────────────────────────────────────────────────

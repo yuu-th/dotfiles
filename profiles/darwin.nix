@@ -11,6 +11,7 @@
     ../modules/darwin/discord.nix
     ../modules/darwin/spotify.nix
     ../modules/darwin/obsidian.nix
+    ../modules/darwin/anki.nix
     ../modules/darwin/dia.nix
     ../modules/darwin/aerospace
     ../modules/darwin/omniwm
@@ -20,6 +21,9 @@
     ../modules/darwin/google-calendar.nix
     ../modules/darwin/ghostty.nix
     ../modules/darwin/cmux.nix
+    ../modules/darwin/zed.nix
+    ../modules/darwin/vivaldi.nix
+    ../modules/darwin/chrome-cli.nix
     ../modules/darwin/parsec.nix
     # sub-profiles（常時ON設定を関心ごとに分割）
     ./fav_fonts.nix
@@ -32,22 +36,37 @@
     ../modules/common/go.nix
     ../modules/common/python.nix
     ../modules/common/claude-code.nix
+    ../modules/common/cursor-cli.nix
+    ../modules/common/codex.nix
     ../modules/common/gcloud.nix
+    ../modules/common/firebase.nix
+    ../modules/common/cloudflared.nix
+    ../modules/common/ngrok.nix
+    ../modules/common/wrangler.nix
+    ../modules/common/vast-cli.nix
+    ../modules/common/huggingface-cli.nix
     ../modules/common/vscode.nix
     ../modules/common/node.nix
     ../modules/common/rust.nix
     ../modules/common/terraform.nix
     ../modules/common/github-copilot-cli.nix
+    ../modules/common/opencode.nix
+    ../modules/common/mimo-code.nix
     ../modules/common/fish.nix
     ../modules/common/zellij.nix
+    ../modules/common/tmux.nix
     ../modules/common/neovim.nix
     ../modules/common/teams.nix
     ../modules/common/zen-browser.nix
+    ../modules/common/pear-desktop.nix
+    ../modules/common/helium.nix
+    ../modules/common/brave.nix
     ../modules/common/gemini-cli.nix
     ../modules/common/uv.nix
     ../modules/common/browser-use.nix
     ../modules/common/vercel.nix
     ../modules/common/direnv.nix
+    ../modules/common/devbox.nix
     ../modules/common/flutter.nix
     ../modules/common/android-tools.nix
     ../modules/darwin/android-studio.nix
@@ -56,7 +75,20 @@
 
   # ── macOS 前提設定（常時ON、トグル不要）────────────────────────────────────
   nixpkgs.config.allowUnfree = true;
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  nix.settings = {
+    experimental-features = [ "nix-command" "flakes" ];
+    extra-substituters = [ "https://cache.numtide.com" ];
+    extra-trusted-public-keys = [ "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g=" ];
+  };
+
+  # 世代が無限に溜まってディスクを埋めるのを防ぐ自動 GC（毎週日曜3:00、30日より古い世代を削除）
+  nix.gc = {
+    automatic = true;
+    interval = { Weekday = 0; Hour = 3; Minute = 0; };
+    options = "--delete-older-than 30d";
+  };
+  # store 内の重複を自動でハードリンク化して容量節約
+  nix.optimise.automatic = true;
   security.pam.services.sudo_local.touchIdAuth = true;
 
   system.defaults = {
@@ -111,8 +143,9 @@
   myConfig.darwin.discord.enable        = true;
   myConfig.darwin.spotify.enable        = true;
   myConfig.darwin.obsidian.enable       = true;
+  myConfig.darwin.anki.enable           = true;
   myConfig.darwin.dia.enable            = true;
-  myConfig.darwin.aerospace.enable      = false;  # OmniWM 移行作業中（一時停止）
+  myConfig.darwin.aerospace.enable      = false; # OmniWM を window manager の authority にする
   myConfig.darwin.omniwm.enable         = true;
   myConfig.darwin.omniwm.monitorProfile = "auto";  # "auto" = 接続中モニタから自動選択。"<name>" で強制指定可
   myConfig.darwin.karabiner.enable      = true;
@@ -121,6 +154,9 @@
   myConfig.darwin.googleCalendar.enable = true;
   myConfig.darwin.ghostty.enable        = true;
   myConfig.darwin.cmux.enable           = true;
+  myConfig.darwin.zed.enable            = true;
+  myConfig.darwin.vivaldi.enable        = true;
+  myConfig.darwin.chromeCli.enable      = true;
   myConfig.darwin.parsec.enable         = true;
 
   # ── Common modules ────────────────────────────────────────────────────────────
@@ -131,22 +167,37 @@
   myConfig.go.enable          = true;
   myConfig.python.enable      = true;
   myConfig.claudeCode.enable  = true;
+  myConfig.cursorCli.enable   = true;
+  myConfig.codex.enable       = true;
   myConfig.gcloud.enable      = true;
+  myConfig.firebase.enable    = true;
+  myConfig.cloudflared.enable = true;
+  myConfig.ngrok.enable       = true;
+  myConfig.wrangler.enable    = true;
+  myConfig.vast-cli.enable    = true;
+  myConfig.huggingfaceCli.enable = true;
   myConfig.vscode.enable      = true;
   myConfig.node.enable        = true;
   myConfig.rust.enable        = true;
   myConfig.terraform.enable   = true;
   myConfig.githubCopilotCli.enable = true;
+  myConfig.opencode.enable         = true;
+  myConfig.mimoCode.enable         = true;
   myConfig.fish.enable             = true;
   myConfig.zellij.enable           = true;
+  myConfig.tmux.enable             = true;
   myConfig.neovim.enable           = true;
   myConfig.teams.enable            = true;
   myConfig.zenBrowser.enable       = true;
+  myConfig.pearDesktop.enable      = true;
+  myConfig.helium.enable           = true;
+  myConfig.brave.enable            = true;
   myConfig.geminiCli.enable        = true;
   myConfig.uv.enable               = true;
   myConfig.browserUse.enable        = true;
   myConfig.vercel.enable            = true;
   myConfig.direnv.enable            = true;
+  myConfig.devbox.enable            = true;
   myConfig.flutter.enable           = true;
   myConfig.androidTools.enable      = true;
   myConfig.darwin.androidStudio.enable = true;
