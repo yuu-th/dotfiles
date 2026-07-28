@@ -1,0 +1,75 @@
+diff --git a/modules/darwin/projwm/projwm-next/scenarios/ssot_real_acceptance_test.go b/modules/darwin/projwm/projwm-next/scenarios/ssot_real_acceptance_test.go
+index 371608f..fd75d1b 100644
+--- a/modules/darwin/projwm/projwm-next/scenarios/ssot_real_acceptance_test.go
++++ b/modules/darwin/projwm/projwm-next/scenarios/ssot_real_acceptance_test.go
+@@ -10,6 +10,8 @@ import (
+ 	"os"
+ 	"os/exec"
+ 	"slices"
++	"strconv"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+@@ -406,14 +408,53 @@ func TestHumanE2ESSOTCrashRecoverySteps(t *testing.T) {
+ 	}
+ 	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S10-tmux")
+ 
+-	// SSOT §8.9 Zed crash: SAFETY BOUNDARY — Zed is single-process (GPUI
+-	// ignores --user-data-dir; the managed Zed windows live in the user's
+-	// own zed process, observed pid is shared). terminateLiveWindowProcess on
+-	// a managed Zed window would SIGTERM the user's editor and lose unsaved
+-	// work. A real Zed-crash fixture therefore requires a dedicated session
+-	// with no user Zed running; it is intentionally NOT exercised here.
+-	failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/zed-crash-needs-clean-env",
+-		"SSOT §9.1 S10 Zed-crash recovery is unsafe to exercise while the user's Zed is running (Zed is single-process; killing the managed window's process would kill the user's editor). Requires a dedicated clean session.")
++	// SSOT §8.9 Zed crash: editor window vanishes; transaction loop re-spawns
++	// `zed -n <cwd>` (empty project auto-closed). Safety: Zed is single-process
++	// (GPUI ignores --user-data-dir), so killing the test editor's PID also
++	// kills any user Zed sharing the process. We only proceed when EXACTLY
++	// one Zed main process exists — the test's spawned editor — so external
++	// (user) Zed sessions are never destroyed. Otherwise skip with a clear
++	// FailNotImplemented documenting the precondition.
++	// Count only MAIN Zed app processes — Zed always spawns a
++	// `--crash-handler` subprocess (and may spawn LSP helpers), so a bare
++	// `pgrep -x zed` always returns ≥2 for a single logical Zed instance.
++	// We filter the argv to exclude `--crash-handler` so the count reflects
++	// "how many independent Zed sessions exist".
++	zedMainPids := func() []int {
++		out, err := exec.Command("pgrep", "-fl", "Zed.app/Contents/MacOS/zed").Output()
++		if err != nil {
++			return nil
++		}
++		var pids []int
++		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
++			if strings.Contains(line, "--crash-handler") {
++				continue
++			}
++			fields := strings.Fields(line)
++			if len(fields) == 0 {
++				continue
++			}
++			if p, err := strconv.Atoi(fields[0]); err == nil {
++				pids = append(pids, p)
++			}
++		}
++		return pids
++	}()
++	if len(zedMainPids) != 1 {
++		failAcceptance(t, scenario.FailNotImplemented, "SSOT-S10/zed-crash-skipped",
++			fmt.Sprintf("Zed-crash recovery requires the test's editor to be the sole Zed process (Zed is single-process and shares pids); found %d Zed main process(es). Close any user Zed before re-running.", len(zedMainPids)))
++	}
++
++	editor := liveWindowByTitle(t, h.ctx, "Q", "projwm-test-main")
++	terminateLiveWindowProcess(t, editor)
++	waitForWorkspaceMissing(t, h.ctx, "Q", []e2eWindowMatcher{{Title: "projwm-test-main", BundleID: "dev.zed.Zed"}})
++	h.sendEvent(event.KindWindowsChanged, event.SourceWindowMgr)
++	waitForLayout(t, h.ctx, "Q", humanIdealSlots["Q"], 90*time.Second)
++	if after := currentDesiredWorldKey(t, h.storeDir); before != after {
++		failAcceptance(t, scenario.FailInvariant, "SSOT-S10/zed-desired-authority",
++			fmt.Sprintf("Zed crash recovery changed DesiredWorld\nbefore: %s\nafter:  %s", before, after))
++	}
++	assertFullInvariantAudit(t, h, "INV.1-INV.13/SSOT-S10-zed")
+ }
+ 
+ // killTmuxSession kills a single tmux session by exact name (test project
