@@ -1,267 +1,348 @@
-# OmniWM 設定 deploy（v3.1: モニタ自動検出 + 名前付きプロファイル対応）
+# OmniWM 設定 deploy（v4: OmniWM 0.5.9 / displayUUID 解決 + live reload）
 #
 # 役割:
-# 1. 現在のモニタ構成を system_profiler から取得
-# 2. SELECTED_PROFILE が "auto" なら、PROFILE_MANIFEST から match 条件を満たす
-#    プロファイルを選択（複数マッチしたら最も specific=requiredDisplays 多いやつ）
-# 3. SELECTED_PROFILE が具体名なら、それを強制使用
-# 4. 選んだプロファイルの TOML を読み込み、specificDisplay の displayId を
-#    実際の値に解決（解決失敗 → secondary フォールバック）
-# 5. ~/.config/omniwm/settings.toml に書き込み（前回と同一なら no-op）
-# 6. 必要時のみ OmniWM kickstart
+#   1. 接続中ディスプレイを列挙（名前 / CGDirectDisplayID / displayUUID / 内蔵か）
+#   2. プロファイルを選択（"auto" なら match 条件で、具体名ならそれを強制）
+#   3. 選んだ TOML の `@@OMNIWM_UUID:<selector>@@` と
+#      `@@OMNIWM_ROUTING_MODE:<mode>@@` トークンを実値に置換
+#   4. 前回と同一内容なら**何も書かない**（live reload を無駄に叩かないため）
+#   5. 変わっていれば atomic に差し替え → OmniWM が自分で live reload する
+#   6. OmniWM が落ちている時だけ kickstart
 #
-# 環境変数:
+# ── なぜ displayUUID なのか ──
+# OmniWM 0.5.9 の `OutputId.resolveMonitor` / `MonitorSettingsStore.get` は
+#   - displayUUID があれば UUID で一意マッチ
+#   - なければ「候補モニタの displayUUID が nil」かつ displayId 一致かつ名前一致
+# を要求する。実機の全モニタは UUID を持つので後者は絶対に成立しない。さらに
+# `Monitor.namesMatch` は両方が非空文字を要求するため、名前なしモニタを名前で
+# 指定することも原理的に不可能。よって UUID を埋めるしかない。
+#
+# ── なぜ kickstart -k をやめたのか ──
+# 0.4.8.1 以降 OmniWM は settings.toml をファイル監視して live reload する。
+# 再起動するとウィンドウが全部再配置されてチラつくので、書き換えだけで済ませる。
+#
+# 環境変数（default.nix から注入）:
 #   PROFILE_MANIFEST : プロファイル一覧 JSON（[{name, toml, match}]）
 #   SELECTED_PROFILE : "auto" or プロファイル名
 #   LAUNCHD_LABEL    : OmniWM launchd ラベル
-#   JQ               : jq のフルパス
 set -euo pipefail
 
 DEPLOYED="$HOME/.config/omniwm/settings.toml"
-SOURCE_STAMP="$HOME/.local/share/omniwm/last-deployed-source"
 LOG="$HOME/.local/share/omniwm/deploy.log"
+# 前回 deploy した「render 結果そのもの」を保存しておく。
+#
+# ⚠️ deployed (~/.config/omniwm/settings.toml) と直接比較してはいけない。
+# OmniWM は起動時に settings.toml を書き戻して未知キーを温存しつつ
+# 自分の既定セクション（[overview] / [hiddenBar] / 全 hotkey 等）を足すので、
+# deployed は常に nix の生成物と一致しない。deployed と比べると毎回「差分あり」に
+# なって live reload を無駄に叩くことになる。
+RENDER_STAMP="$HOME/.local/share/omniwm/last-rendered.toml"
 mkdir -p "$(dirname "$DEPLOYED")" "$(dirname "$LOG")"
 
-# ── 1. 現在のモニタ一覧を取得 ────────────────────────────────────────────
-SP_JSON=$(/usr/sbin/system_profiler SPDisplaysDataType -json 2>/dev/null || echo '{}')
-DISPLAYS=$(/usr/bin/python3 -c '
-import json, sys
-data = json.loads(sys.argv[1])
-out = []
-for sp in data.get("SPDisplaysDataType", []):
-    for d in sp.get("spdisplays_ndrvs", []):
-        name = d.get("_name", "")
-        raw = d.get("_spdisplays_displayID", "0")
-        try: did = int(raw)
-        except (TypeError, ValueError):
-            try: did = int(str(raw), 16)
-            except (TypeError, ValueError): did = 0
-        out.append({"name": name, "id": did})
-print(json.dumps(out))
-' "$SP_JSON" 2>/dev/null || echo '[]')
+TMP="$(mktemp "${TMPDIR:-/tmp}/omniwm-settings.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
 
-# ── 2. プロファイル選択 ──────────────────────────────────────────────────
-# SELECTED_PROFILE = "auto" の場合: PROFILE_MANIFEST から match 評価
-# 具体名の場合: そのプロファイルを直接使用
-SELECTED_NAME=""
-SELECTED_TOML=""
+log() { echo "$(date '+%H:%M:%S') $*" >> "$LOG"; }
 
-SELECTED_NAME=$(/usr/bin/python3 -c '
-import json, sys
+# ── 1〜3 をまとめて Python で処理 ─────────────────────────────────────────
+# system python (3.9) で完結させる。tomllib が無いので TOML はパースせず、
+# nix が埋めたトークンの文字列置換だけを行う。
+#
+# stdout = 完成した settings.toml
+# stderr = 診断メッセージ（ログに落とす）
+# 終了コード 0 以外なら書き込まない（前回の良い設定を保持する）
+if ! /usr/bin/python3 - "$PROFILE_MANIFEST" "$SELECTED_PROFILE" > "$TMP" 2>>"$LOG" <<'PYEOF'
+import ctypes
+import json
+import re
+import subprocess
+import sys
+
 manifest = json.loads(sys.argv[1])
 selected = sys.argv[2]
-displays = json.loads(sys.argv[3])
 
-named = {d["name"] for d in displays if d["name"] != "spdisplays_display"}
-has_unnamed = any(d["name"] == "spdisplays_display" for d in displays)
-count = len(displays)
 
-if selected != "auto":
-    # 強制指定
-    for p in manifest:
-        if p["name"] == selected:
-            print(p["name"] + "\t" + p["toml"])
-            sys.exit(0)
-    # 見つからない → default に fallback
-    for p in manifest:
-        if p["name"] == "default":
-            print(p["name"] + "\t" + p["toml"])
-            sys.exit(0)
+def warn(msg):
+    print(f"  deploy: {msg}", file=sys.stderr)
+
+
+# ── 接続中ディスプレイの列挙 ──────────────────────────────────────────────
+# 名前は system_profiler から、UUID は ColorSync から、内蔵判定は CoreGraphics から。
+# CGGetActiveDisplayList の ID と system_profiler の _spdisplays_displayID は一致する。
+def enumerate_displays():
+    cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    cs = ctypes.CDLL("/System/Library/Frameworks/ColorSync.framework/ColorSync")
+    cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+
+    cs.CGDisplayCreateUUIDFromDisplayID.restype = ctypes.c_void_p
+    cs.CGDisplayCreateUUIDFromDisplayID.argtypes = [ctypes.c_uint32]
+    cf.CFUUIDCreateString.restype = ctypes.c_void_p
+    cf.CFUUIDCreateString.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+
+    count = ctypes.c_uint32()
+    ids = (ctypes.c_uint32 * 32)()
+    if cg.CGGetActiveDisplayList(32, ids, ctypes.byref(count)) != 0:
+        return []
+
+    def uuid_for(display_id):
+        raw = cs.CGDisplayCreateUUIDFromDisplayID(display_id)
+        if not raw:
+            return None
+        text = None
+        cfstr = cf.CFUUIDCreateString(None, raw)
+        if cfstr:
+            buf = ctypes.create_string_buffer(256)
+            # 0x08000100 = kCFStringEncodingUTF8
+            if cf.CFStringGetCString(cfstr, buf, 256, 0x08000100):
+                text = buf.value.decode()
+            cf.CFRelease(cfstr)
+        cf.CFRelease(raw)
+        return text
+
+    for fn in ("CGDisplayVendorNumber", "CGDisplayModelNumber", "CGDisplaySerialNumber"):
+        getattr(cg, fn).restype = ctypes.c_uint32
+        getattr(cg, fn).argtypes = [ctypes.c_uint32]
+
+    # ── system_profiler から「名前 + EDID 識別子」を集める ──────────────────
+    #
+    # ⚠️ system_profiler の数値フィールドは **16進文字列**（0x なし）。
+    # `_spdisplays_displayID = "16"` は 10進 16 ではなく 0x16 = 22 を意味する。
+    # 10進で読むと ID が 10 以上のモニタで静かに取り違える（実際に踏んだ:
+    # HP の CGDirectDisplayID が 22 なのに 16 と読んで名前解決が失敗し、
+    # プロファイルが default に落ちて 3 枚構成が 2 枚扱いになった）。
+    def parse_hex(value):
+        if value is None:
+            return None
+        text = str(value).strip().lower()
+        if text.startswith("0x"):
+            text = text[2:]
+        for base in (16, 10):
+            try:
+                return int(text, base)
+            except ValueError:
+                continue
+        return None
+
+    sp_entries = []
+    try:
+        raw = subprocess.run(
+            ["/usr/sbin/system_profiler", "SPDisplaysDataType", "-json"],
+            capture_output=True, text=True, timeout=30,
+        ).stdout
+        for section in json.loads(raw).get("SPDisplaysDataType", []):
+            for entry in section.get("spdisplays_ndrvs", []):
+                sp_entries.append({
+                    "name": entry.get("_name", "") or "",
+                    "did": parse_hex(entry.get("_spdisplays_displayID")),
+                    "vendor": parse_hex(entry.get("_spdisplays_display-vendor-id")),
+                    "model": parse_hex(entry.get("_spdisplays_display-product-id")),
+                    "serial": parse_hex(entry.get("_spdisplays_display-serial-number")),
+                })
+    except Exception as exc:  # noqa: BLE001 - 名前が取れなくても UUID だけで進める
+        warn(f"system_profiler failed: {exc}")
+
+    # ── CG のディスプレイと system_profiler のエントリを突き合わせる ─────────
+    #
+    # 主キーは EDID の (vendor, model, serial)。これは CoreGraphics の
+    # CGDisplayVendorNumber / ModelNumber / SerialNumber と一致し、
+    # **CGDirectDisplayID が変わっても不変**（実測でこのセッション中に
+    # HP の ID が 7 → 9 → 22 と変わった）。
+    # 一意に決まらない場合だけ displayID による突き合わせに落とす。
+    def name_for(did):
+        key = (
+            cg.CGDisplayVendorNumber(did),
+            cg.CGDisplayModelNumber(did),
+            cg.CGDisplaySerialNumber(did),
+        )
+        cands = [e for e in sp_entries
+                 if (e["vendor"], e["model"], e["serial"]) == key]
+        if len(cands) != 1:
+            cands = [e for e in sp_entries if e["did"] == did]
+        if len(cands) != 1:
+            return None
+        return cands[0]["name"]
+
+    out = []
+    for i in range(count.value):
+        did = ids[i]
+        name = name_for(did)
+        if name is None:
+            warn(f"could not match displayId={did} to a system_profiler entry (name unknown)")
+            name = ""
+        out.append({
+            "id": did,
+            "name": name,
+            "uuid": uuid_for(did),
+            "builtin": bool(cg.CGDisplayIsBuiltin(did)),
+        })
+    return out
+
+
+displays = enumerate_displays()
+if not displays:
+    warn("ERROR: no active displays found; refusing to deploy")
     sys.exit(1)
 
-# auto: match 条件評価。specific（requiredDisplays が多い）順に評価
-def specificity(p):
-    m = p.get("match") or {}
-    return len(m.get("requiredDisplays", [])) + (1 if m.get("requireUnnamed") else 0) + (1 if m.get("monitorCount") else 0)
+# system_profiler は EDID name を持たないモニタを "spdisplays_display" と返す
+UNNAMED_SENTINEL = "spdisplays_display"
+BUILTIN_ALIASES = {"built-in retina display", "color lcd", "built-in display"}
 
-def matches(p):
-    m = p.get("match") or {}
+named = {d["name"] for d in displays if d["name"] and d["name"] != UNNAMED_SENTINEL}
+has_unnamed = any(d["name"] == UNNAMED_SENTINEL for d in displays)
+
+
+# ── プロファイル選択 ──────────────────────────────────────────────────────
+def specificity(profile):
+    m = profile.get("match") or {}
+    return (
+        len(m.get("requiredDisplays", []))
+        + (1 if m.get("requireUnnamed") else 0)
+        + (1 if m.get("monitorCount") else 0)
+    )
+
+
+def matches(profile):
+    m = profile.get("match") or {}
     if not m:
-        # match なし = catch-all、最後に評価される
-        return True
-    for d in m.get("requiredDisplays", []):
-        if d not in named:
+        return True  # match なし = catch-all
+    for want in m.get("requiredDisplays", []):
+        if want not in named:
             return False
     if m.get("requireUnnamed") and not has_unnamed:
         return False
-    if m.get("monitorCount") and m["monitorCount"] != count:
+    if m.get("monitorCount") and m["monitorCount"] != len(displays):
         return False
     return True
 
-# 順序: specificity 降順 → catch-all (default) は最後
-sorted_profiles = sorted(manifest, key=lambda p: (-specificity(p), p["name"]))
-for p in sorted_profiles:
-    if matches(p):
-        print(p["name"] + "\t" + p["toml"])
-        sys.exit(0)
 
-# match なしも fallback として default を選ぶ
-for p in manifest:
-    if p["name"] == "default":
-        print(p["name"] + "\t" + p["toml"])
-        sys.exit(0)
-sys.exit(1)
-' "$PROFILE_MANIFEST" "$SELECTED_PROFILE" "$DISPLAYS" 2>/dev/null || echo "default	/dev/null")
-
-SELECTED_NAME=$(echo "$SELECTED_NAME" | cut -f1)
-SELECTED_TOML=$(echo "$SELECTED_NAME" | cut -f1)
-# 改めてタブ区切りで取得
-LINE=$(/usr/bin/python3 -c '
-import json, sys
-manifest = json.loads(sys.argv[1])
-selected = sys.argv[2]
-displays = json.loads(sys.argv[3])
-named = {d["name"] for d in displays if d["name"] != "spdisplays_display"}
-has_unnamed = any(d["name"] == "spdisplays_display" for d in displays)
-count = len(displays)
-
-def specificity(p):
-    m = p.get("match") or {}
-    return len(m.get("requiredDisplays", [])) + (1 if m.get("requireUnnamed") else 0) + (1 if m.get("monitorCount") else 0)
-def matches(p):
-    m = p.get("match") or {}
-    if not m: return True
-    for d in m.get("requiredDisplays", []):
-        if d not in named: return False
-    if m.get("requireUnnamed") and not has_unnamed: return False
-    if m.get("monitorCount") and m["monitorCount"] != count: return False
-    return True
-
-if selected != "auto":
+def pick_profile():
+    if selected != "auto":
+        for p in manifest:
+            if p["name"] == selected:
+                return p
+        warn(f"profile '{selected}' not found; falling back to default")
+    # specificity 降順 → 同点は名前順 → catch-all(default) は specificity 0 で最後
+    for p in sorted(manifest, key=lambda p: (-specificity(p), p["name"])):
+        if matches(p):
+            return p
     for p in manifest:
-        if p["name"] == selected:
-            print(p["name"] + "\t" + p["toml"]); sys.exit(0)
-sorted_profiles = sorted(manifest, key=lambda p: (-specificity(p), p["name"]))
-for p in sorted_profiles:
-    if matches(p):
-        print(p["name"] + "\t" + p["toml"]); sys.exit(0)
-for p in manifest:
-    if p["name"] == "default":
-        print(p["name"] + "\t" + p["toml"]); sys.exit(0)
-' "$PROFILE_MANIFEST" "$SELECTED_PROFILE" "$DISPLAYS" 2>/dev/null || echo -e "default\t")
+        if p["name"] == "default":
+            return p
+    return None
 
-SELECTED_NAME=$(echo "$LINE" | cut -f1)
-SELECTED_TOML=$(echo "$LINE" | cut -f2)
 
-if [ -z "$SELECTED_TOML" ] || [ ! -f "$SELECTED_TOML" ]; then
-  echo "$(date '+%H:%M:%S') ERROR: profile selection failed (selected=$SELECTED_PROFILE)" >> "$LOG"
+profile = pick_profile()
+if profile is None:
+    warn("ERROR: profile selection failed")
+    sys.exit(1)
+
+with open(profile["toml"]) as handle:
+    text = handle.read()
+
+
+# ── トークン解決 ──────────────────────────────────────────────────────────
+def resolve(selector):
+    """selector に対応する displayUUID を返す。解決できなければ None。"""
+    if selector == "":
+        cands = [d for d in displays if d["name"] == UNNAMED_SENTINEL]
+    elif selector.strip().lower() in BUILTIN_ALIASES:
+        cands = [d for d in displays if d["builtin"]]
+    else:
+        cands = [d for d in displays if d["name"] == selector]
+        if not cands:
+            # 内蔵の名前は system_profiler と OmniWM で表記が違うので保険をかける
+            if selector.strip().lower() in BUILTIN_ALIASES:
+                cands = [d for d in displays if d["builtin"]]
+    cands = [d for d in cands if d["uuid"]]
+    if len(cands) != 1:
+        return None
+    return cands[0]["uuid"]
+
+
+main_display = next((d for d in displays if d["builtin"] and d["uuid"]), None)
+if main_display is None:
+    main_display = next((d for d in displays if d["uuid"]), None)
+if main_display is None:
+    warn("ERROR: no display exposes a UUID; refusing to deploy")
+    sys.exit(1)
+
+unresolved = []
+
+
+def substitute_uuid(match):
+    selector = match.group(1)
+    uuid = resolve(selector)
+    if uuid is None:
+        unresolved.append(selector or "<unnamed>")
+        # 有効な UUID を入れて TOML を壊さないことを優先する。
+        # routing は下で mode = "macOS" に落ちるので、この値は無害になる。
+        return main_display["uuid"]
+    return uuid
+
+
+text = re.sub(r"@@OMNIWM_UUID:([^@]*)@@", substitute_uuid, text)
+
+
+def substitute_routing_mode(match):
+    intended = match.group(1)
+    if intended != "custom":
+        return intended
+    if unresolved:
+        warn(f"routing: falling back to macOS arrangement (unresolved: {sorted(set(unresolved))})")
+        return "macOS"
+    return "custom"
+
+
+text = re.sub(r"@@OMNIWM_ROUTING_MODE:([^@]*)@@", substitute_routing_mode, text)
+
+# ── 最終ガード ────────────────────────────────────────────────────────────
+# トークンが残ったまま書き込むと displayUUID の形式違反になり、OmniWM は
+# dataCorrupted として settings.toml を .corrupt に退避してしまう（keyNotFound と
+# 違って回復されない）。残っていたら書き込まずに落ちる。
+leftover = re.findall(r"@@[A-Z_]+:[^@]*@@", text)
+if leftover:
+    warn(f"ERROR: unsubstituted tokens remain: {sorted(set(leftover))}")
+    sys.exit(1)
+
+if unresolved:
+    warn(f"unresolved display selectors (fell back to main): {sorted(set(unresolved))}")
+
+warn(
+    "selected profile={} displays={}".format(
+        profile["name"],
+        [(d["name"] or "<unnamed>", d["uuid"]) for d in displays],
+    )
+)
+sys.stdout.write(text)
+PYEOF
+then
+  log "ERROR: render failed (selected=$SELECTED_PROFILE); keeping previous settings.toml"
   exit 1
 fi
 
-# ── 3. 早期 exit: 同じ profile で前回 deploy 済みなら noop ────────────────
-PREV_SOURCE=$(cat "$SOURCE_STAMP" 2>/dev/null || echo "")
-if [ "$SELECTED_TOML" = "$PREV_SOURCE" ] && [ -f "$DEPLOYED" ]; then
+# ── 4. render 結果が前回と同じで、かつ deployed が実在するなら書かない ────
+# live reload を無駄に発火させないため。OmniWM が落ちている時だけ起こす。
+if [ -f "$RENDER_STAMP" ] && [ -f "$DEPLOYED" ] && cmp -s "$TMP" "$RENDER_STAMP"; then
   if ! pgrep -x OmniWM > /dev/null 2>&1; then
     /bin/launchctl kickstart "gui/$UID/$LAUNCHD_LABEL" 2>/dev/null || true
-    echo "$(date '+%H:%M:%S') noop: kickstart (OmniWM was down) profile=$SELECTED_NAME" >> "$LOG"
+    log "noop: render unchanged, kickstart (OmniWM was down)"
   fi
   exit 0
 fi
 
-# ── 4. TOML を読み込み、specificDisplay の displayId を runtime resolve ───
-/bin/rm -f "$DEPLOYED"
-/usr/bin/python3 << PYEOF > "$DEPLOYED"
-import json, sys, re
+# ── 5. atomic に差し替え → OmniWM が live reload する ─────────────────────
+# mv による inode 差し替えはエディタの保存と同じパターンで、OmniWM の
+# ディレクトリ監視 + ファイル監視がこれを拾って reload する。
+/bin/chmod 644 "$TMP"
+/bin/cp -f "$TMP" "$RENDER_STAMP"
+/bin/mv -f "$TMP" "$DEPLOYED"
+trap - EXIT
+log "deployed: settings.toml updated (live reload)"
 
-with open("$SELECTED_TOML") as f:
-    text = f.read()
-
-displays = json.loads('''$DISPLAYS''')
-named_ids = {}
-unnamed_id = None
-for d in displays:
-    if d.get("name") == "spdisplays_display":
-        if unnamed_id is None: unnamed_id = d["id"]
-    else:
-        named_ids[d["name"]] = d["id"]
-
-# Built-in は system_profiler では "Color LCD" と返るので明示マップ
-ALIASES = {
-    "Built-in Retina Display": ["Color LCD"],
-    "Color LCD": ["Built-in Retina Display"],
-}
-
-def resolve_named(name):
-    if name in named_ids: return named_ids[name]
-    for alt in ALIASES.get(name, []):
-        if alt in named_ids: return named_ids[alt]
-    return None
-
-out_lines = []
-i = 0
-lines = text.split("\n")
-while i < len(lines):
-    line = lines[i]
-    if line.strip() == "[workspaces.monitorAssignment]" and i+1 < len(lines) \
-       and lines[i+1].strip() == 'type = "specificDisplay"':
-        # specificDisplay ブロックを丸ごと処理
-        j = i + 2
-        block_pre = [line, lines[i+1]]
-        while j < len(lines) and lines[j].strip() != "[workspaces.monitorAssignment.output]":
-            if lines[j].strip().startswith("[[") or (lines[j].strip().startswith("[") and not lines[j].strip().startswith("[workspaces.monitorAssignment")):
-                break
-            block_pre.append(lines[j])
-            j += 1
-
-        if j >= len(lines) or lines[j].strip() != "[workspaces.monitorAssignment.output]":
-            # output ブロック無し → そのまま
-            out_lines.extend(block_pre)
-            i = j
-            continue
-
-        # output ブロック解析
-        k = j + 1
-        output_displayid = None
-        output_name = None
-        output_displayuuid = None
-        while k < len(lines):
-            s = lines[k].strip()
-            if s.startswith("[["): break
-            if s.startswith("[") and not s.startswith("[workspaces.monitorAssignment.output"):
-                break
-            m = re.match(r'displayId\s*=\s*(-?\d+)', s)
-            if m: output_displayid = int(m.group(1))
-            m = re.match(r'name\s*=\s*"(.*)"', s)
-            if m: output_name = m.group(1)
-            m = re.match(r'displayUUID\s*=\s*"(.*)"', s)
-            if m: output_displayuuid = m.group(1)
-            k += 1
-
-        # 解決
-        resolved_id = None
-        if output_name == "":
-            if unnamed_id is not None: resolved_id = unnamed_id
-        else:
-            resolved_id = resolve_named(output_name)
-
-        if resolved_id is not None:
-            out_lines.extend(block_pre)
-            out_lines.append("")
-            out_lines.append("[workspaces.monitorAssignment.output]")
-            if output_displayuuid:
-                out_lines.append(f'displayUUID = "{output_displayuuid}"')
-            out_lines.append(f"displayId = {resolved_id}")
-            out_lines.append(f'name = "{output_name}"')
-        else:
-            # 解決失敗 → secondary フォールバック
-            out_lines.append("[workspaces.monitorAssignment]")
-            out_lines.append('type = "secondary"')
-        i = k
-    else:
-        out_lines.append(line)
-        i += 1
-
-sys.stdout.write("\n".join(out_lines))
-PYEOF
-
-/bin/chmod 644 "$DEPLOYED"
-echo "$SELECTED_TOML" > "$SOURCE_STAMP"
-
-# ログ
-NAMES=$(/usr/bin/python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(json.dumps([x["name"] for x in d]))' "$DISPLAYS" 2>/dev/null || echo '[]')
-echo "$(date '+%H:%M:%S') deployed: profile=$SELECTED_NAME source=$SELECTED_TOML displays=$NAMES" >> "$LOG"
-
-if pgrep -x OmniWM > /dev/null 2>&1; then
-  /bin/launchctl kickstart -k "gui/$UID/$LAUNCHD_LABEL" 2>/dev/null || true
-  echo "$(date '+%H:%M:%S') kickstart -k (config changed)" >> "$LOG"
+# ── 6. 落ちている時だけ起こす ─────────────────────────────────────────────
+if ! pgrep -x OmniWM > /dev/null 2>&1; then
+  /bin/launchctl kickstart "gui/$UID/$LAUNCHD_LABEL" 2>/dev/null || true
+  log "kickstart (OmniWM was down)"
 fi

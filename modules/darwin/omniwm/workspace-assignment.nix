@@ -1,55 +1,59 @@
-# ── bundleId → ワークスペース rawID マッピング ─────────────────────────────
+# ── bundleId → ワークスペース rawName マッピング ────────────────────────────
 # OmniWM 起動時の one-shot sort スクリプト (scripts/startup-sort.sh) が
 # このマップに従って既存ウィンドウを正しい WS に整列させる。
 #
 # 設計思想:
-# - appRules.assignToWorkspace は使わない（再検知で window が引き戻される問題を回避）
+# - appRules.assignToWorkspace は使わない
+#   （0.5.9 では「最初にマッチした窓だけ」に意味が変わったが、それは
+#    「既に開いている窓をまとめて整列する」用途には使えない。既存窓に効かせるには
+#    `omniwmctl rule apply` を明示的に叩く必要があり、それなら整列スクリプトの方が素直）
 # - 起動時 1 回だけ整列。それ以降の新ウィンドウは開いた WS に留まる
 # - 手動で WS を跨いで動かしても **絶対に戻されない**
 #
-# rawID:
-#   1〜9 = 数値 WS / 10 = M (Media) / 11 = B (Browser)
-#   12 = E (旧 Editor、AI slot 3 として再利用)
-#   13 = A (AI Viewer) / 14-22 = AI slots Q/W/R/T/Y/U/I/O/P
+# ── rawName 対応表（workspace-builder.nix と一致させること）──
+#   1〜9  = 数値 WS（ad-hoc）
+#   10 = W / 11 = E / 12 = R   … メイン作業（上段・上のディスプレイ）
+#   13 = S / 14 = D / 15 = F   … そのプロジェクトのブラウザ（下段）
+#   16 = X（Media）/ 17 = C（Chat）/ 18 = V（予定・ノート） … 常駐（最下段）
 {
-  # ── Browsers → WS B (11) ───────────────────────────────────────────────
-  "com.google.Chrome"      = "11";
-  "org.mozilla.firefox"    = "11";
-  "com.apple.Safari"       = "11";
-  "company.thebrowser.dia" = "11";
-  "app.zen-browser.zen"    = "11";
+  # ── ブラウザ → WS S (13) ───────────────────────────────────────────────
+  # Helium が既定ブラウザ。他のブラウザを使っても同じ場所に着地するように
+  # まとめて S に寄せる（ブラウザを乗り換えても運用が変わらない）。
+  "net.imput.helium"       = "13";
+  "com.google.Chrome"      = "13";
+  "org.mozilla.firefox"    = "13";
+  "com.apple.Safari"       = "13";
+  "company.thebrowser.dia" = "13";
+  "app.zen-browser.zen"    = "13";
 
-  # ── Editors → 起動時 WS 固定は廃止 ────────────────────────────────────
-  # WS E は AI slot 3 として再利用されるため、editor を一律 WS 12 (E) に
-  # 集めると AI ワークスペースに editor が混ざってしまう。
-  # 代替運用:
-  #   - Zed: project ごとに手動で slot に配置する
-  #   - VSCode/Cursor/JetBrains: ad-hoc 起動なので開いた WS に留める。
-  #     必要なら手動で `alt+shift+<letter>` で送る（NR-01「動的 appRule で固定しない」）
-  # 削除前: "com.microsoft.VSCodeInsiders" = "12"; "com.microsoft.VSCode" = "12";
-  #         "com.todesktop.230313mzl4w4u92" = "12"; (Cursor)
-  #         "com.jetbrains.intellij" = "12"; .pycharm / .WebStorm / .goland 等
-  # （いずれも v11.3 で削除）
+  # ── ターミナル / エージェント → WS W (10) ──────────────────────────────
+  # メイン作業面の先頭。cmux が主力。
+  "com.cmuxterm.app"      = "10";
+  "com.googlecode.iterm2" = "10";
+  "com.apple.Terminal"    = "10";
 
-  # ── AI / Agent → WS 1 ──────────────────────────────────────────────────
-  "com.google.antigravity" = "1";
+  # ── AI クライアント → WS E (11) ────────────────────────────────────────
+  "com.anthropic.claudefordesktop" = "11";
+  "com.google.antigravity"         = "11";
 
-  # ── Media / 常駐 → WS M (10) ───────────────────────────────────────────
-  "com.spotify.client" = "10";
-  "com.hnc.Discord"    = "10";
-  "com.apple.iCal"     = "10";
-  "com.apple.Music"    = "10";
+  # ── Media → WS X (16) ──────────────────────────────────────────────────
+  "com.spotify.client" = "16";
+  "com.apple.Music"    = "16";
 
-  # ── Terminals → WS 3 ───────────────────────────────────────────────────
-  "com.googlecode.iterm2" = "3";
-  "com.apple.Terminal"    = "3";
+  # ── Chat → WS C (17) ───────────────────────────────────────────────────
+  "com.hnc.Discord"           = "17";
+  "com.tinyspeck.slackmacgap" = "17";
+  "com.microsoft.teams2"      = "17";
+  "com.microsoft.teams"       = "17";
+  "com.apple.MobileSMS"       = "17";
 
-  # ── Chat → WS 4 ────────────────────────────────────────────────────────
-  "com.tinyspeck.slackmacgap" = "4";
-  "com.microsoft.teams2"      = "4";
-  "com.microsoft.teams"       = "4";
+  # ── 予定 / ノート → WS V (18) ──────────────────────────────────────────
+  "com.apple.iCal" = "18";
+  "notion.id"      = "18";
+  "md.obsidian"    = "18";
 
-  # ── Notes → WS 5 ───────────────────────────────────────────────────────
-  "notion.id"   = "5";
-  "md.obsidian" = "5";
+  # ── 意図的に登録しないもの ─────────────────────────────────────────────
+  # エディタ（VSCode / Cursor / JetBrains / Zed）は「その日どのプロジェクトの
+  # ペアに置くか」が変わるので固定しない。開いた WS に留め、必要なら
+  # space+shift+<letter> で送る。
 }

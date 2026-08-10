@@ -27,17 +27,25 @@ let
 
   tomlFormat = pkgs.formats.toml { };
 
+  # プロファイルは routing の意図（"custom" / "macOS"）を宣言する。
+  # deploy.sh が `@@OMNIWM_ROUTING_MODE:<意図>@@` を見て、grid 内の全モニタの
+  # displayUUID を解決できた時だけ "custom" を採用し、1 枚でも解決できなければ
+  # "macOS" に落とす（`MonitorRouting.completeLayout` が不完全な grid で
+  # macOS 配置にフォールバックする挙動と揃えるため）。
   mkSettingsToml = profile:
     tomlFormat.generate "omniwm-settings.toml"
-      (lib.recursiveUpdate common ({
+      (lib.recursiveUpdate common {
         inherit hotkeys appRules;
         workspaces = profile.workspaces;
-      }));
+        routing = {
+          mode = "@@OMNIWM_ROUTING_MODE:${profile.routing.mode or "macOS"}@@";
+        };
+        monitorRoutingOverrides = profile.monitorRoutingOverrides or [ ];
+      });
 
-  # 各プロファイルの TOML パスを作成
   profileTomls = lib.mapAttrs (_: p: mkSettingsToml p) profiles;
 
-  # マニフェスト：deploy.sh が読み込む。プロファイル名 → toml パス + match
+  # マニフェスト：deploy.sh が読む。プロファイル名 → toml パス + match 条件
   manifest = lib.mapAttrsToList (name: profile: {
     inherit name;
     toml = profileTomls.${name};
@@ -66,19 +74,12 @@ let
     JQ        = "${pkgs.jq}/bin/jq";
   };
 
-  deploy = mkScript "omniwm-deploy" ./scripts/deploy.sh (baseEnv // {
+  # deploy.sh は system python だけで完結するので jq は要らない。
+  deploy = mkScript "omniwm-deploy" ./scripts/deploy.sh {
     PROFILE_MANIFEST = manifestJson;
     SELECTED_PROFILE = cfg.monitorProfile;
     LAUNCHD_LABEL    = launchdLabel;
-  });
-
-  focusMonitorDir = mkScript "omniwm-focus-monitor-dir"
-    ./scripts/focus-monitor-dir.sh baseEnv;
-
-  setupMedia = mkScript "omniwm-setup-media-workspace"
-    ./scripts/setup-media-workspace.sh baseEnv;
-
-  wsLaunch = mkScript "omniwm-ws-launch" ./scripts/ws-launch.sh baseEnv;
+  };
 
   moveWindowToNamedWS = mkScript "omniwm-move-window-to-named-ws"
     ./scripts/move-window-to-named-ws.sh baseEnv;
@@ -87,7 +88,7 @@ let
     (baseEnv // { WS_MAP_JSON = builtins.toJSON wsAssignment; });
 
   karabinerRules = import ./karabiner-rules.nix {
-    inherit wsLaunch moveWindowToNamedWS setupMedia focusMonitorDir omniwmctl;
+    inherit moveWindowToNamedWS omniwmctl;
   };
 in {
   imports = [ ../homebrew.nix ];
@@ -141,9 +142,6 @@ in {
 
     environment.systemPackages = [
       deploy
-      focusMonitorDir
-      setupMedia
-      wsLaunch
       moveWindowToNamedWS
       startupSort
       pkgs.jq
@@ -169,6 +167,8 @@ in {
       };
     };
 
+    # モニタ抜き差しで deploy を再実行してプロファイルを再評価する。
+    # `watch <channel> --exec <argv...>` が 0.5.9 の正しい形（旧 `-- <child>` ではない）。
     launchd.user.agents.omniwm-display-watcher = {
       serviceConfig = {
         ProgramArguments = [

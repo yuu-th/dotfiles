@@ -1,13 +1,18 @@
 # ── アプリルール（layout / 最小サイズのみ） ─────────────────────────────
-# v3 (OmniWM 0.4.9 対応):
-# - OmniWM 0.4.9 から各 [[appRules]] エントリに `id` フィールドが必須となった。
-#   無いと settings.toml が `.corrupt` rename されて全 nix-config が捨てられる。
-# - id は bundleId + index から md5 で決定的に生成。再ビルドで安定。
+# v4 (OmniWM 0.5.9 対応):
+# - `id` は 0.5.9 では `decodeIfPresent(UUID) ?? UUID()` で **省略可能**になったが、
+#   省略すると OmniWM が write-back のたびにランダム UUID を振り直す。
+#   決定論的に与えておく方が安定するので md5(bundleId + index) 由来の id を維持する。
+# - WS 振り分け（assignToWorkspace）はここでは使わない。起動時 one-shot 整列
+#   （workspace-assignment.nix + scripts/startup-sort.sh）が担当する。
 #
 # このファイルでは以下のみ扱う:
-#   - layout = "float"          (現 WS に float で居続けるダイアログ系)
-#   - minWidth / minHeight      (極小ウィンドウ防止)
-#   - titleRegex                (title で対象を絞り込む場合)
+#   - layout = "float"                  (現 WS に float で居続けるダイアログ系)
+#   - minWidth / minHeight              (極小ウィンドウ防止)
+#   - titleSubstring / titleRegex       (title で対象を絞り込む場合)
+#   - initialContainerPrimarySpan       (0.5.6 追加。アプリ別の初期幅シード。
+#                                        今は niri.defaultContainerPrimarySpan = 1.0 で
+#                                        全アプリ 100% にしているので個別指定はしない)
 { lib ? (import <nixpkgs> { }).lib, ... }:
 let
   # ── id 生成 ──────────────────────────────────────────────────────────────
@@ -58,7 +63,8 @@ let
     { bundleId = "com.knollsoft.Hookshot";       layout = "float"; }
     { bundleId = "com.1password.1password";      layout = "float"; }
     { bundleId = "com.agilebits.onepassword7";   layout = "float"; }
-    { bundleId = "com.apple.MobileSMS";          layout = "float"; minWidth = 600.0; minHeight = 500.0; }
+    # メッセージは WS C (Chat) に集約する運用にしたので float を外してタイルさせる。
+    { bundleId = "com.apple.MobileSMS";          minWidth = 600.0; minHeight = 500.0; }
     { bundleId = "com.tinkoffsystems.utm";       layout = "float"; }
 
     # Ghostty 一般 (最小サイズだけ確保)

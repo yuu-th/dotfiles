@@ -1,52 +1,57 @@
 # ── オフィス 3 モニタ構成 ────────────────────────────────────────────────────
-# Built-in (main) + HP V27ie G5 + 名前なしモニタ
 #
-# match の条件すべて成立する時に auto-select される：
-#   - HP V27ie G5 が接続されている
-#   - 名前なしモニタが接続されている
+# 実際の机の配置（上から）:
+#   ↑ HP V27ie G5      … メイン作業
+#     名前なしモニタ      … ブラウザ
+#   ↓ Built-in         … ながら見 / 常駐（macOS の main display）
 #
-# 手動で選びたい場合は profiles/darwin.nix で:
+# macOS の Arrange は公式推奨の階段配置にしておけばよい（上下が実配置と逆でも構わない）。
+# 実配置は下の routing grid が OmniWM に教える。
+#
+# match の条件すべて成立する時に auto-select される。
+# 手動指定する場合は profiles/darwin.nix で:
 #   myConfig.darwin.omniwm.monitorProfile = "office-3mon";
 { helpers }:
-let inherit (helpers) mkWorkspaces main display unnamedDisplay;
+let
+  inherit (helpers) mkWorkspaces main display unnamedDisplay routeAt builtinName;
+  hp = "HP V27ie G5";
 in {
   match = {
-    requiredDisplays = [ "HP V27ie G5" ];
+    requiredDisplays = [ hp ];
     requireUnnamed = true;
   };
 
+  # ── OmniWM Routing map（実際の机の配置）────────────────────────────────
+  routing = { mode = "custom"; };
+  monitorRoutingOverrides = [
+    (routeAt { name = hp;          row = 0; })   # 上
+    (routeAt { name = "";          row = 1; })   # 中（名前なしモニタ）
+    (routeAt { name = builtinName; row = 2; })   # 下
+  ];
+
   workspaces = mkWorkspaces {
     monitorMap = {
-      "M" = main;
-      "B" = unnamedDisplay;
-      "E" = unnamedDisplay;
+      # ── 上段: メイン作業 → HP ─────────────────────────────────────────
+      "W" = display hp;
+      "E" = display hp;
+      "R" = display hp;
+      "3" = display hp;
+      "4" = display hp;
+      "5" = display hp;
+      "6" = display hp;
+      "7" = display hp;
+      "8" = display hp;
+      "9" = display hp;
+      # ── 下段: ブラウザ → 名前なしモニタ ───────────────────────────────
+      "S" = unnamedDisplay;
+      "D" = unnamedDisplay;
+      "F" = unnamedDisplay;
       "1" = unnamedDisplay;
       "2" = unnamedDisplay;
-      "3" = display "HP V27ie G5";
-      "4" = display "HP V27ie G5";
-      "5" = display "HP V27ie G5";
-      "6" = display "HP V27ie G5";
-      "7" = display "HP V27ie G5";
-      "8" = display "HP V27ie G5";
-      "9" = display "HP V27ie G5";
-      # ── slot workspaces: 全て unnamedDisplay に集約（main を埋めない方針）─
-      "A" = unnamedDisplay;
-      "Q" = unnamedDisplay;
-      "W" = unnamedDisplay;
-      "R" = unnamedDisplay;
-      "T" = unnamedDisplay;
-      "Y" = unnamedDisplay;
-      "U" = unnamedDisplay;
-      "I" = unnamedDisplay;
-      "O" = unnamedDisplay;
-      "P" = unnamedDisplay;
-      # ── cockpit park workspace (requirements v2.4 §8.1) ──────────────────
-      # CP1 goes to unnamedDisplay — same monitor as workspace A.
-      # CP2-CP6 removed (requirements v2.4: 1 cockpit only).
-      "CP1" = unnamedDisplay;
-    };
-    layoutMap = {
-      # E は niri、旧 Editor の dwindle 設定は不要
+      # ── 最下段: 常駐 → Built-in（main）────────────────────────────────
+      "X" = main;
+      "C" = main;
+      "V" = main;
     };
   };
 }
